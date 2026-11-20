@@ -29,7 +29,7 @@ var _ forge.Forge = (*Client)(nil)
 // New returns a client for the repository at dir ("" for the current one).
 func New(dir string) *Client { return &Client{Dir: dir, Timeout: 60 * time.Second} }
 
-const prFields = "number,url,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,statusCheckRollup"
+const prFields = "number,url,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,mergeCommit,statusCheckRollup"
 
 const defaultLimit = 100
 
@@ -58,15 +58,18 @@ func fail(err error, stderr ...[]byte) error {
 }
 
 type prJSON struct {
-	Number            int          `json:"number"`
-	URL               string       `json:"url"`
-	Title             string       `json:"title"`
-	State             string       `json:"state"`
-	IsDraft           bool         `json:"isDraft"`
-	HeadRefName       string       `json:"headRefName"`
-	HeadRefOid        string       `json:"headRefOid"`
-	BaseRefName       string       `json:"baseRefName"`
-	Mergeable         string       `json:"mergeable"`
+	Number      int    `json:"number"`
+	URL         string `json:"url"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	IsDraft     bool   `json:"isDraft"`
+	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
+	BaseRefName string `json:"baseRefName"`
+	Mergeable   string `json:"mergeable"`
+	MergeCommit *struct {
+		Oid string `json:"oid"`
+	} `json:"mergeCommit"`
 	StatusCheckRollup []rollupJSON `json:"statusCheckRollup"`
 }
 
@@ -126,6 +129,9 @@ func (p prJSON) neutral() forge.PullRequest {
 		pr.Mergeable = forge.MergeableYes
 	case "CONFLICTING":
 		pr.Mergeable = forge.MergeableNo
+	}
+	if p.MergeCommit != nil {
+		pr.MergeSHA = p.MergeCommit.Oid
 	}
 	for _, r := range p.StatusCheckRollup {
 		pr.Checks = append(pr.Checks, r.check())

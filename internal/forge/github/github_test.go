@@ -76,6 +76,14 @@ J
 	}
 }
 
+func TestViewPRMerged(t *testing.T) {
+	stub(t, `"pr view "*) echo '{"number":9,"state":"MERGED","mergeable":"UNKNOWN","mergeCommit":{"oid":"feed1234"}}' ;;`)
+	pr, err := New("").ViewPR(ctx, "9")
+	if err != nil || pr.State != forge.StateMerged || pr.MergeSHA != "feed1234" || pr.Mergeable != forge.MergeableUnknown {
+		t.Fatalf("got %+v, %v", pr, err)
+	}
+}
+
 func TestViewPRNotFoundAndErrors(t *testing.T) {
 	stub(t, `"pr view 9 "*) echo 'no pull requests found for branch "x"' >&2; exit 1 ;;
 "pr view 8 "*) echo 'HTTP 502' >&2; exit 1 ;;`)

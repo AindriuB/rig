@@ -76,14 +76,16 @@ type Check struct {
 
 // PullRequest is a pull request, or a GitLab merge request.
 type PullRequest struct {
-	Number    int       `json:"number"`
-	URL       string    `json:"url"`
-	Title     string    `json:"title"`
-	State     PRState   `json:"state"`
-	Draft     bool      `json:"draft"`
-	Head      string    `json:"head"`
-	HeadSHA   string    `json:"headSha"`
-	Base      string    `json:"base"`
+	Number  int     `json:"number"`
+	URL     string  `json:"url"`
+	Title   string  `json:"title"`
+	State   PRState `json:"state"`
+	Draft   bool    `json:"draft"`
+	Head    string  `json:"head"`
+	HeadSHA string  `json:"headSha"`
+	Base    string  `json:"base"`
+	// MergeSHA is the commit a merged pull request landed as, else "".
+	MergeSHA  string    `json:"mergeSha,omitempty"`
 	Mergeable Mergeable `json:"mergeable"`
 	Checks    []Check   `json:"checks"`
 }
