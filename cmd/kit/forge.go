@@ -7,6 +7,7 @@ import (
 	"github.com/AindriuB/workspace/cli/internal/config"
 	"github.com/AindriuB/workspace/cli/internal/forge"
 	"github.com/AindriuB/workspace/cli/internal/forge/github"
+	"github.com/AindriuB/workspace/cli/internal/forge/gitlab"
 	"github.com/AindriuB/workspace/cli/internal/git"
 )
 
@@ -53,6 +54,8 @@ func selectForge(ctx context.Context, dir string) (forge.Forge, error) {
 	switch kind {
 	case forge.GitHub:
 		return github.New(dir), nil
+	case forge.GitLab:
+		return gitlab.New(dir), nil
 	}
 	return nil, fmt.Errorf("no adapter for forge %q in this build", kind)
 }
