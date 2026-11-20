@@ -1,4 +1,4 @@
-// Package git wraps the handful of git calls kit makes. Every call is an
+// Package git wraps the handful of git calls rig makes. Every call is an
 // argument vector run through proc; none goes through a shell.
 package git
 
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/proc"
+	"github.com/AindriuB/rig/internal/proc"
 )
 
 // Repo is a working tree, or a directory inside one.

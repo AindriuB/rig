@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/forge/fake"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/forge/fake"
 )
 
 func prs() *fake.Forge {
@@ -26,7 +26,7 @@ func prs() *fake.Forge {
 
 func TestPRList(t *testing.T) {
 	f := prs()
-	r := kit(t, t.TempDir(), f, nil, "pr", "list", "--mine", "--limit", "15")
+	r := rig(t, t.TempDir(), f, nil, "pr", "list", "--mine", "--limit", "15")
 	want := "#12  red  task/07-foo  Add parser  conflict  draft\n" +
 		"#13  none  task/08-bar  " + strings.Repeat("é", 50) + "\n"
 	if r.code != 0 || r.out != want {
@@ -35,16 +35,16 @@ func TestPRList(t *testing.T) {
 	if f.Calls[0] != "ListPRs {State: Head: Mine:true Limit:15}" {
 		t.Fatalf("calls = %q", f.Calls)
 	}
-	if r := kit(t, t.TempDir(), f, nil, "pr", "list", "--state", "merged"); r.out != "#9  none  task/01-old  Old\n" {
+	if r := rig(t, t.TempDir(), f, nil, "pr", "list", "--state", "merged"); r.out != "#9  none  task/01-old  Old\n" {
 		t.Fatalf("merged: %+v", r)
 	}
 	var got []prOut
-	r = kit(t, t.TempDir(), f, nil, "pr", "list", "--json", "--head=task/07-foo")
+	r = rig(t, t.TempDir(), f, nil, "pr", "list", "--json", "--head=task/07-foo")
 	if err := json.Unmarshal([]byte(r.out), &got); err != nil || len(got) != 1 || got[0].CI != forge.CIRed || got[0].Number != 12 {
 		t.Fatalf("json: %v %+v", err, r)
 	}
 	for _, bad := range [][]string{{"--state", "all"}, {"--limit", "0"}, {"--web"}, {"extra"}, {"--limit"}} {
-		if r := kit(t, t.TempDir(), f, nil, append([]string{"pr", "list"}, bad...)...); r.code != 2 {
+		if r := rig(t, t.TempDir(), f, nil, append([]string{"pr", "list"}, bad...)...); r.code != 2 {
 			t.Errorf("pr list %v: exit %d", bad, r.code)
 		}
 	}
@@ -54,14 +54,14 @@ func TestPRViewAndChecks(t *testing.T) {
 	repo, _ := newRepo(t)
 	f := prs()
 	for _, ref := range [][]string{{"12"}, {"--task", "07"}, {"task/07-foo"}} {
-		r := kit(t, repo, f, nil, append([]string{"pr", "view"}, ref...)...)
+		r := rig(t, repo, f, nil, append([]string{"pr", "view"}, ref...)...)
 		if r.code != 0 || !strings.HasPrefix(r.out, "#12  red  task/07-foo  Add parser  conflict  draft\n") ||
 			!strings.Contains(r.out, "head abcdef012345 ") || !strings.Contains(r.out, "fail     test  https://ci/1") ||
 			!strings.Contains(r.out, "1 passed or skipped") {
 			t.Fatalf("pr view %v: %+v", ref, r)
 		}
 	}
-	r := kit(t, repo, f, nil, "pr", "checks", "12")
+	r := rig(t, repo, f, nil, "pr", "checks", "12")
 	if r.code != 0 || r.out != "#12  red  task/07-foo\n  pass     build\n  fail     test  https://ci/1\n" {
 		t.Fatalf("pr checks: %+v", r)
 	}
@@ -69,20 +69,20 @@ func TestPRViewAndChecks(t *testing.T) {
 		CI     forge.CI
 		Checks []forge.Check
 	}
-	r = kit(t, repo, f, nil, "pr", "checks", "12", "--json")
+	r = rig(t, repo, f, nil, "pr", "checks", "12", "--json")
 	if err := json.Unmarshal([]byte(r.out), &got); err != nil || got.CI != forge.CIRed || len(got.Checks) != 2 {
 		t.Fatalf("checks json: %v %+v", err, r)
 	}
-	if r := kit(t, repo, f, nil, "pr", "view", "99"); r.code != 2 || !strings.Contains(r.errOut, "no pull request for 99") {
+	if r := rig(t, repo, f, nil, "pr", "view", "99"); r.code != 2 || !strings.Contains(r.errOut, "no pull request for 99") {
 		t.Fatalf("missing PR: %+v", r)
 	}
-	if r := kit(t, repo, f, nil, "pr", "view", "12", "--repo", filepath.Join(repo, "nope")); r.code != 2 {
+	if r := rig(t, repo, f, nil, "pr", "view", "12", "--repo", filepath.Join(repo, "nope")); r.code != 2 {
 		t.Fatalf("bad --repo: %+v", r)
 	}
-	if r := kit(t, repo, f, nil, "pr", "view", "12", "--task", "07"); r.code != 2 {
+	if r := rig(t, repo, f, nil, "pr", "view", "12", "--task", "07"); r.code != 2 {
 		t.Fatalf("number and --task: %+v", r)
 	}
-	if r := kit(t, repo, f, nil, "pr"); r.code != 2 {
+	if r := rig(t, repo, f, nil, "pr"); r.code != 2 {
 		t.Fatalf("bare pr: %+v", r)
 	}
 }
@@ -99,14 +99,14 @@ func TestPROpen(t *testing.T) {
 		{"--head", "task/07-foo", "--title", "x", "--push"},
 		{"--head", "task/07-foo", "--title", "x", "extra"},
 	} {
-		if r := kit(t, dir, f, nil, append([]string{"pr", "open"}, bad...)...); r.code != 2 {
+		if r := rig(t, dir, f, nil, append([]string{"pr", "open"}, bad...)...); r.code != 2 {
 			t.Errorf("pr open %v: exit %d", bad, r.code)
 		}
 	}
 	if len(f.Created) != 0 {
 		t.Fatalf("a refused pr open reached the forge: %+v", f.Created)
 	}
-	r := kit(t, dir, f, nil, "pr", "open", "--head", "task/07-foo", "--base", "main", "--title", "Add parser", "--body", "line one\nline two\n", "--draft")
+	r := rig(t, dir, f, nil, "pr", "open", "--head", "task/07-foo", "--base", "main", "--title", "Add parser", "--body", "line one\nline two\n", "--draft")
 	if r.code != 0 || r.out != "#1  https://forge.example/pr/1\n" {
 		t.Fatalf("pr open: %+v", r)
 	}

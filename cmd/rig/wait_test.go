@@ -7,16 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/forge/fake"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/forge/fake"
 )
 
 func TestWaitGreen(t *testing.T) {
 	f := &fake.Forge{Wait: forge.WaitResult{Green: true}}
-	if r := kit(t, t.TempDir(), f, nil, "pr", "wait", "12"); r.code != 0 || r.out != "CI green: PR #12\n" {
+	if r := rig(t, t.TempDir(), f, nil, "pr", "wait", "12"); r.code != 0 || r.out != "CI green: PR #12\n" {
 		t.Fatalf("%+v", r)
 	}
-	if r := kit(t, t.TempDir(), f, nil, "pr", "wait", "--run", "345"); r.code != 0 || r.out != "CI green: run 345\n" {
+	if r := rig(t, t.TempDir(), f, nil, "pr", "wait", "--run", "345"); r.code != 0 || r.out != "CI green: run 345\n" {
 		t.Fatalf("%+v", r)
 	}
 	if f.Calls[0] != "WaitChecks {PR:12 Run:0}" || f.Calls[1] != "WaitChecks {PR:0 Run:345}" {
@@ -33,14 +33,14 @@ func TestWaitRedPR(t *testing.T) {
 			{Job: "build", Text: "build\t-\tCleaning up\r"},
 		},
 	}
-	r := kit(t, t.TempDir(), f, nil, "pr", "wait", "12")
+	r := rig(t, t.TempDir(), f, nil, "pr", "wait", "12")
 	want := "CI red: PR #12\nFailed checks:\n  build\n  lint\n--- log tail ---\nbuild\t-\tstep\nbuild\t-\t##[error]boom\n"
 	if r.code != 1 || r.out != want {
 		t.Fatalf("got %q\nwant %q", r.out, want)
 	}
 
 	f.LogsErr = forge.ErrNoLogs
-	r = kit(t, t.TempDir(), f, nil, "pr", "wait", "12")
+	r = rig(t, t.TempDir(), f, nil, "pr", "wait", "12")
 	if r.code != 1 || r.out != "CI red: PR #12\nFailed checks:\n  build\n  lint\n" {
 		t.Fatalf("no logs: %q", r.out)
 	}
@@ -48,7 +48,7 @@ func TestWaitRedPR(t *testing.T) {
 
 func TestWaitRedRun(t *testing.T) {
 	f := &fake.Forge{Wait: forge.WaitResult{Conclusion: "failure", Failed: []forge.Check{{Name: "test (ubuntu)"}}}}
-	r := kit(t, t.TempDir(), f, nil, "pr", "wait", "--run", "345")
+	r := rig(t, t.TempDir(), f, nil, "pr", "wait", "--run", "345")
 	want := "CI red: run 345 (failure)\nFailed jobs:\n  test (ubuntu)\n--- log tail ---\n(no failed-job log available from gh yet)\n"
 	if r.code != 1 || r.out != want {
 		t.Fatalf("got %q\nwant %q", r.out, want)
@@ -57,14 +57,14 @@ func TestWaitRedRun(t *testing.T) {
 
 func TestWaitErrorsExit2(t *testing.T) {
 	f := &fake.Forge{WaitErr: errors.New("gh failed: no checks reported on the 'x' branch")}
-	r := kit(t, t.TempDir(), f, nil, "pr", "wait", "12")
+	r := rig(t, t.TempDir(), f, nil, "pr", "wait", "12")
 	if r.code != 2 || r.errOut != "ci-wait: gh failed: no checks reported on the 'x' branch\n" || r.out != "" {
 		t.Fatalf("%+v", r)
 	}
 
 	f = &fake.Forge{WaitBlock: true}
 	start := time.Now()
-	r = kit(t, t.TempDir(), f, map[string]string{"CI_WAIT_TIMEOUT": "1"}, "pr", "wait", "12")
+	r = rig(t, t.TempDir(), f, map[string]string{"CI_WAIT_TIMEOUT": "1"}, "pr", "wait", "12")
 	if r.code != 2 || r.errOut != "ci-wait: timed out after 1s waiting on PR #12\n" {
 		t.Fatalf("timeout: %+v", r)
 	}
@@ -92,7 +92,7 @@ func TestWaitUsage(t *testing.T) {
 		{"0", []string{"12"}},
 		{"-1", []string{"12"}},
 	} {
-		r := kit(t, t.TempDir(), &fake.Forge{Wait: forge.WaitResult{Green: true}},
+		r := rig(t, t.TempDir(), &fake.Forge{Wait: forge.WaitResult{Green: true}},
 			map[string]string{"CI_WAIT_TIMEOUT": tc.env}, append([]string{"pr", "wait"}, tc.args...)...)
 		if r.code != 2 || !strings.HasPrefix(r.errOut, "ci-wait: ") {
 			t.Errorf("pr wait %v (CI_WAIT_TIMEOUT=%q): %+v", tc.args, tc.env, r)

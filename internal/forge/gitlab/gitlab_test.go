@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
+	"github.com/AindriuB/rig/internal/forge"
 )
 
 var ctx = context.Background()

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/git"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/git"
 )
 
 const (
@@ -42,7 +42,7 @@ type worktreeOut struct {
 	Dirty  int    `json:"dirty"`
 }
 
-// status implements `kit status [--json]`: the last handoff, the open task
+// status implements `rig status [--json]`: the last handoff, the open task
 // files, each worktree with how far ahead and how dirty it is, and one line
 // per open pull request. It answers "where are we?" in one call.
 //
@@ -52,7 +52,7 @@ func (a *app) status(ctx context.Context, args []string) int {
 	fs := newFlags()
 	jsonOut := fs.boolean("--json")
 	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
-		return a.fail("status", "usage: kit status [--json]")
+		return a.fail("status", "usage: rig status [--json]")
 	}
 	out := statusOut{Tasks: []string{}, Worktrees: []worktreeOut{}, PRs: []prOut{}}
 	repo := git.Repo{Dir: a.cwd}

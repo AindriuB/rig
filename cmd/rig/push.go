@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AindriuB/workspace/cli/internal/config"
-	"github.com/AindriuB/workspace/cli/internal/git"
+	"github.com/AindriuB/rig/internal/config"
+	"github.com/AindriuB/rig/internal/git"
 )
 
-// push implements `kit push <task-id|branch> [--worktree <path>]`.
+// push implements `rig push <task-id|branch> [--worktree <path>]`.
 //
 // Exit 0: pushed. Exit 1: git ran and the push failed. Exit 2: refused, and
 // git push was never run.
@@ -22,7 +22,7 @@ import (
 // survives the checks reaches git as an argument vector.
 func (a *app) push(ctx context.Context, args []string) int {
 	refuse := func(format string, v ...any) int {
-		fmt.Fprintf(a.stderr, "kit push: refused: %s\n", fmt.Sprintf(format, v...))
+		fmt.Fprintf(a.stderr, "rig push: refused: %s\n", fmt.Sprintf(format, v...))
 		return 2
 	}
 	var target, wt string
@@ -39,7 +39,7 @@ func (a *app) push(ctx context.Context, args []string) int {
 		case strings.HasPrefix(arg, "--worktree="):
 			wt = strings.TrimPrefix(arg, "--worktree=")
 		case strings.HasPrefix(arg, "-"):
-			return refuse("option %q is not allowed; kit push takes one task id or branch, and --worktree <path>", arg)
+			return refuse("option %q is not allowed; rig push takes one task id or branch, and --worktree <path>", arg)
 		default:
 			target = arg
 			targets++
@@ -84,9 +84,9 @@ func (a *app) push(ctx context.Context, args []string) int {
 
 	if err := repo.Push(ctx, "origin", branch); err != nil {
 		if errors.Is(err, git.ErrRejected) {
-			fmt.Fprintf(a.stderr, "kit push: %s: %v\n", branch, err)
+			fmt.Fprintf(a.stderr, "rig push: %s: %v\n", branch, err)
 		} else {
-			fmt.Fprintf(a.stderr, "kit push: %s: %v\n", branch, err)
+			fmt.Fprintf(a.stderr, "rig push: %s: %v\n", branch, err)
 		}
 		return 1
 	}

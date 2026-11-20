@@ -8,8 +8,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/git"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/git"
 )
 
 func (a *app) pr(ctx context.Context, args []string) int {
@@ -228,7 +228,7 @@ func (a *app) prList(ctx context.Context, args []string) int {
 // head branch is always named, never inferred, and nothing is pushed.
 //
 // The body is only ever the --body argument. There is deliberately no flag
-// that reads it from a file: `kit pr` runs without a permission prompt, and
+// that reads it from a file: `rig pr` runs without a permission prompt, and
 // such a flag would publish any file the user can read.
 func (a *app) prOpen(ctx context.Context, args []string) int {
 	fs := newFlags()
@@ -243,7 +243,7 @@ func (a *app) prOpen(ctx context.Context, args []string) int {
 		return a.fail("pr open", "unexpected argument %q", pos[0])
 	}
 	if *head == "" {
-		return a.fail("pr open", "--head <branch> is required; kit pr open never guesses the branch and never pushes")
+		return a.fail("pr open", "--head <branch> is required; rig pr open never guesses the branch and never pushes")
 	}
 	if *title == "" {
 		return a.fail("pr open", "--title is required")

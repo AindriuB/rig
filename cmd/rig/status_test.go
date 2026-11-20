@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/forge/fake"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/forge/fake"
 )
 
 func TestStatus(t *testing.T) {
@@ -24,7 +24,7 @@ func TestStatus(t *testing.T) {
 	f := prs()
 	// From inside the worktree: the task files and handoff still come from
 	// the main checkout and the common git dir.
-	r := kit(t, wt, f, nil, "status")
+	r := rig(t, wt, f, nil, "status")
 	if r.code != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -44,7 +44,7 @@ func TestStatus(t *testing.T) {
 	}
 
 	var got statusOut
-	r = kit(t, repo, f, nil, "status", "--json")
+	r = rig(t, repo, f, nil, "status", "--json")
 	if err := json.Unmarshal([]byte(r.out), &got); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
 	}
@@ -61,17 +61,17 @@ func TestStatusSurvivesAnUnreachableForgeAndAStaleHandoff(t *testing.T) {
 	old := time.Now().Add(-8 * 24 * time.Hour)
 	os.Chtimes(handoff, old, old)
 
-	r := kit(t, repo, &fake.Forge{Err: errors.New("gh not found on PATH")}, nil, "status")
+	r := rig(t, repo, &fake.Forge{Err: errors.New("gh not found on PATH")}, nil, "status")
 	if r.code != 0 || !strings.Contains(r.out, "OPEN PRS: unavailable (gh not found on PATH)") {
 		t.Fatalf("%+v", r)
 	}
 	if strings.Contains(r.out, "HANDOFF") {
 		t.Fatalf("an 8-day-old handoff was shown:\n%s", r.out)
 	}
-	if r := kit(t, repo, prs(), nil, "status", "--verbose"); r.code != 2 {
+	if r := rig(t, repo, prs(), nil, "status", "--verbose"); r.code != 2 {
 		t.Fatalf("unknown flag: %+v", r)
 	}
-	if r := kit(t, t.TempDir(), &fake.Forge{}, nil, "status"); r.code != 0 || !strings.Contains(r.out, "Not in a git repository.") {
+	if r := rig(t, t.TempDir(), &fake.Forge{}, nil, "status"); r.code != 0 || !strings.Contains(r.out, "Not in a git repository.") {
 		t.Fatalf("outside a repo: %+v", r)
 	}
 }
@@ -79,7 +79,7 @@ func TestStatusSurvivesAnUnreachableForgeAndAStaleHandoff(t *testing.T) {
 func TestForgeKind(t *testing.T) {
 	repo, _ := newRepo(t)
 	set := func(url string) { gitc(t, repo, "remote", "set-url", "origin", url) }
-	cfg := filepath.Join(repo, ".claude", "kit.json")
+	cfg := filepath.Join(repo, ".claude", "rig.json")
 	os.MkdirAll(filepath.Dir(cfg), 0o755)
 
 	if k, err := forgeKind(ctx, t.TempDir()); err != nil || k != forge.GitHub {
@@ -106,7 +106,7 @@ func TestForgeKind(t *testing.T) {
 	}
 	os.WriteFile(cfg, []byte(`not json`), 0o644)
 	if _, err := forgeKind(ctx, repo); err == nil {
-		t.Fatal("a broken kit.json was ignored")
+		t.Fatal("a broken rig.json was ignored")
 	}
 	os.WriteFile(cfg, []byte(`{"host":"gitlab.example.com"}`), 0o644)
 	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitLab {

@@ -1,4 +1,4 @@
-// Command kit owns the loop's mechanical steps: pushing a task branch,
+// Command rig owns the loop's mechanical steps: pushing a task branch,
 // reading and opening pull requests, waiting on CI and reporting status.
 //
 // Commands hold policy and output. They reach a forge only through the
@@ -13,7 +13,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
+	"github.com/AindriuB/rig/internal/forge"
 )
 
 // app is what a command can touch. Tests swap each field.
@@ -25,15 +25,16 @@ type app struct {
 	forge func(ctx context.Context, dir string) (forge.Forge, error)
 }
 
-const usage = `usage: kit <command>
+const usage = `usage: rig <command>
 
-  kit push <task-id|branch> [--worktree <path>]
-  kit pr view [<pr|branch> | --task <id>] [--json] [--repo <dir>]
-  kit pr list [--mine] [--head <branch>] [--state open|closed|merged] [--limit <n>] [--json] [--repo <dir>]
-  kit pr checks [<pr|branch> | --task <id>] [--json] [--repo <dir>]
-  kit pr open --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]
-  kit pr wait <pr-number | --run <run-id>> [--repo <dir>]
-  kit status [--json]
+  rig push <task-id|branch> [--worktree <path>]
+  rig pr view [<pr|branch> | --task <id>] [--json] [--repo <dir>]
+  rig pr list [--mine] [--head <branch>] [--state open|closed|merged] [--limit <n>] [--json] [--repo <dir>]
+  rig pr checks [<pr|branch> | --task <id>] [--json] [--repo <dir>]
+  rig pr open --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]
+  rig pr wait <pr-number | --run <run-id>> [--repo <dir>]
+  rig status [--json]
+  rig version
 `
 
 func main() {
@@ -41,7 +42,7 @@ func main() {
 	defer stop()
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "kit:", err)
+		fmt.Fprintln(os.Stderr, "rig:", err)
 		os.Exit(2)
 	}
 	a := &app{stdout: os.Stdout, stderr: os.Stderr, getenv: os.Getenv, cwd: cwd, forge: selectForge}
@@ -60,16 +61,19 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.pr(ctx, args[1:])
 	case "status":
 		return a.status(ctx, args[1:])
+	case "version", "--version":
+		fmt.Fprintln(a.stdout, version)
+		return 0
 	case "help", "-h", "--help":
 		fmt.Fprint(a.stdout, usage)
 		return 0
 	}
-	fmt.Fprintf(a.stderr, "kit: unknown command %q\n%s", args[0], usage)
+	fmt.Fprintf(a.stderr, "rig: unknown command %q\n%s", args[0], usage)
 	return 2
 }
 
-// fail prints "kit <cmd>: message" and returns exit code 2.
+// fail prints "rig <cmd>: message" and returns exit code 2.
 func (a *app) fail(cmd, format string, args ...any) int {
-	fmt.Fprintf(a.stderr, "kit %s: %s\n", cmd, fmt.Sprintf(format, args...))
+	fmt.Fprintf(a.stderr, "rig %s: %s\n", cmd, fmt.Sprintf(format, args...))
 	return 2
 }

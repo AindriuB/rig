@@ -1,9 +1,9 @@
 // Package gitlab implements forge.Forge by running the `glab` CLI. It uses
-// the login `glab auth` already holds; kit never sees a token.
+// the login `glab auth` already holds; rig never sees a token.
 //
 // A merge request is the forge's pull request, and the jobs of its head
 // pipeline are its checks. glab has no blocking watch that reports a verdict
-// by exit code, so WaitChecks polls; the polling happens here, inside one kit
+// by exit code, so WaitChecks polls; the polling happens here, inside one rig
 // process, not in the agent's turns.
 package gitlab
 
@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/proc"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/proc"
 )
 
 // Client runs glab in one repository directory.

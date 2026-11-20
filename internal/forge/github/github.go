@@ -1,5 +1,5 @@
 // Package github implements forge.Forge by running the `gh` CLI. It uses the
-// login `gh auth` already holds; kit never sees a token.
+// login `gh auth` already holds; rig never sees a token.
 package github
 
 import (
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/proc"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/proc"
 )
 
 // Client runs gh in one repository directory.

@@ -26,7 +26,7 @@ func TestPushByTaskIDAndBranch(t *testing.T) {
 	gitc(t, repo, "checkout", "-q", "task/07-foo")
 	gitc(t, repo, "commit", "-q", "--allow-empty", "-m", "work")
 
-	r := kit(t, repo, nil, nil, "push", "07")
+	r := rig(t, repo, nil, nil, "push", "07")
 	if r.code != 0 || r.out != "pushed task/07-foo to origin\n" {
 		t.Fatalf("push 07: %+v", r)
 	}
@@ -35,7 +35,7 @@ func TestPushByTaskIDAndBranch(t *testing.T) {
 	}
 
 	gitc(t, repo, "branch", "record/07-foo")
-	if r := kit(t, repo, nil, nil, "push", "record/07-foo"); r.code != 0 {
+	if r := rig(t, repo, nil, nil, "push", "record/07-foo"); r.code != 0 {
 		t.Fatalf("push record/07-foo: %+v", r)
 	}
 	if got := gitc(t, remote, "rev-parse", "main"); got != mainBefore {
@@ -48,7 +48,7 @@ func TestPushFromAnotherDirectoryWithWorktree(t *testing.T) {
 	wt := filepath.Join(filepath.Dir(repo), "wt")
 	gitc(t, repo, "worktree", "add", "-q", wt, "task/07-foo")
 	for _, args := range [][]string{{"push", "07", "--worktree", wt}, {"push", "--worktree=" + wt, "task/07-foo"}} {
-		if r := kit(t, t.TempDir(), nil, nil, args...); r.code != 0 {
+		if r := rig(t, t.TempDir(), nil, nil, args...); r.code != 0 {
 			t.Fatalf("%v: %+v", args, r)
 		}
 	}
@@ -58,17 +58,17 @@ func TestPushFromAnotherDirectoryWithWorktree(t *testing.T) {
 func TestPushFallsBackToTheBranchWhenTheTaskFileIsGone(t *testing.T) {
 	repo, _ := newRepo(t)
 	os.Remove(filepath.Join(repo, "docs", "plan", "tasks", "07-foo.md"))
-	if r := kit(t, repo, nil, nil, "push", "07"); r.code != 0 {
+	if r := rig(t, repo, nil, nil, "push", "07"); r.code != 0 {
 		t.Fatalf("push 07: %+v", r)
 	}
 	gitc(t, repo, "branch", "task/07-other")
-	if r := kit(t, repo, nil, nil, "push", "07"); r.code != 2 || !strings.Contains(r.errOut, "matches 2 branches") {
+	if r := rig(t, repo, nil, nil, "push", "07"); r.code != 2 || !strings.Contains(r.errOut, "matches 2 branches") {
 		t.Fatalf("ambiguous id: %+v", r)
 	}
 }
 
 // TestPushRefusals is the refusal table: every case from the "asks" list of
-// tests/push-guard.bats that can be written as arguments, and more. Each must
+// claude-kit's push-guard tests that can be written as arguments, and more. Each must
 // exit 2 before `git push` starts and leave the remote as it was.
 func TestPushRefusals(t *testing.T) {
 	repo, remote := newRepo(t)
@@ -149,9 +149,9 @@ func TestPushRefusals(t *testing.T) {
 		{"99"},
 	}
 	for _, args := range cases {
-		r := kit(t, repo, nil, nil, append([]string{"push"}, args...)...)
-		if r.code != 2 || !strings.Contains(r.errOut, "kit push: refused: ") || r.out != "" {
-			t.Errorf("kit push %q: exit %d, stdout %q, stderr %q; want a refusal, exit 2", args, r.code, r.out, r.errOut)
+		r := rig(t, repo, nil, nil, append([]string{"push"}, args...)...)
+		if r.code != 2 || !strings.Contains(r.errOut, "rig push: refused: ") || r.out != "" {
+			t.Errorf("rig push %q: exit %d, stdout %q, stderr %q; want a refusal, exit 2", args, r.code, r.out, r.errOut)
 		}
 	}
 	if ran() {
@@ -163,7 +163,7 @@ func TestPushRefusals(t *testing.T) {
 }
 
 func TestPushOutsideARepositoryIsRefused(t *testing.T) {
-	if r := kit(t, t.TempDir(), nil, nil, "push", "task/x"); r.code != 2 {
+	if r := rig(t, t.TempDir(), nil, nil, "push", "task/x"); r.code != 2 {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -172,13 +172,13 @@ func TestPushPrefixesComeFromConfig(t *testing.T) {
 	repo, remote := newRepo(t)
 	gitc(t, repo, "branch", "codex/143")
 	os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
-	cfg := filepath.Join(repo, ".claude", "kit.json")
+	cfg := filepath.Join(repo, ".claude", "rig.json")
 
 	os.WriteFile(cfg, []byte(`{"pushPrefixes":["codex"]}`), 0o644)
-	if r := kit(t, repo, nil, nil, "push", "codex/143"); r.code != 0 {
+	if r := rig(t, repo, nil, nil, "push", "codex/143"); r.code != 0 {
 		t.Fatalf("configured prefix: %+v", r)
 	}
-	if r := kit(t, repo, nil, nil, "push", "task/07-foo"); r.code != 2 {
+	if r := rig(t, repo, nil, nil, "push", "task/07-foo"); r.code != 2 {
 		t.Fatalf("a prefix left out of the config was pushed: %+v", r)
 	}
 	// No prefix, however it is written, reaches the default branch.
@@ -187,8 +187,8 @@ func TestPushPrefixesComeFromConfig(t *testing.T) {
 	for _, body := range []string{`{"pushPrefixes":["main"]}`, `{"pushPrefixes":["refs"]}`, `{"pushPrefixes":[""]}`, `{"pushPrefixes":["."]}`, `{"pushPrefixes":["*"]}`} {
 		os.WriteFile(cfg, []byte(body), 0o644)
 		for _, target := range []string{"main", "refs/heads/main", "main/", "/main", "*/main"} {
-			if r := kit(t, repo, nil, nil, "push", target); r.code != 2 {
-				t.Errorf("config %s: kit push %s: %+v", body, target, r)
+			if r := rig(t, repo, nil, nil, "push", target); r.code != 2 {
+				t.Errorf("config %s: rig push %s: %+v", body, target, r)
 			}
 		}
 	}
@@ -201,11 +201,11 @@ func TestPushRejectedByTheRemoteExits1(t *testing.T) {
 	repo, _ := newRepo(t)
 	gitc(t, repo, "checkout", "-q", "task/07-foo")
 	gitc(t, repo, "commit", "-q", "--allow-empty", "-m", "one")
-	if r := kit(t, repo, nil, nil, "push", "07"); r.code != 0 {
+	if r := rig(t, repo, nil, nil, "push", "07"); r.code != 0 {
 		t.Fatalf("%+v", r)
 	}
 	gitc(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "rewritten")
-	r := kit(t, repo, nil, nil, "push", "07")
+	r := rig(t, repo, nil, nil, "push", "07")
 	if r.code != 1 || !strings.Contains(r.errOut, "push rejected") {
 		t.Fatalf("non-fast-forward: %+v", r)
 	}

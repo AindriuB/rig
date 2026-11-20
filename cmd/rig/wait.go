@@ -9,18 +9,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
+	"github.com/AindriuB/rig/internal/forge"
 )
 
 const (
-	waitUsage       = "usage: kit pr wait <pr-number | --run <run-id>> [--repo <dir>]"
+	waitUsage       = "usage: rig pr wait <pr-number | --run <run-id>> [--repo <dir>]"
 	tailLines       = 40
 	defaultWaitSecs = 1800
 	logTimeout      = 2 * time.Minute
 )
 
-// prWait implements `kit pr wait`, which blocks until a pull request's checks
-// or one CI run finish. It keeps the contract of scripts/ci-wait.sh, down to
+// prWait implements `rig pr wait`, which blocks until a pull request's checks
+// or one CI run finish. It keeps the contract of claude-kit's ci-wait.sh, down to
 // the "ci-wait:" prefix on errors, because callers read both.
 //
 // Exit 0: green, and one line of output. Exit 1: red; the failed check or job

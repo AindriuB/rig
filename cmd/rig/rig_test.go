@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/forge/fake"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/forge/fake"
 )
 
 var ctx = context.Background()
@@ -56,8 +56,8 @@ type result struct {
 	out, errOut string
 }
 
-// kit runs the command in dir against the fake forge.
-func kit(t *testing.T, dir string, f *fake.Forge, env map[string]string, args ...string) result {
+// rig runs the command in dir against the fake forge.
+func rig(t *testing.T, dir string, f *fake.Forge, env map[string]string, args ...string) result {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	a := &app{
@@ -75,13 +75,18 @@ func kit(t *testing.T, dir string, f *fake.Forge, env map[string]string, args ..
 }
 
 func TestUsage(t *testing.T) {
-	if r := kit(t, t.TempDir(), nil, nil); r.code != 2 {
+	if r := rig(t, t.TempDir(), nil, nil); r.code != 2 {
 		t.Fatalf("no command: exit %d", r.code)
 	}
-	if r := kit(t, t.TempDir(), nil, nil, "frobnicate"); r.code != 2 {
+	if r := rig(t, t.TempDir(), nil, nil, "frobnicate"); r.code != 2 {
 		t.Fatalf("unknown command: exit %d", r.code)
 	}
-	if r := kit(t, t.TempDir(), nil, nil, "help"); r.code != 0 || !strings.Contains(r.out, "kit push") {
+	for _, arg := range []string{"version", "--version"} {
+		if r := rig(t, t.TempDir(), nil, nil, arg); r.code != 0 || r.out != "0.1.0\n" || r.errOut != "" {
+			t.Fatalf("%s: %+v", arg, r)
+		}
+	}
+	if r := rig(t, t.TempDir(), nil, nil, "help"); r.code != 0 || !strings.Contains(r.out, "rig push") {
 		t.Fatalf("help: %+v", r)
 	}
 }

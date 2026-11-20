@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AindriuB/workspace/cli/internal/config"
-	"github.com/AindriuB/workspace/cli/internal/forge"
-	"github.com/AindriuB/workspace/cli/internal/forge/github"
-	"github.com/AindriuB/workspace/cli/internal/forge/gitlab"
-	"github.com/AindriuB/workspace/cli/internal/git"
+	"github.com/AindriuB/rig/internal/config"
+	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/forge/github"
+	"github.com/AindriuB/rig/internal/forge/gitlab"
+	"github.com/AindriuB/rig/internal/git"
 )
 
-// forgeKind decides which forge hosts the repository at dir: kit.json's
+// forgeKind decides which forge hosts the repository at dir: rig.json's
 // "forge" if set, else a guess from the host of the origin remote (or
-// kit.json's "host"). Anything it cannot place is GitHub, which is what the
-// scripts kit replaces assumed: outside a repository, with no origin, or with
+// rig.json's "host"). Anything it cannot place is GitHub, which is what the
+// scripts rig replaces assumed: outside a repository, with no origin, or with
 // a host that names no forge, such as an SSH config alias.
 func forgeKind(ctx context.Context, dir string) (forge.Kind, error) {
 	repo := git.Repo{Dir: dir}

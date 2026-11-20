@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/AindriuB/workspace/cli/internal/forge"
+	"github.com/AindriuB/rig/internal/forge"
 )
 
 // Forge is a forge.Forge backed by a slice of pull requests.

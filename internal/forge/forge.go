@@ -1,4 +1,4 @@
-// Package forge is the port between kit's commands and a code-hosting
+// Package forge is the port between rig's commands and a code-hosting
 // service. Its types are neutral: nothing here names GitHub or GitLab. An
 // adapter (forge/github, forge/gitlab, forge/fake) implements Forge for one
 // service and translates that service's vocabulary into these types.
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Forge is what kit needs from a code-hosting service.
+// Forge is what rig needs from a code-hosting service.
 type Forge interface {
 	// ViewPR returns one pull request. ref is a number, a URL or a head
 	// branch; "" means the current branch's pull request.
@@ -169,7 +169,7 @@ const (
 
 // KindForHost guesses the forge from a remote's host. It knows the two public
 // hosts and reads a self-hosted name such as gitlab.example.com; for anything
-// else it reports false and the repository must say in kit.json.
+// else it reports false and the repository must say in rig.json.
 func KindForHost(host string) (Kind, bool) {
 	host = strings.ToLower(host)
 	switch {

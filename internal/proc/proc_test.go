@@ -33,7 +33,7 @@ func TestRunPassesArgumentsVerbatim(t *testing.T) {
 
 func TestRunDirAndEnv(t *testing.T) {
 	dir := t.TempDir()
-	res, err := Run(context.Background(), Options{Dir: dir, Env: []string{"KIT_X=1"}}, "sh", "-c", "pwd -P; echo $KIT_X")
+	res, err := Run(context.Background(), Options{Dir: dir, Env: []string{"RIG_X=1"}}, "sh", "-c", "pwd -P; echo $RIG_X")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestRunDirAndEnv(t *testing.T) {
 }
 
 func TestRunMissingProgram(t *testing.T) {
-	_, err := Run(context.Background(), Options{}, "kit-no-such-program")
+	_, err := Run(context.Background(), Options{}, "rig-no-such-program")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
