@@ -32,7 +32,8 @@ func TestStatus(t *testing.T) {
 		"HANDOFF from the last session (",
 		"  Next: verify 07\n  Then record\n",
 		"OPEN TASKS (1):\n  07-foo\n",
-		"WORKTREES (1):\n  task/07-foo  ahead 1  dirty 1  " + wt + "\n",
+		// git prints worktree paths with forward slashes, on Windows too.
+		"WORKTREES (1):\n  task/07-foo  ahead 1  dirty 1  " + filepath.ToSlash(wt) + "\n",
 		"OPEN PRS (2):\n  #12  red  task/07-foo  Add parser  conflict  draft\n",
 	} {
 		if !strings.Contains(r.out, want) {
