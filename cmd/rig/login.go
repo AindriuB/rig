@@ -165,7 +165,7 @@ func (a *app) logout(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail("logout", "%v", err)
 	}
-	_, accounts, err := a.jiraAccounts(layers, root, *o.url, *o.repo)
+	_, _, accounts, err := a.jiraAccounts(layers, root, *o.url, *o.repo)
 	if err != nil {
 		return a.fail("logout", "%v", err)
 	}
@@ -198,39 +198,41 @@ func storeKinds() []string {
 }
 
 // jiraSite is the site named by --url, else tracker.url.
-func jiraSite(layers *config.Layers, flagURL string) (site, host string, err error) {
-	site = flagURL
+// source says where it came from: "--url" or "tracker.url in <scope> config".
+func jiraSite(layers *config.Layers, flagURL string) (site, host, source string, err error) {
+	site, source = flagURL, "--url"
 	if site == "" {
 		v, _ := layers.Get(config.KeyTrackerURL)
 		site, _ = v.Value.(string)
+		source = "tracker.url in " + v.Scope + " config"
 	}
 	if site == "" {
-		return "", "", errors.New("no Jira site: give --url or set tracker.url")
+		return "", "", "", errors.New("no Jira site: give --url or set tracker.url")
 	}
 	host, err = jira.Host(site)
-	return site, host, err
+	return site, host, source, err
 }
 
 // jiraAccounts returns the site and the accounts to look in, most specific
 // first: with repo, only the repository's own; otherwise the repository's, if
 // it has a key, then the global one. accounts[0] is where a login writes.
-func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo bool) (site string, accounts []string, err error) {
-	site, host, err := jiraSite(layers, flagURL)
+func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo bool) (site, source string, accounts []string, err error) {
+	site, host, source, err := jiraSite(layers, flagURL)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	global := "jira:" + host
 	if repo {
 		if root == "" {
-			return "", nil, errors.New("--repo needs a git repository")
+			return "", "", nil, errors.New("--repo needs a git repository")
 		}
 		key := layers.RepoKey()
 		if key == "" {
-			return "", nil, errors.New("--repo needs a repository with an origin remote")
+			return "", "", nil, errors.New("--repo needs a repository with an origin remote")
 		}
-		return site, []string{global + ":" + key}, nil
+		return site, source, []string{global + ":" + key}, nil
 	}
-	return site, []string{global}, nil
+	return site, source, []string{global}, nil
 }
 
 // loginJira implements `rig login jira`.
@@ -246,11 +248,15 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 	if store == storeFile && runtime.GOOS == "windows" {
 		return a.fail("login", "--store file is not offered on Windows, which has Credential Manager")
 	}
-	site, accounts, err := a.jiraAccounts(layers, root, *o.url, *o.repo)
+	site, source, accounts, err := a.jiraAccounts(layers, root, *o.url, *o.repo)
 	if err != nil {
 		return a.fail("login", "%v", err)
 	}
 	account := accounts[0]
+	// Name the site before any prompt: it may come from a committed project
+	// file, and the user should see where the token is about to go.
+	host, _ := jira.Host(site)
+	fmt.Fprintf(a.stderr, "Jira site: %s (from %s)\n", host, source)
 
 	user := strings.TrimSpace(*o.user)
 	if user == "" {
@@ -480,7 +486,7 @@ func (a *app) loginStatus(ctx context.Context, layers *config.Layers, remote str
 // jiraStatus checks the stored (or RIG_JIRA_TOKEN) login against the site.
 func (a *app) jiraStatus(ctx context.Context, layers *config.Layers) loginStatus {
 	s := loginStatus{Service: "jira"}
-	site, host, err := jiraSite(layers, "")
+	site, host, _, err := jiraSite(layers, "")
 	if err != nil {
 		s.Error = err.Error()
 		return s

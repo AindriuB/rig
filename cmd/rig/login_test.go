@@ -495,3 +495,26 @@ func TestLoginStatusJSON(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, e.out.String())
 	}
 }
+
+func TestLoginJiraNamesSiteAndSourceBeforePrompt(t *testing.T) {
+	srv := jiraServer(t, 200)
+	host := strings.TrimPrefix(srv.URL, "https://")
+	e := newLoginEnv(t)
+	e.stdin(marker + "\n")
+	e.run("login", "jira", "--url", srv.URL, "--user", "u")
+	if want := "Jira site: " + host + " (from --url)\n"; !strings.HasPrefix(e.err.String(), want) {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+
+	// A project-scoped tracker.url (a committed .rig/config.json) is named.
+	b, _ := json.Marshal(map[string]any{"tracker": map[string]any{"url": srv.URL}})
+	os.MkdirAll(filepath.Join(e.repo, ".rig"), 0o755)
+	if err := os.WriteFile(filepath.Join(e.repo, ".rig", "config.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.stdin("u\n" + marker + "\n")
+	e.run("login", "jira")
+	if want := "Jira site: " + host + " (from tracker.url in local config)\n"; !strings.HasPrefix(e.err.String(), want) {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+}
