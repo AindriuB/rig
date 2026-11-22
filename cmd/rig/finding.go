@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/workflow"
@@ -110,13 +111,19 @@ func (a *app) findingAdd(ctx context.Context, args []string) int {
 	data := store.FindingData{Severity: *sev, Key: *key, Summary: *summary, Path: *path, Fields: fields}
 
 	var dup *store.Finding
+	var newID string
 	task, err := w.st.Update(ctx, pos[0], func(_ store.Task, cur []store.Finding) ([]store.Event, error) {
 		dup = nil
 		if f, ok := store.FindOpenByKey(cur, *key); ok {
 			dup = &f
 			return nil, nil
 		}
-		ev, err := store.NewEvent(store.KindFinding, data)
+		// The id is chosen here so the finding can be found again by it,
+		// whatever its status or key become before the read-back.
+		d := data
+		d.ID = store.NewULID(time.Now())
+		newID = d.ID
+		ev, err := store.NewEvent(store.KindFinding, d)
 		return []store.Event{ev}, err
 	})
 	if err != nil {
@@ -130,7 +137,7 @@ func (a *app) findingAdd(ctx context.Context, args []string) int {
 		if err != nil {
 			return a.storeFail("finding add", err)
 		}
-		i := slices.IndexFunc(all, func(f store.Finding) bool { return f.Status == store.StatusOpen && f.Key == *key })
+		i := slices.IndexFunc(all, func(f store.Finding) bool { return f.ID == newID })
 		if i < 0 {
 			return a.fail("finding add", "the new finding is missing from the store")
 		}
@@ -244,11 +251,14 @@ func (a *app) findingSet(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail("finding set", err)
 	}
+	var id string
 	task, err := w.st.Update(ctx, pos[0], func(_ store.Task, cur []store.Finding) ([]store.Event, error) {
+		id = ""
 		i := slices.IndexFunc(cur, func(f store.Finding) bool { return f.ID == pos[1] || f.Short == pos[1] })
 		if i < 0 {
 			return nil, fmt.Errorf("finding %q: %w", pos[1], store.ErrNotFound)
 		}
+		id = cur[i].ID
 		if cur[i].Status == *status {
 			return nil, nil
 		}
@@ -262,7 +272,7 @@ func (a *app) findingSet(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail("finding set", err)
 	}
-	i := slices.IndexFunc(all, func(f store.Finding) bool { return f.ID == pos[1] || f.Short == pos[1] })
+	i := slices.IndexFunc(all, func(f store.Finding) bool { return f.ID == id })
 	if i < 0 {
 		return a.fail("finding set", "finding %q is missing from the store", pos[1])
 	}

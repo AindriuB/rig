@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -287,6 +288,63 @@ func TestFindingAddValuesAreNotFlags(t *testing.T) {
 	}
 	if fs = mustFindings(t, st, task.ID); len(fs) != 2 || fs[1].Summary != "--json" {
 		t.Fatalf("saved %+v", fs)
+	}
+}
+
+// readbackStore runs hook once, just before the first Findings read after an
+// Update, as a concurrent writer would.
+type readbackStore struct {
+	store.Store
+	armed bool
+	hook  func()
+}
+
+func (r *readbackStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, err := r.Store.Update(ctx, ref, next)
+	r.armed = true
+	return t, err
+}
+
+func (r *readbackStore) Findings(ctx context.Context, ref string) ([]store.Finding, error) {
+	if r.armed && r.hook != nil {
+		r.armed = false
+		r.hook()
+	}
+	return r.Store.Findings(ctx, ref)
+}
+
+func TestFindingAddAndSetSurviveConcurrentChange(t *testing.T) {
+	mem := memstore.New(store.Options{Now: tick()})
+	r := &readbackStore{Store: mem}
+	a, _ := workApp(t, r)
+	task := newTask(t, mem)
+	fixAll := func() {
+		for _, f := range mustFindings(t, mem, task.ID) {
+			mem.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+				ev, _ := store.NewEvent(store.KindFindingStatus, store.FindingStatusData{Finding: f.ID, Status: store.StatusFixed})
+				return []store.Event{ev}, nil
+			})
+		}
+	}
+	r.hook = fixAll
+	code, out, e := runIn(a, "finding", "add", task.Short, "--severity", "P2", "--summary", "mine", "--json")
+	var got addJSON
+	if code != 0 || json.Unmarshal([]byte(out), &got) != nil || got.Finding.Summary != "mine" || got.Duplicate {
+		t.Fatalf("add: %d %s %s", code, out, e)
+	}
+	r.hook = nil
+	runIn(a, "finding", "add", task.Short, "--severity", "P2", "--summary", "other")
+	other := mustFindings(t, mem, task.ID)[1]
+	r.hook = func() {
+		mem.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+			ev, _ := store.NewEvent(store.KindFindingStatus, store.FindingStatusData{Finding: other.ID, Status: store.StatusDeferred})
+			return []store.Event{ev}, nil
+		})
+	}
+	code, out, e = runIn(a, "finding", "set", task.Short, other.Short, "--status", "wontfix", "--json")
+	var set store.Finding
+	if code != 0 || json.Unmarshal([]byte(out), &set) != nil || set.ID != other.ID {
+		t.Fatalf("set: %d %s %s", code, out, e)
 	}
 }
 
