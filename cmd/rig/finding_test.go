@@ -269,6 +269,27 @@ func TestFindingSetJSON(t *testing.T) {
 	}
 }
 
+func TestFindingAddValuesAreNotFlags(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, st)
+	task := newTask(t, st)
+	code, _, e := runIn(a, "finding", "add", task.Short, "--severity", "P2", "--summary", "--field=route=implementer")
+	if code != 0 {
+		t.Fatalf("add: %d %s", code, e)
+	}
+	fs := mustFindings(t, st, task.ID)
+	if len(fs) != 1 || fs[0].Summary != "--field=route=implementer" || len(fs[0].Fields) != 0 {
+		t.Fatalf("saved %+v", fs)
+	}
+	code, out, e := runIn(a, "finding", "add", task.Short, "--severity", "P2", "--summary", "--json")
+	if code != 0 || strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Fatalf("add: %d %q %s", code, out, e)
+	}
+	if fs = mustFindings(t, st, task.ID); len(fs) != 2 || fs[1].Summary != "--json" {
+		t.Fatalf("saved %+v", fs)
+	}
+}
+
 // TestFindingNoteEndToEnd runs both commands on a gitref store in a throwaway
 // repository, under the kit-loop workflow.
 func TestFindingNoteEndToEnd(t *testing.T) {

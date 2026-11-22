@@ -10,20 +10,31 @@ import (
 	"github.com/AindriuB/rig/internal/workflow"
 )
 
-// takeRepeated removes every `name value` and `name=value` from args and
-// returns the rest with the values, in order. The flag parser keeps only the
-// last value of a flag, so a repeatable flag is taken out first.
-func takeRepeated(args []string, name string) (rest, vals []string, err error) {
+// takeRepeated takes the repeatable string flags in repeated out of args
+// (`--name value` and `--name=value`) and returns what is left, with their
+// values in order. The flags in others take a value too: it is kept as it
+// is and never read as a flag, so a value that looks like a repeated flag is
+// not mistaken for one.
+func takeRepeated(args, repeated, others []string) (rest []string, vals map[string][]string, err error) {
+	vals = map[string][]string{}
 	for i := 0; i < len(args); i++ {
+		name, val, hasVal := strings.Cut(args[i], "=")
 		switch {
-		case args[i] == name:
-			if i+1 >= len(args) {
-				return nil, nil, fmt.Errorf("%s needs a value", name)
+		case slices.Contains(repeated, name):
+			if !hasVal {
+				if i+1 >= len(args) {
+					return nil, nil, fmt.Errorf("%s needs a value", name)
+				}
+				i++
+				val = args[i]
 			}
-			i++
-			vals = append(vals, args[i])
-		case strings.HasPrefix(args[i], name+"="):
-			vals = append(vals, strings.TrimPrefix(args[i], name+"="))
+			vals[name] = append(vals[name], val)
+		case slices.Contains(others, name):
+			rest = append(rest, args[i])
+			if !hasVal && i+1 < len(args) {
+				i++
+				rest = append(rest, args[i])
+			}
 		default:
 			rest = append(rest, args[i])
 		}
@@ -58,10 +69,11 @@ func (a *app) finding(ctx context.Context, args []string) int {
 }
 
 func (a *app) findingAdd(ctx context.Context, args []string) int {
-	args, fieldArgs, err := takeRepeated(args, "--field")
+	args, rep, err := takeRepeated(args, []string{"--field"}, []string{"--severity", "--summary", "--path", "--key", "--repo"})
 	if err != nil {
 		return a.fail("finding add", "%v", err)
 	}
+	fieldArgs := rep["--field"]
 	fs := newFlags()
 	repoFlag, jsonOut := fs.str("--repo"), fs.boolean("--json")
 	sev, summary, path, key := fs.str("--severity"), fs.str("--summary"), fs.str("--path"), fs.str("--key")
@@ -136,10 +148,11 @@ func (a *app) findingAdd(ctx context.Context, args []string) int {
 }
 
 func (a *app) findingList(ctx context.Context, args []string) int {
-	args, statuses, err := takeRepeated(args, "--status")
+	args, rep, err := takeRepeated(args, []string{"--status"}, []string{"--repo"})
 	if err != nil {
 		return a.fail("finding list", "%v", err)
 	}
+	statuses := rep["--status"]
 	fs := newFlags()
 	repoFlag, jsonOut, blocking := fs.str("--repo"), fs.boolean("--json"), fs.boolean("--blocking")
 	pos, err := fs.parse(args)
