@@ -41,10 +41,24 @@ func Default() Config {
 // Load reads <root>/.claude/rig.json. An unknown key is an error, so a typo
 // is not read as "use the default".
 func Load(root string) (Config, error) {
+	c, err := read(root)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(c.PushPrefixes) == 0 {
+		c.PushPrefixes = append([]string(nil), DefaultPushPrefixes...)
+	}
+	return c, nil
+}
+
+// read reads and checks <root>/.claude/rig.json without filling defaults, so
+// a caller can tell an unset key from a default. A missing file is the zero
+// Config.
+func read(root string) (Config, error) {
 	path := filepath.Join(root, File)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Default(), nil
+		return Config{}, nil
 	}
 	if err != nil {
 		return Config{}, err
@@ -59,9 +73,6 @@ func Load(root string) (Config, error) {
 	case "", "github", "gitlab":
 	default:
 		return Config{}, fmt.Errorf("%s: forge must be \"github\" or \"gitlab\", not %q", path, c.Forge)
-	}
-	if len(c.PushPrefixes) == 0 {
-		c.PushPrefixes = append([]string(nil), DefaultPushPrefixes...)
 	}
 	for _, p := range c.PushPrefixes {
 		if !prefixRE.MatchString(p) {
