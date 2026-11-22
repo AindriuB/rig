@@ -37,6 +37,9 @@ var keys = []string{
 	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow,
 }
 
+// Keys returns the allow-list, sorted.
+func Keys() []string { return slices.Clone(keys) }
+
 // globalOnly are the keys that widen what rig does without asking: read only
 // from the global file and never written by Set or Unset.
 var globalOnly = []string{KeyPushPrefixes, KeyWorkflow}

@@ -58,6 +58,12 @@ const usage = `usage: rig <command>
   rig workflow validate [<file>] [--json] [--repo <dir>]
   rig next [--who agent|human] [--limit <n>] [--json] [--repo <dir>]
   rig context <task> [--budget <tokens>] [--json] [--repo <dir>]
+  rig config get <key> [--global|--repo|--local] [--json]
+  rig config set <key> <value> --global|--repo|--local
+  rig config unset <key> --global|--repo|--local
+  rig config list [--global|--repo|--local] [--show-origin] [--json]
+  rig login <service>
+  rig logout <service>
   rig version
 `
 
@@ -98,6 +104,12 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.next(ctx, args[1:])
 	case "context":
 		return a.context(ctx, args[1:])
+	case "config":
+		return a.config(ctx, args[1:])
+	case "login":
+		return a.login(ctx, args[1:])
+	case "logout":
+		return a.logout(ctx, args[1:])
 	case "version", "--version":
 		fmt.Fprintln(a.stdout, version)
 		return 0
