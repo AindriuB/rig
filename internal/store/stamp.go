@@ -18,7 +18,7 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 	if n.Initial == "" {
 		return Event{}, errors.New("new task: initial state is empty")
 	}
-	now := o.Now()
+	now := o.Now().UTC().Round(0)
 	id := NewULID(now)
 	raw, err := json.Marshal(CreatedData{
 		Short: ShortID(TaskPrefix, id, taken), Slug: n.Slug, Title: n.Title,
@@ -53,7 +53,7 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 		seq = max(seq, e.Seq)
 	}
 
-	now := o.Now()
+	now := o.Now().UTC().Round(0)
 	out := make([]Event, 0, len(events))
 	for _, e := range events {
 		seq++
