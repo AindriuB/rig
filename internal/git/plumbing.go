@@ -68,7 +68,7 @@ func (r Repo) MakeTree(ctx context.Context, entries []TreeEntry) (string, error)
 // CommitTree creates a commit of tree with the given parents and message,
 // authored and committed as rig <rig@localhost>. It moves no ref.
 func (r Repo) CommitTree(ctx context.Context, tree string, parents []string, message string) (string, error) {
-	args := []string{"commit-tree", tree}
+	args := []string{"commit-tree", "--no-gpg-sign", tree}
 	for _, p := range parents {
 		args = append(args, "-p", p)
 	}
