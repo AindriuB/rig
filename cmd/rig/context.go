@@ -127,7 +127,7 @@ func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 	if err != nil {
 		return nil, err
 	}
-	commits, err := w.commitLines(ctx, files)
+	commits, err := w.commitLines(ctx, t, ownsName, files)
 	if err != nil {
 		return nil, err
 	}
@@ -468,8 +468,9 @@ func stripLine(p string) string {
 }
 
 // commitLines is section 7: the last commits on the default branch touching
-// files.
-func (w *work) commitLines(ctx context.Context, files []string) ([]string, error) {
+// the task's owns globs (passed as globs, so a wide match cannot overflow the
+// command line). files only says whether anything is owned.
+func (w *work) commitLines(ctx context.Context, t store.Task, ownsName string, files []string) ([]string, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
@@ -486,10 +487,7 @@ func (w *work) commitLines(ctx context.Context, files []string) ([]string, error
 			return nil, err // no such ref: leave Commits empty
 		}
 	}
-	specs := make([]string, len(files))
-	for i, f := range files {
-		specs[i] = ":(top,literal)" + f
-	}
+	specs := globSpecs(stringList(t.Fields[ownsName]))
 	cs, err := w.repo.LogPaths(ctx, rev, specs, commitLimit)
 	if err != nil {
 		return nil, err

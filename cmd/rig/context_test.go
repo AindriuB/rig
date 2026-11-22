@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -468,5 +472,56 @@ func TestContextNoLocalDefaultBranch(t *testing.T) {
 	gitc(t, repo, "update-ref", "-d", "refs/remotes/origin/main")
 	if code, text := ctxRun(t, a, out, "alpha"); code != 0 || strings.Contains(text, "grow a") {
 		t.Fatalf("exit %d:\n%s", code, text)
+	}
+}
+
+// A wide owns glob must reach git log as the glob pathspecs, not as one
+// argument per matched file.
+func TestContextCommitsPassGlobsToLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell shim for git")
+	}
+	repo := ctxRepo(t)
+	for i := 0; i < 200; i++ {
+		p := filepath.Join(repo, "wide", fmt.Sprintf("file-%03d.txt", i))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitc(t, repo, "add", ".")
+	gitc(t, repo, "commit", "-q", "-m", "add wide")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	shim := t.TempDir()
+	logFile := filepath.Join(shim, "log-args")
+	script := "#!/bin/sh\n" +
+		"case \" $* \" in *\" log \"*) echo $# >> '" + logFile + "';; esac\n" +
+		"exec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	st := memstore.New(store.Options{Now: tick()})
+	ctxTask(t, st, "alpha", "", "wide/**", "src/a.go")
+	a, out, errOut := ctxApp(t, repo, st)
+	code, text := ctxRun(t, a, out, "alpha")
+	if code != 0 || !strings.Contains(text, " add wide\n") || !strings.Contains(text, " grow a\n") {
+		t.Fatalf("exit %d (%s):\n%s", code, errOut, text)
+	}
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("git log was not run: %v", err)
+	}
+	for _, f := range strings.Fields(string(data)) {
+		if n, _ := strconv.Atoi(f); n > 20 {
+			t.Errorf("git log got %d args; want the globs, not one per file", n)
+		}
 	}
 }
