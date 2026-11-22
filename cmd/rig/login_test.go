@@ -679,3 +679,22 @@ func TestForgeTargetFor(t *testing.T) {
 		})
 	}
 }
+
+func TestLogoutPointsToRepoLoginWhenOnlyRepoEntryExists(t *testing.T) {
+	e := newLoginEnv(t)
+	srv := jiraServer(t, 200)
+	e.globalConfig(map[string]any{"tracker": map[string]any{"url": srv.URL}})
+	e.stdin(marker + "\n")
+	if code := e.run("login", "jira", "--user", "me@x.io", "--repo"); code != 0 {
+		t.Fatalf("login: exit %d\n%s", code, e.err.String())
+	}
+	if code := e.run("logout", "jira"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if strings.Contains(e.out.String()+e.err.String(), "Not logged in") || !strings.Contains(e.out.String()+e.err.String(), "rig logout jira --repo") {
+		t.Fatalf("stdout %q stderr %q", e.out.String(), e.err.String())
+	}
+	if len(e.stores[storeKeychain].m) != 1 {
+		t.Fatalf("repo entry not kept: %v", e.stores[storeKeychain].m)
+	}
+}

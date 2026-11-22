@@ -206,6 +206,19 @@ func (a *app) logout(ctx context.Context, args []string) int {
 	if len(unknown) > 0 {
 		return a.fail("logout", "could not check the %s store; no entry found in %s", strings.Join(unknown, ", "), strings.Join(absent, ", "))
 	}
+	if !*o.repo && root != "" && layers.RepoKey() != "" {
+		repoAcct := account + ":" + layers.RepoKey()
+		for _, kind := range storeKinds() {
+			st, err := a.secrets(kind)
+			if err != nil {
+				continue
+			}
+			if _, err := st.Get(ctx, repoAcct); err == nil {
+				fmt.Fprintf(a.stdout, "No global login for %s, but this repository has its own; run: rig logout jira --repo\n", host)
+				return 0
+			}
+		}
+	}
 	fmt.Fprintf(a.stdout, "Not logged in to %s\n", host)
 	return 0
 }
@@ -236,8 +249,8 @@ func jiraSite(layers *config.Layers, flagURL string) (site, host, source string,
 }
 
 // jiraAccounts returns the site and the accounts to look in, most specific
-// first: with repo, only the repository's own; otherwise the repository's, if
-// it has a key, then the global one. accounts[0] is where a login writes.
+// first: with repo, only the repository's own; otherwise only the global one.
+// accounts[0] is where a login writes and the one logout deletes.
 func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo bool) (site, source string, accounts []string, err error) {
 	site, host, source, err := jiraSite(layers, flagURL)
 	if err != nil {
