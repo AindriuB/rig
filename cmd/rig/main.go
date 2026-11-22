@@ -9,12 +9,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/AindriuB/rig/internal/forge"
+	"github.com/AindriuB/rig/internal/proc"
+	"github.com/AindriuB/rig/internal/secret"
 	"github.com/AindriuB/rig/internal/store"
 )
 
@@ -29,6 +32,14 @@ type app struct {
 	store func(ctx context.Context, dir string) (store.Store, error)
 	// now is the clock events are stamped with.
 	now func() time.Time
+	// stdin is where login reads a user and token from.
+	stdin *os.File
+	// secrets opens the secret store of kind "keychain" or "file".
+	secrets func(kind string) (secret.Store, error)
+	// interactive runs a program on the user's terminal (gh auth login).
+	interactive func(ctx context.Context, o proc.Options, name string, args ...string) (int, error)
+	// httpClient makes rig's own HTTP calls (the Jira check).
+	httpClient *http.Client
 }
 
 const usage = `usage: rig <command>
@@ -62,8 +73,10 @@ const usage = `usage: rig <command>
   rig config set <key> <value> --global|--repo|--local
   rig config unset <key> --global|--repo|--local
   rig config list [--global|--repo|--local] [--show-origin] [--json]
-  rig login <service>
-  rig logout <service>
+  rig login                                  (the forge, then Jira when tracker.kind is jira)
+  rig login <service> [--url <site>] [--user <email>] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
+  rig login status [--json]
+  rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
   rig version
 `
 
@@ -77,6 +90,8 @@ func main() {
 	}
 	a := &app{stdout: os.Stdout, stderr: os.Stderr, getenv: os.Getenv, cwd: cwd, forge: selectForge, now: time.Now}
 	a.store = a.openStore
+	a.stdin, a.secrets, a.interactive = os.Stdin, a.openSecrets, proc.Interactive
+	a.httpClient = &http.Client{Timeout: 15 * time.Second}
 	os.Exit(a.run(ctx, os.Args[1:]))
 }
 
