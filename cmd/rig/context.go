@@ -427,7 +427,7 @@ func (w *work) otherTasks(ctx context.Context, t store.Task, ownsName string, fi
 			return nil, nil, err
 		}
 		for _, f := range fs {
-			if f.Status == store.StatusOpen || (f.Path != "" && !mine[f.Path]) {
+			if f.Status == store.StatusOpen || (f.Path != "" && !mine[stripLine(f.Path)]) {
 				continue
 			}
 			hist = append(hist, entry{f.Updated, f.ID, fmt.Sprintf("%s finding %s %s %s: %s", o.Short, f.Short, f.Severity, f.Status, oneLine(f.Summary))})
@@ -451,6 +451,20 @@ func (w *work) otherTasks(ctx context.Context, t store.Task, ownsName string, fi
 		history = append(history, h.line)
 	}
 	return overlap, history, nil
+}
+
+// stripLine drops a trailing ":<digits>" line number from a finding path.
+func stripLine(p string) string {
+	i := strings.LastIndexByte(p, ':')
+	if i < 0 || i == len(p)-1 {
+		return p
+	}
+	for _, c := range p[i+1:] {
+		if c < '0' || c > '9' {
+			return p
+		}
+	}
+	return p[:i]
 }
 
 // commitLines is section 7: the last commits on the default branch touching
