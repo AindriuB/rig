@@ -521,6 +521,9 @@ func TestLoginJiraNamesSiteAndSourceBeforePrompt(t *testing.T) {
 }
 
 func TestLogoutSkipsAStoreThatCannotOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no file store, so an unopenable keychain leaves nothing to delete (exit 2 by the fail-closed rule)")
+	}
 	e := newLoginEnv(t)
 	e.a.secrets = func(kind string) (secret.Store, error) {
 		if kind == storeKeychain {
@@ -535,7 +538,7 @@ func TestLogoutSkipsAStoreThatCannotOpen(t *testing.T) {
 	if !strings.Contains(e.err.String(), "skipped the keychain store") {
 		t.Fatalf("stderr %q", e.err.String())
 	}
-	if runtime.GOOS != "windows" && len(e.stores[storeFile].m) != 0 {
+	if len(e.stores[storeFile].m) != 0 {
 		t.Fatal("file entry kept")
 	}
 }
