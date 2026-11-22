@@ -175,3 +175,18 @@ func TestPlumbingSHA256(t *testing.T) {
 		t.Fatalf("ReadRefs = %+v %v", refs, err)
 	}
 }
+
+// A user's commit.gpgSign setting must not sign or block store commits.
+func TestCommitTreeIgnoresGPGSign(t *testing.T) {
+	r := plumbingRepo(t)
+	sh(t, r.Dir, "config", "commit.gpgsign", "true")
+	sh(t, r.Dir, "config", "gpg.program", "/nonexistent/gpg")
+	_, _, c := commitData(t, r, "x\n")
+	out, err := exec.Command("git", "-C", r.Dir, "cat-file", "commit", c).CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(out))
+	}
+	if strings.Contains(string(out), "gpgsig") {
+		t.Fatalf("commit is signed:\n%s", out)
+	}
+}
