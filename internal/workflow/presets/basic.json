@@ -1,0 +1,21 @@
+{
+  "name": "basic",
+  "version": 1,
+  "initial": "open",
+  "branch": "task/{short}-{slug}",
+  "states": {
+    "open":    { "action": "start" },
+    "doing":   { "action": "finish" },
+    "done":    { "final": true },
+    "stopped": { "action": "decide", "who": "human" }
+  },
+  "transitions": [
+    { "from": "open", "to": "doing" },
+    { "from": "doing", "to": "done" },
+    { "from": "*", "to": "stopped", "takes": "reason" },
+    { "from": "stopped", "to": "$previous" }
+  ],
+  "findings": {
+    "severities": ["blocking", "info"]
+  }
+}
