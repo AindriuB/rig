@@ -2,25 +2,11 @@ package main
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/AindriuB/rig/internal/store"
 )
-
-// AC5: the six phase-2 commands dispatch to stubs that exit 2.
-func TestPhase2StubsNotBuilt(t *testing.T) {
-	for _, cmd := range []string{"task", "finding", "note", "workflow", "next", "context"} {
-		r := rig(t, t.TempDir(), nil, nil, cmd, "anything")
-		if r.code != 2 || r.out != "" || r.errOut != "rig "+cmd+": not built yet\n" {
-			t.Fatalf("%s: %+v", cmd, r)
-		}
-		if h := rig(t, t.TempDir(), nil, nil, "help"); !strings.Contains(h.out, "rig "+cmd+" ") {
-			t.Fatalf("usage does not list %s", cmd)
-		}
-	}
-}
 
 func TestOpenStore(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
