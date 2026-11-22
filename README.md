@@ -1,29 +1,23 @@
 # rig
 
-`rig` is a small command-line tool for the mechanical parts of a
-branch-per-task workflow: pushing a task branch, opening and reading pull
-requests, waiting for CI, and printing where the work stands. It was built
-for [claude-kit](https://github.com/AindriuB/workspace), where coding agents
-run these steps many times a day, but it does not depend on the kit.
+`rig` is a command-line toolkit for branch-per-task development and agent
+workflows. It combines guarded branch pushes and pull-request/CI operations
+with a local task, finding, note, and workflow system. It works with GitHub
+and GitLab, and is designed to be usable by people and automation through
+stable exit codes and JSON output.
 
-It exists for two reasons:
-
-- **A narrow push.** `rig push` takes a task id or a branch name and nothing
-  else. It cannot push the default branch, a tag, a refspec or a force push,
-  so it is safe to allow without a prompt.
-- **One interface over two forges.** The same commands and the same output
-  work on GitHub and GitLab. rig runs `gh` or `glab` underneath and uses the
-  login you already have; it never holds a token.
+Forge operations use the `gh` or `glab` command-line client and its existing
+login; rig does not store forge tokens. Git operations use `git` directly.
 
 ## Install
 
-rig needs Go 1.24 or later, `git`, and `gh` (GitHub) or `glab` (GitLab).
+Requires Go 1.24 or later, `git`, and `gh` (GitHub) or `glab` (GitLab).
 
 ```bash
 go install github.com/AindriuB/rig/cmd/rig@v0.1.0
 ```
 
-While the repository is private, tell Go not to use the public proxy:
+If the module is private, configure Go to fetch it directly:
 
 ```bash
 GOPRIVATE=github.com/AindriuB/* go install github.com/AindriuB/rig/cmd/rig@v0.1.0
@@ -31,76 +25,76 @@ GOPRIVATE=github.com/AindriuB/* go install github.com/AindriuB/rig/cmd/rig@v0.1.
 
 ## Commands
 
-```text
-rig push <task-id|branch> [--worktree <path>]
-rig pr view [<pr|branch> | --task <id>] [--json] [--repo <dir>]
-rig pr list [--mine] [--head <branch>] [--state open|closed|merged] [--limit <n>] [--json] [--repo <dir>]
-rig pr checks [<pr|branch> | --task <id>] [--json] [--repo <dir>]
-rig pr open --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]
-rig pr wait <pr-number | --run <run-id>> [--repo <dir>]
-rig status [--json]
-rig version
-```
+Run `rig --help` for the full syntax and command-specific flags. Repository
+commands generally accept `--repo <dir>`; commands that have machine-readable
+output support `--json`.
 
-| Command | What it does | Exit codes |
-|---|---|---|
-| `rig push` | Pushes one branch to `origin`. A task id such as `07` resolves to `task/07-<slug>`. | 0 pushed; 1 the push failed; 2 refused, git never ran |
-| `rig pr view`, `checks`, `list` | Prints pull requests and their CI state in one neutral form. | 0; 2 on any error |
-| `rig pr open` | Opens a pull request for a branch that is already pushed. It never pushes. | 0; 2 on any error |
-| `rig pr wait` | Blocks until a pull request's checks, or one CI run, finish. | 0 green; 1 red; 2 error or timeout |
-| `rig status` | Prints the handoff note, task files, worktrees and open pull requests. | 0; 2 on a usage error |
+| Command group | What it does |
+|---|---|
+| `rig push` | Pushes one permitted local branch to the same branch on `origin`. |
+| `rig pr` | Views and lists pull requests, reads checks, opens a PR for an already-pushed branch, and waits for checks or a CI run. Supports GitHub and GitLab. |
+| `rig status` | Summarizes handoff notes, task files, worktrees, and open pull requests. |
+| `rig task` | Creates, lists, shows, edits, and transitions tasks; manages task fields and counters and displays task history. |
+| `rig finding` | Adds and lists findings attached to tasks, with workflow-defined severities and fields. |
+| `rig note` | Adds and lists task or repository notes. |
+| `rig workflow` | Shows or validates a workflow definition. |
+| `rig next` / `rig context` | Previews available task transitions and assembles task context for a caller. |
+| `rig config` | Reads, lists, and updates supported configuration at an explicit scope. |
+| `rig login` / `rig logout` | Checks or manages GitHub, GitLab, and Jira authentication. |
+| `rig version` | Prints the installed version. |
 
-An unknown flag always exits 2. `--json` output and the exit codes are a
-stable contract, described in [docs/design.md](docs/design.md).
+### Push safety
 
-## What `rig push` will push
+`rig push <task-id|branch>` accepts only an existing local branch under an
+allowed prefix (defaults: `task` and `record`), and pushes it to the matching
+branch on `origin`. It refuses the default branch, tags, refspecs, other
+remotes, and force pushes. A task ID resolves to its task branch when one can
+be derived. `pushPrefixes` in `.claude/rig.json` can widen the allowed prefixes,
+so treat that file as trusted configuration.
 
-A branch is pushed only if all of these hold:
+### Tasks and workflows
 
-- it is `<prefix>/<name>`, and the prefix is in `pushPrefixes` (by default
-  `task` and `record`);
-- it uses only letters, digits and `. _ / -`;
-- it is not the repository's default branch;
-- it exists locally.
+Tasks are stored as append-only event logs in Git refs, not as mutable files in
+the working tree. Current task state, fields, counters, findings, and notes are
+derived from those events. The `basic` workflow is built in; workflows can
+define states, transitions, gates, hooks, fields, findings, and counters.
+Transition gates are checked before a write. Hooks run after it, so a hook
+failure does not roll the transition back. `rig next` is a preview: command
+gates are reported as not run.
 
-It is pushed to the branch of the same name on `origin`. There is no option
-for another remote, a force push or tags.
+### Configuration and authentication
 
-## Configuration
-
-`.claude/rig.json` in the repository is optional. Every key has a default.
-
-| Key | Meaning | Default |
-|---|---|---|
-| `forge` | `github` or `gitlab` | detected from the origin host |
-| `host` | the forge's host, for a self-hosted instance | the origin host |
-| `pushPrefixes` | branch prefixes `rig push` may push | `["task", "record"]` |
-
-`pushPrefixes` widens what `rig push` can do without a prompt, so treat the
-file as yours: do not let an agent edit it unasked.
+Configuration supports global (`~/.rig/config.json`), repository-specific,
+and checkout-local (`.rig/config.json`) settings, plus the legacy
+`.claude/rig.json` forge and push settings. Supported keys include
+`forge.kind`, `forge.host`, `push.prefixes`, `tracker.kind`, `tracker.url`,
+`tracker.project`, and `workflow`. Run `rig config --help` for scope syntax.
+Credentials do not belong in config; use `rig login` instead. GitHub and
+GitLab authentication is delegated to `gh` and `glab`. Jira credentials can be
+stored in the OS keychain or an explicitly selected file store; the
+`RIG_JIRA_TOKEN` environment variable can override a stored token without
+writing it to disk.
 
 ## Development
 
-```bash
-go vet ./...
-```
+The implementation is organized into three layers: CLI commands in `cmd/rig`,
+interfaces and domain logic in `internal`, and adapters for Git, forge CLIs,
+credentials, and Git-backed task storage. Run:
 
 ```bash
+go vet ./...
 go test ./...
 ```
 
-The tests use throwaway git repositories and stub `gh` and `glab` programs, so
-they need no network and no login. The code is in three layers: commands in
-`cmd/rig`, the forge interface in `internal/forge`, and one adapter per forge
-below it. [docs/design.md](docs/design.md) has the full design and the phases
-planned next.
+Tests use temporary Git repositories and stub forge executables, so they need
+no network or account login.
 
 ## Releasing
 
-1. Set `version` in `cmd/rig/version.go`. A new command, flag or JSON field
-   raises the minor version; a change to an existing one raises the major.
-2. Tag the commit `v<version>` and push the tag.
-3. The release workflow builds the binaries and drafts a GitHub release.
+Update the version in `cmd/rig/version.go`, tag the commit `v<version>`, and
+push the tag. The release workflow tests the code, builds Linux, macOS, and
+Windows binaries, generates SHA-256 checksums, and creates a draft GitHub
+release for manual publication.
 
 ## License
 
