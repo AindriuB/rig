@@ -173,10 +173,12 @@ func (a *app) logout(ctx context.Context, args []string) int {
 	failed := false
 	for _, kind := range storeKinds() {
 		st, err := a.secrets(kind)
-		if err == nil {
-			err = st.Delete(ctx, account)
-		}
 		if err != nil {
+			// A store that cannot be opened holds nothing rig can remove.
+			fmt.Fprintf(a.stderr, "rig logout: skipped the %s store: %v\n", kind, err)
+			continue
+		}
+		if err := st.Delete(ctx, account); err != nil {
 			fmt.Fprintf(a.stderr, "rig logout: %s: %v\n", kind, err)
 			failed = true
 		}

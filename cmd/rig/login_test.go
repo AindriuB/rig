@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -516,5 +517,25 @@ func TestLoginJiraNamesSiteAndSourceBeforePrompt(t *testing.T) {
 	e.run("login", "jira")
 	if want := "Jira site: " + host + " (from tracker.url in local config)\n"; !strings.HasPrefix(e.err.String(), want) {
 		t.Fatalf("stderr %q", e.err.String())
+	}
+}
+
+func TestLogoutSkipsAStoreThatCannotOpen(t *testing.T) {
+	e := newLoginEnv(t)
+	e.a.secrets = func(kind string) (secret.Store, error) {
+		if kind == storeKeychain {
+			return nil, errors.New("no secret-tool")
+		}
+		return e.stores[kind], nil
+	}
+	e.stores[storeFile].m["jira:acme.atlassian.net"] = secret.Secret{User: "u", Token: marker}
+	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if !strings.Contains(e.err.String(), "skipped the keychain store") {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+	if runtime.GOOS != "windows" && len(e.stores[storeFile].m) != 0 {
+		t.Fatal("file entry kept")
 	}
 }
