@@ -16,6 +16,9 @@ import (
 // securityNotFound is the exit code security uses for a missing item.
 const securityNotFound = 44
 
+// maxCommandLine is the longest security -i command line Set will send.
+const maxCommandLine = 2048
+
 // Keychain returns the macOS Keychain store, reached through security(1).
 func Keychain() (Store, error) { return keychain{}, nil }
 
@@ -38,6 +41,11 @@ func (keychain) Set(ctx context.Context, account string, s Secret) error {
 	}
 	cmd := "add-generic-password -U -s " + Service + " -a " + quote(account) +
 		" -w " + base64.StdEncoding.EncodeToString(b) + "\n"
+	// security -i reads a line buffer of about 4095 bytes and runs the
+	// overflow as a separate command, so refuse anything near that.
+	if len(cmd) > maxCommandLine {
+		return fmt.Errorf("secret: keychain set: secret is too large (command line over %d bytes)", maxCommandLine)
+	}
 	_, err = proc.Run(ctx, proc.Options{Timeout: commandTimeout, Stdin: strings.NewReader(cmd)}, "security", "-i")
 	if err != nil {
 		return fmt.Errorf("secret: keychain set: %w", err)

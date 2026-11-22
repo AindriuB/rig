@@ -88,3 +88,25 @@ func TestRealKeychain(t *testing.T) {
 		t.Fatalf("Get after delete = %v", err)
 	}
 }
+
+func TestSecurityRefusesOversize(t *testing.T) {
+	st := newStub(t, "security")
+	kc, _ := Keychain()
+	ctx := context.Background()
+	if err := kc.Set(ctx, strings.Repeat("a", 4087), Secret{User: "u", Token: "t"}); err == nil {
+		t.Error("long account accepted")
+	}
+	big := strings.Repeat("x", 3<<10)
+	err := kc.Set(ctx, "acct", Secret{User: "u", Token: big})
+	if err == nil {
+		t.Error("3 KB secret accepted")
+	} else if strings.Contains(err.Error(), big) {
+		t.Error("error contains the secret")
+	}
+	if st.read(t, "argv") != "" || st.read(t, "stdin") != "" {
+		t.Error("security was run for a refused Set")
+	}
+	if err := kc.Set(ctx, "acct", Secret{User: "u", Token: "t"}); err != nil {
+		t.Errorf("normal Set = %v", err)
+	}
+}

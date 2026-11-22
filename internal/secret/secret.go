@@ -43,10 +43,16 @@ type Store interface {
 	Delete(ctx context.Context, account string) error
 }
 
+// maxAccount is the longest account name, in bytes, any adapter accepts.
+const maxAccount = 256
+
 // checkAccount rejects an account name no adapter can carry safely.
 func checkAccount(account string) error {
 	if account == "" {
 		return errors.New("secret: empty account")
+	}
+	if len(account) > maxAccount {
+		return fmt.Errorf("secret: account is longer than %d bytes", maxAccount)
 	}
 	if strings.ContainsFunc(account, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return fmt.Errorf("secret: account %q has a control character", account)
