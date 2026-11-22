@@ -98,6 +98,24 @@ func TestFoldStateShaFollowsCurrentState(t *testing.T) {
 	}
 }
 
+func TestFoldSkipsUnknownVersionAndKind(t *testing.T) {
+	log := sampleLog(t)
+	future := ev(t, 13, KindField, FieldData{Name: "title", Value: "from the future"})
+	future.V = 2
+	odd := ev(t, 14, "claim", map[string]string{"who": "x"})
+	bad := ev(t, 15, KindCount, nil)
+	bad.Data = []byte(`{"counter":`)
+	ghost := ev(t, 16, KindFindingStatus, FindingStatusData{Finding: "nope", Status: StatusFixed})
+	task, findings, _, skipped := Fold(append(log, future, odd, bad, ghost))
+	if skipped != 4 {
+		t.Fatalf("skipped = %d, want 4", skipped)
+	}
+	want, wantFindings, _, _ := Fold(log)
+	if !reflect.DeepEqual(task, want) || !reflect.DeepEqual(findings, wantFindings) {
+		t.Fatalf("skipped events changed the fold:\n%+v\nwant\n%+v", task, want)
+	}
+}
+
 func TestFoldEmptyLog(t *testing.T) {
 	task, findings, notes, skipped := Fold(nil)
 	if task.ID != "" || findings != nil || notes != nil || skipped != 0 {
