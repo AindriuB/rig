@@ -1,8 +1,10 @@
 # `rig`: generic actions for agentic workflows
 
-Status: phase 1 is released as 0.1.0. Phases 2 and 2.5 are planned in
-[phase-2.md](phase-2.md) and [phase-2.5.md](phase-2.5.md); later phases are
-outlines, each planned separately before it is built.
+Status: phase 1 was released as 0.1.0. Phases 2 and 2.5 ship together as
+0.3.0 and are described in [phase-2.md](phase-2.md) and
+[phase-2.5.md](phase-2.5.md); [workflows.md](workflows.md) documents the
+workflow file. Later phases are outlines, each planned separately before it is
+built.
 
 **Direction.** rig provides generic actions (tasks, findings, notes,
 workflow transitions, push, pull requests, CI waits, context briefs, config,
@@ -45,8 +47,13 @@ has to recognise one in arbitrary shell.
   is no git abstraction to swap.
 - **The forge is auto-detected** from the `origin` remote's host.
   `.claude/rig.json` overrides it.
-- **rig never holds a token.** Adapters shell out to `gh` and `glab`, so they
-  use whatever `gh auth` or `glab auth` the user already has.
+- **rig holds a token only for a service with no CLI of its own.** GitHub and
+  GitLab stay with `gh` and `glab`: the adapters shell out to them and use
+  whatever login the user already has, and `rig login github|gitlab` only
+  hands over to `gh auth login` or `glab auth login`. For Jira, which has no
+  such tool, `rig login jira` stores a token, in the OS keychain unless the
+  user explicitly chooses `--store file`. No config key holds a token or an
+  account; see [phase-2.5.md](phase-2.5.md).
 - **No built-in workflow.** States, transitions, gates, severities and task
   fields come from a workflow file; rig ships only a small `basic` one.
   What rig enforces whatever the workflow says is listed in
@@ -107,7 +114,8 @@ A caller, claude-kit being the first, talks to rig only through its commands, th
 never reads the kit's. That is what lets rig live in another repository and
 be versioned on its own.
 
-`rig version` prints a semantic version (`0.1.0` for phase 1) and exits 0. A
+`rig version` prints a semantic version (`0.1.0` for phase 1, `0.3.0` with
+phases 2 and 2.5) and exits 0. A
 new command, flag or JSON field raises the minor version. A change to
 anything in the tables below raises the major version.
 
@@ -123,9 +131,43 @@ anything in the tables below raises the major version.
 | `rig pr open --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]` | 0; 2 on any error |
 | `rig pr wait <pr-number \| --run <run-id>> [--repo <dir>]` | 0 green; 1 red; 2 error or timeout |
 | `rig status [--json]` | 0; 2 on a usage error |
+| `rig task new --slug <s> --title <text> [--body <text> \| --body-file <path>] [--field <name>=<value>]… [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig task show <task> [--findings] [--notes] [--history] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig task edit <task> [--json] [--repo <dir>]` | 0 saved, or nothing changed; 1 a field changed underneath the edit, nothing written; 2 on any error, including no terminal and no `$VISUAL`/`$EDITOR`, or a file that does not parse |
+| `rig task list [--state <s>]… [--all] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]` | 0 moved; 1 refused by a gate or the workflow, nothing written; 2 on any error |
+| `rig task set <task> --field <name>=<value>… [--json] [--repo <dir>]` | 0; 1 a field changed underneath, nothing written; 2 on any error |
+| `rig task count <task> <counter> [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig task is <task> <state> [--repo <dir>]` | 0 the effective state is `<state>`; 1 it is not; 2 on any error |
+| `rig task log <task> [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]… [--json] [--repo <dir>]` | 0, also for a duplicate; 2 on any error |
+| `rig finding list <task> [--status <s>]… [--blocking] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig finding set <task> <finding> --status <s> [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig note add [<task>] --kind <k> --text <text> [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig note list [<task>] [--kind <k>] [--limit <n>] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig workflow show [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig workflow validate [<file>] [--json] [--repo <dir>]` | 0 valid; 1 invalid; 2 on any error |
+| `rig next [--who agent\|human] [--limit <n>] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig context <task> [--budget <tokens>] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig config get <key> [--global\|--repo\|--local] [--json]` | 0; 1 not set; 2 error or unknown key |
+| `rig config set <key> <value> --global\|--repo\|--local` | 0; 2 on any error |
+| `rig config unset <key> --global\|--repo\|--local` | 0, also when not set; 2 on any error |
+| `rig config list [--global\|--repo\|--local] [--show-origin] [--json]` | 0; 2 on any error |
+| `rig login` | 0; 1 a login failed; 2 on any error |
+| `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
+| `rig login status [--json]` | 0; 2 on any error |
+| `rig logout jira [--url <site>] [--repo]` | 0, also when already logged out; 2 on any error, including a store that could not be checked when the entry was found nowhere |
+| `rig logout github\|gitlab` | 2: prints the `gh`/`glab` command that does it |
 
 An unknown flag is always exit 2: rig never ignores an argument it does not
-understand.
+understand. In the phase-2 commands, exit 1 means refused by a gate or the
+workflow with nothing written, and exit 2 covers usage errors, an unknown or
+ambiguous task, a bad workflow file, and store or git errors. The commands'
+flags and behaviour are described in [phase-2.md](phase-2.md) and
+[phase-2.5.md](phase-2.5.md), and the workflow file in
+[workflows.md](workflows.md). `RIG_ACTOR` names who acted and `RIG_WORKFLOW`
+the workflow to use; `RIG_JIRA_TOKEN` overrides a stored Jira token at use
+time.
 
 **Stable text output**
 
@@ -282,8 +324,8 @@ claude-kit's workflow file, shown in phase-2.md as the worked example.
 | 0 | This document, and a baseline of permission prompts and tokens per task |
 | 1 | `rig push`, `rig pr`, `rig status`, `rig version`; the github and gitlab adapters; the kit's commands and agents switched to them |
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history; the kit installs a pinned release |
-| 2 | Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. The kit's loop is a test fixture, not built in |
-| 2.5 | `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
+| 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. The kit's loop is a test fixture, not built in |
+| 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
 | 3 | Views and exports: Markdown and HTML renderings of tasks, notes and history from the store, by template, for any workflow. Importers for existing plans (the kit's `docs/plan` first) as programs the user runs |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs, and tracker adapters (`jira`, `github`, `gitlab`, and `exec` for any program) |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
