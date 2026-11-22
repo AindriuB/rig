@@ -398,8 +398,11 @@ func TestLogoutJira(t *testing.T) {
 	if len(e.stores[storeKeychain].m) != 1 {
 		t.Fatalf("global login not removed alone: %v", e.stores[storeKeychain].m)
 	}
-	if len(e.stores[storeFile].m) != 0 {
+	// Windows has no file store, so logout leaves a file entry alone there.
+	if wantFile := 0; runtime.GOOS != "windows" && len(e.stores[storeFile].m) != wantFile {
 		t.Fatal("file entry kept")
+	} else if runtime.GOOS == "windows" && len(e.stores[storeFile].m) != 1 {
+		t.Fatal("file entry touched on Windows")
 	}
 	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net", "--repo"); code != 0 || len(e.stores[storeKeychain].m) != 0 {
 		t.Fatalf("--repo: exit %d, %v", code, e.stores[storeKeychain].m)
