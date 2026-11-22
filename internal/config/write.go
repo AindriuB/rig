@@ -82,6 +82,9 @@ func (l *Layers) write(scope, key string, value any) error {
 		if l.root == "" {
 			return errors.New("no local scope outside a repository")
 		}
+		if err := l.checkLocalFiles(); err != nil {
+			return err
+		}
 		path = l.localPath
 		section = func(raw map[string]any) map[string]any { return raw }
 	default:
@@ -248,4 +251,32 @@ func addIgnoreLine(path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// checkLocalFiles refuses a local write when .rig is not a real directory, or
+// .rig/config.json or .gitignore exists and is not a regular file. A
+// repository can ship these as symlinks, and writing through one would reach
+// outside the repository.
+func (l *Layers) checkLocalFiles() error {
+	check := func(path string, wantDir bool) error {
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if (wantDir && !fi.IsDir()) || (!wantDir && !fi.Mode().IsRegular()) {
+			return fmt.Errorf("refusing to write: %s is not a regular %s", path,
+				map[bool]string{true: "directory", false: "file"}[wantDir])
+		}
+		return nil
+	}
+	if err := check(filepath.Join(l.root, Dir), true); err != nil {
+		return err
+	}
+	if err := check(l.localPath, false); err != nil {
+		return err
+	}
+	return check(filepath.Join(l.root, ".gitignore"), false)
 }

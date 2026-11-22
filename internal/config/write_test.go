@@ -314,3 +314,54 @@ func TestLocalSetLeavesGitignore(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalSetRefusesSymlinks(t *testing.T) {
+	cases := map[string]func(t *testing.T, e env, outside string){
+		"symlinked .gitignore": func(t *testing.T, e env, outside string) {
+			if err := os.Symlink(outside, filepath.Join(e.root, ".gitignore")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+		},
+		"symlinked .rig directory": func(t *testing.T, e env, outside string) {
+			if err := os.Mkdir(outside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(e.root, ".rig")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+		},
+		"symlinked .rig/config.json": func(t *testing.T, e env, outside string) {
+			if err := os.Mkdir(filepath.Join(e.root, ".rig"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(e.root, ".rig", "config.json")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := repoEnv(t)
+			outside := filepath.Join(t.TempDir(), "victim")
+			setup(t, e, outside)
+			err := open(t, e).Set(ScopeLocal, KeyForgeKind, "github")
+			if err == nil {
+				t.Fatal("Set succeeded through a symlink")
+			}
+			entries, _ := os.ReadDir(filepath.Dir(outside))
+			for _, en := range entries {
+				if en.Name() == "victim" && en.IsDir() {
+					sub, _ := os.ReadDir(outside)
+					if len(sub) != 0 {
+						t.Errorf("outside directory changed: %v", sub)
+					}
+				} else if en.Name() != "victim" {
+					t.Errorf("unexpected file outside: %s", en.Name())
+				}
+			}
+			if _, err := os.Lstat(outside); err == nil && name != "symlinked .rig directory" {
+				t.Errorf("outside target was created")
+			}
+		})
+	}
+}
