@@ -195,15 +195,6 @@ func TestConfigLocalSharedByWorktrees(t *testing.T) {
 	}
 }
 
-func TestLoginAndLogoutStubs(t *testing.T) {
-	for _, c := range []string{"login", "logout"} {
-		r := rig(t, t.TempDir(), nil, nil, c, "github")
-		if r.code != 2 || !strings.Contains(r.errOut, "not built yet") {
-			t.Fatalf("%s: %+v", c, r)
-		}
-	}
-}
-
 func TestUsageListsConfigAndLogin(t *testing.T) {
 	r := rig(t, t.TempDir(), nil, nil, "help")
 	for _, want := range []string{"rig config get", "rig config set", "rig config unset", "rig config list", "rig login <service>", "rig logout <service>"} {
