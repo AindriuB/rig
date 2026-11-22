@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit ..."
+	taskUsage = "usage: rig task new|show|export|list|move|set|count|is|log|edit ..."
 
 	// maxBodyFile is the most `rig task new --body-file` reads.
 	maxBodyFile = 64 << 10
@@ -47,6 +47,8 @@ func (a *app) task(ctx context.Context, args []string) int {
 		return a.taskNew(ctx, rest)
 	case "show":
 		return a.taskShow(ctx, rest)
+	case "export":
+		return a.taskExport(ctx, rest)
 	case "list":
 		return a.taskList(ctx, rest)
 	case "move":
@@ -228,126 +230,65 @@ func (a *app) printTask(ctx context.Context, cmd string, w *work, t store.Task, 
 }
 
 func (a *app) taskShow(ctx context.Context, args []string) int {
+	return a.taskMarkdown(ctx, args, true)
+}
+
+func (a *app) taskExport(ctx context.Context, args []string) int {
+	return a.taskMarkdown(ctx, args, false)
+}
+
+func (a *app) taskMarkdown(ctx context.Context, args []string, allowJSON bool) int {
 	fs := newFlags()
 	repo := fs.str("--repo")
-	asJSON, findings, notes, history := fs.boolean("--json"), fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history")
+	var asJSON *bool
+	if allowJSON {
+		asJSON = fs.boolean("--json")
+	}
+	findings, notes, history := fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 {
-		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--json] [--repo <dir>]")
+		command, jsonFlag := "export", ""
+		if allowJSON {
+			command, jsonFlag = "show", " [--json]"
+		}
+		return a.fail("task "+command, "usage: rig task %s <task> [--findings] [--notes] [--history]%s [--repo <dir>]", command, jsonFlag)
+	}
+	command := "task export"
+	if allowJSON {
+		command = "task show"
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])
 	if err != nil {
-		return a.storeFail("task show", err)
+		return a.storeFail(command, err)
 	}
 	v, err := w.view(ctx, t)
 	if err != nil {
-		return a.storeFail("task show", err)
+		return a.storeFail(command, err)
 	}
-	if *asJSON {
+	if allowJSON && *asJSON {
 		return a.printJSON(v)
 	}
-	out := a.stdout
-	fmt.Fprintf(out, "# %s\n\n", v.Title)
 	st := w.wf.States[v.State]
-	line := fmt.Sprintf("%s (%s)  state: %s", v.Short, v.Slug, v.State)
-	if st.Action != "" {
-		line += "  action: " + st.Action
-	}
-	if st.Who != "" {
-		line += "  who: " + st.Who
-	}
-	fmt.Fprintln(out, line)
-	if v.State != v.RecordedState {
-		fmt.Fprintf(out, "recorded state: %s\n", v.RecordedState)
-	}
-	meta := "branch: " + v.Branch
-	if v.PR > 0 {
-		meta += "  pr: #" + strconv.Itoa(v.PR)
-	}
-	if v.HeadSha != "" {
-		meta += "  head: " + short(v.HeadSha)
-	}
-	if v.Reason != "" {
-		meta += "  reason: " + v.Reason
-	}
-	fmt.Fprintln(out, meta)
-	if v.Body != "" {
-		fmt.Fprintf(out, "\n## Body\n\n%s\n", strings.Trim(v.Body, "\n"))
-	}
-	if len(v.Fields) > 0 {
-		fmt.Fprint(out, "\n## Fields\n\n")
-		for _, n := range sortedNames(v.Fields) {
-			fmt.Fprintf(out, "- %s: %s\n", n, renderValue(v.Fields[n]))
-		}
-	}
-	if len(v.Counters) > 0 {
-		fmt.Fprint(out, "\n## Counters\n\n")
-		for _, n := range sortedNames(v.Counters) {
-			fmt.Fprintf(out, "- %s: %d\n", n, v.Counters[n])
-		}
-	}
+	opts := taskMarkdownOptions{showFindings: *findings, showNotes: *notes, showHistory: *history}
 	if *findings {
-		fl, err := w.st.Findings(ctx, t.ID)
+		opts.findings, err = w.st.Findings(ctx, t.ID)
 		if err != nil {
-			return a.storeFail("task show", err)
-		}
-		fmt.Fprint(out, "\n## Findings\n\n")
-		for _, f := range fl {
-			loc := ""
-			if f.Path != "" {
-				loc = " (" + f.Path + ")"
-			}
-			fmt.Fprintf(out, "- %s [%s] %s: %s%s\n", f.Short, f.Severity, f.Status, f.Summary, loc)
-		}
-		if len(fl) == 0 {
-			fmt.Fprintln(out, "none")
+			return a.storeFail(command, err)
 		}
 	}
 	if *notes {
-		nl, err := w.st.Notes(ctx, store.NoteFilter{Task: t.ID})
+		opts.notes, err = w.st.Notes(ctx, store.NoteFilter{Task: t.ID})
 		if err != nil {
-			return a.storeFail("task show", err)
-		}
-		fmt.Fprint(out, "\n## Notes\n\n")
-		for _, n := range nl {
-			fmt.Fprintf(out, "- %s [%s] %s\n", n.Created.Format("2006-01-02 15:04"), n.Kind, n.Text)
-		}
-		if len(nl) == 0 {
-			fmt.Fprintln(out, "none")
+			return a.storeFail(command, err)
 		}
 	}
 	if *history {
-		evs, err := w.st.Events(ctx, t.ID)
+		opts.events, err = w.st.Events(ctx, t.ID)
 		if err != nil {
-			return a.storeFail("task show", err)
-		}
-		fmt.Fprint(out, "\n## History\n\n")
-		n := 0
-		for _, e := range evs {
-			if e.Kind != store.KindTransition {
-				continue
-			}
-			var d store.TransitionData
-			if json.Unmarshal(e.Data, &d) != nil {
-				continue
-			}
-			n++
-			extra := ""
-			if d.Sha != "" {
-				extra += "  sha " + short(d.Sha)
-			}
-			if d.PR > 0 {
-				extra += "  pr #" + strconv.Itoa(d.PR)
-			}
-			if d.Reason != "" {
-				extra += "  reason: " + d.Reason
-			}
-			fmt.Fprintf(out, "- %s  %s -> %s%s  (%s)\n", e.Time.Format("2006-01-02 15:04"), d.From, d.To, extra, e.Actor)
-		}
-		if n == 0 {
-			fmt.Fprintln(out, "none")
+			return a.storeFail(command, err)
 		}
 	}
+	fmt.Fprint(a.stdout, renderTaskMarkdown(v, st, opts))
 	return 0
 }
 
