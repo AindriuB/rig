@@ -34,8 +34,12 @@ func put(t *testing.T, path, body string) {
 	}
 }
 
-func (e env) global(t *testing.T, body string) { put(t, filepath.Join(e.home, ".rig", "config.json"), body) }
-func (e env) local(t *testing.T, body string)  { put(t, filepath.Join(e.root, ".rig", "config.json"), body) }
+func (e env) global(t *testing.T, body string) {
+	put(t, filepath.Join(e.home, ".rig", "config.json"), body)
+}
+func (e env) local(t *testing.T, body string) {
+	put(t, filepath.Join(e.root, ".rig", "config.json"), body)
+}
 func (e env) rigJSON(t *testing.T, body string) {
 	put(t, filepath.Join(e.root, ".claude", "rig.json"), body)
 }
