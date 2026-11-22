@@ -1,0 +1,505 @@
+// Package gitref is the git-ref store.Store backend.
+//
+// Each task is one ref, refs/rig/tasks/<ULID>, and the repository's notes are
+// refs/rig/notes. A ref points at a commit whose tree holds one file,
+// log.jsonl, with one event per line in append order. An append writes a new
+// blob, tree and commit (parent: the previous tip) and moves the ref with a
+// compare-and-swap, retrying from the read when another writer got there
+// first. Only plumbing is used, so the index, HEAD and the working tree are
+// never touched.
+package gitref
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/AindriuB/rig/internal/git"
+	"github.com/AindriuB/rig/internal/store"
+)
+
+const (
+	// TasksPrefix is where task refs live.
+	TasksPrefix = "refs/rig/tasks/"
+	// NotesRef holds the notes that belong to no task.
+	NotesRef = "refs/rig/notes"
+	// LogFile is the one file in each commit's tree.
+	LogFile = "log.jsonl"
+
+	maxTries   = 8
+	minBackoff = 10 * time.Millisecond
+	maxBackoff = 200 * time.Millisecond
+)
+
+// ErrConflict reports that a write lost the compare-and-swap race on every
+// try. Nothing was written.
+var ErrConflict = errors.New("store conflict: the ref kept moving")
+
+// plumbing is the part of git.Repo the store uses. Each call is one git
+// process. Tests wrap it to count processes.
+type plumbing interface {
+	WriteBlob(ctx context.Context, data []byte) (string, error)
+	MakeTree(ctx context.Context, entries []git.TreeEntry) (string, error)
+	CommitTree(ctx context.Context, tree string, parents []string, message string) (string, error)
+	UpdateRef(ctx context.Context, ref, newOID, oldOID string) error
+	ResolveRef(ctx context.Context, ref string) (string, bool, error)
+	ReadRefs(ctx context.Context, prefix string) ([]git.Ref, error)
+	ReadBlobs(ctx context.Context, specs []string) ([]git.Blob, error)
+}
+
+// Store keeps task logs as refs in one repository. Its writes are serialized
+// within the process, so goroutines sharing a Store do not spend their tries
+// racing each other; the compare-and-swap guards against other processes.
+// An Update callback must not write through the same Store.
+type Store struct {
+	mu    sync.Mutex // held for the whole of each write
+	git   plumbing
+	opts  store.Options
+	sleep func(context.Context, time.Duration) error
+}
+
+var _ store.Store = (*Store)(nil)
+
+// Open returns a store over repo's refs/rig namespace, stamping events with
+// opts' clock and actor. It runs no git command.
+func Open(repo git.Repo, opts store.Options) (*Store, error) {
+	return newStore(repo, opts), nil
+}
+
+func newStore(g plumbing, opts store.Options) *Store {
+	return &Store{git: g, opts: opts.WithDefaults(), sleep: sleepCtx}
+}
+
+// sleepCtx waits for d or until ctx is done.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// taskLog is one log as read: its ref, the commit it was read at ("" when the
+// ref does not exist), the blob's bytes and the events they hold.
+type taskLog struct {
+	ref    string
+	tip    string
+	raw    []byte
+	events []store.Event
+}
+
+// parseLog decodes log.jsonl. A line that is not JSON is an error: rewriting
+// the log around it would lose it.
+func parseLog(ref string, raw []byte) ([]store.Event, error) {
+	var out []store.Event
+	for i, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var e store.Event
+		if err := json.Unmarshal(line, &e); err != nil {
+			return nil, fmt.Errorf("%s:%s line %d: %w", ref, LogFile, i+1, err)
+		}
+		out = append(out, e)
+	}
+	store.SortEvents(out)
+	return out, nil
+}
+
+// readAll reads every log under prefix: one for-each-ref and one cat-file.
+func (s *Store) readAll(ctx context.Context, prefix string) ([]taskLog, error) {
+	refs, err := s.git.ReadRefs(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("read store: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	specs := make([]string, len(refs))
+	for i, r := range refs {
+		specs[i] = r.OID + ":" + LogFile
+	}
+	blobs, err := s.git.ReadBlobs(ctx, specs)
+	if err != nil {
+		return nil, fmt.Errorf("read store: %w", err)
+	}
+	logs := make([]taskLog, 0, len(refs))
+	for i, r := range refs {
+		if blobs[i].Missing {
+			return nil, fmt.Errorf("read store: %s has no %s", r.Name, LogFile)
+		}
+		evs, err := parseLog(r.Name, blobs[i].Data)
+		if err != nil {
+			return nil, fmt.Errorf("read store: %w", err)
+		}
+		logs = append(logs, taskLog{ref: r.Name, tip: r.OID, raw: blobs[i].Data, events: evs})
+	}
+	return logs, nil
+}
+
+// readOne reads one ref's log; a ref that does not exist is an empty log.
+func (s *Store) readOne(ctx context.Context, ref string) (taskLog, error) {
+	tip, ok, err := s.git.ResolveRef(ctx, ref)
+	if err != nil {
+		return taskLog{}, fmt.Errorf("read %s: %w", ref, err)
+	}
+	if !ok {
+		return taskLog{ref: ref}, nil
+	}
+	blobs, err := s.git.ReadBlobs(ctx, []string{tip + ":" + LogFile})
+	if err != nil {
+		return taskLog{}, fmt.Errorf("read %s: %w", ref, err)
+	}
+	if blobs[0].Missing {
+		return taskLog{}, fmt.Errorf("read %s: no %s", ref, LogFile)
+	}
+	evs, err := parseLog(ref, blobs[0].Data)
+	if err != nil {
+		return taskLog{}, fmt.Errorf("read %s: %w", ref, err)
+	}
+	return taskLog{ref: ref, tip: tip, raw: blobs[0].Data, events: evs}, nil
+}
+
+// fold folds every task log, newest first, and maps task id to its log.
+func fold(logs []taskLog) ([]store.Task, map[string]taskLog) {
+	tasks := make([]store.Task, 0, len(logs))
+	byID := make(map[string]taskLog, len(logs))
+	for _, l := range logs {
+		t, _, _, _ := store.Fold(l.events)
+		if t.ID == "" {
+			continue
+		}
+		tasks = append(tasks, t)
+		byID[t.ID] = l
+	}
+	store.SortTasks(tasks)
+	return tasks, byID
+}
+
+// resolve reads every task and returns the log of the one ref names.
+func (s *Store) resolve(ctx context.Context, ref string) (taskLog, error) {
+	logs, err := s.readAll(ctx, TasksPrefix)
+	if err != nil {
+		return taskLog{}, err
+	}
+	tasks, byID := fold(logs)
+	t, err := store.Resolve(ref, tasks)
+	if err != nil {
+		return taskLog{}, err
+	}
+	return byID[t.ID], nil
+}
+
+// encode appends events to raw as JSON lines. Existing lines are kept byte
+// for byte, so events this rig does not understand survive an append.
+func encode(raw []byte, events []store.Event) ([]byte, error) {
+	out := slices.Clip(raw)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	for _, e := range events {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return nil, fmt.Errorf("encode %s event: %w", e.Kind, err)
+		}
+		out = append(append(out, line...), '\n')
+	}
+	return out, nil
+}
+
+// commit writes log plus events as a commit on top of log.tip and moves the
+// ref there if it is still at log.tip. It returns git.ErrRefMoved (wrapped)
+// when another writer moved it first.
+func (s *Store) commit(ctx context.Context, log taskLog, events []store.Event, message string) error {
+	data, err := encode(log.raw, events)
+	if err != nil {
+		return err
+	}
+	blob, err := s.git.WriteBlob(ctx, data)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", log.ref, err)
+	}
+	tree, err := s.git.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: LogFile}})
+	if err != nil {
+		return fmt.Errorf("write %s: %w", log.ref, err)
+	}
+	var parents []string
+	if log.tip != "" {
+		parents = []string{log.tip}
+	}
+	c, err := s.git.CommitTree(ctx, tree, parents, message+"\n")
+	if err != nil {
+		return fmt.Errorf("write %s: %w", log.ref, err)
+	}
+	if err := s.git.UpdateRef(ctx, log.ref, c, log.tip); err != nil {
+		return fmt.Errorf("write %s: %w", log.ref, err)
+	}
+	return nil
+}
+
+// appendLoop is the compare-and-swap loop on one ref. build gets the log as
+// it is now and returns the stamped events to append and the commit message;
+// no events means nothing to write. build runs again on every retry, so a
+// step another writer made illegal is refused then. It returns the log after
+// the append.
+func (s *Store) appendLoop(ctx context.Context, log taskLog, build func([]store.Event) ([]store.Event, string, error)) ([]store.Event, error) {
+	for try := 1; ; try++ {
+		events, message, err := build(log.events)
+		if err != nil {
+			return nil, err
+		}
+		if len(events) == 0 {
+			return log.events, nil
+		}
+		err = s.commit(ctx, log, events, message)
+		if err == nil {
+			out := append(slices.Clip(log.events), events...)
+			store.SortEvents(out)
+			return out, nil
+		}
+		if !errors.Is(err, git.ErrRefMoved) {
+			return nil, err
+		}
+		if try == maxTries {
+			return nil, fmt.Errorf("write %s: %w after %d tries", log.ref, ErrConflict, maxTries)
+		}
+		backoff := minBackoff + rand.N(maxBackoff-minBackoff+1)
+		if err := s.sleep(ctx, backoff); err != nil {
+			return nil, err
+		}
+		if log, err = s.readOne(ctx, log.ref); err != nil {
+			return nil, err
+		}
+		if log.tip == "" {
+			return nil, fmt.Errorf("write %s: the ref was deleted: %w", log.ref, store.ErrNotFound)
+		}
+	}
+}
+
+// message is a commit message: the first event's kind and a short id.
+func message(events []store.Event, short string) string {
+	return events[0].Kind + " " + short
+}
+
+// CreateTask starts a new task log at refs/rig/tasks/<ULID>. Its short id
+// avoids every short id already in the store.
+func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Task{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	logs, err := s.readAll(ctx, TasksPrefix)
+	if err != nil {
+		return store.Task{}, err
+	}
+	tasks, _ := fold(logs)
+	shorts := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		shorts[t.Short] = true
+	}
+	e, err := s.opts.Created(n, func(sh string) bool { return shorts[sh] })
+	if err != nil {
+		return store.Task{}, err
+	}
+	var d store.CreatedData
+	if err := json.Unmarshal(e.Data, &d); err != nil {
+		return store.Task{}, fmt.Errorf("new task: %w", err)
+	}
+	log := taskLog{ref: TasksPrefix + e.ID}
+	if err := s.commit(ctx, log, []store.Event{e}, message([]store.Event{e}, d.Short)); err != nil {
+		if errors.Is(err, git.ErrRefMoved) {
+			return store.Task{}, fmt.Errorf("new task: %w", ErrConflict)
+		}
+		return store.Task{}, err
+	}
+	t, _, _, _ := store.Fold([]store.Event{e})
+	return t, nil
+}
+
+// Task resolves ref (full ULID, short id or slug) to a task.
+func (s *Store) Task(ctx context.Context, ref string) (store.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Task{}, err
+	}
+	logs, err := s.readAll(ctx, TasksPrefix)
+	if err != nil {
+		return store.Task{}, err
+	}
+	tasks, _ := fold(logs)
+	return store.Resolve(ref, tasks)
+}
+
+// Tasks lists tasks in the filter's states, newest first. It starts two git
+// processes however many tasks there are.
+func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	logs, err := s.readAll(ctx, TasksPrefix)
+	if err != nil {
+		return nil, err
+	}
+	all, _ := fold(logs)
+	var out []store.Task
+	for _, t := range all {
+		if len(f.States) == 0 || slices.Contains(f.States, t.State) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// Update appends the events next returns, given the task as it is now. If
+// the ref moves before the append lands, it reads the task again and calls
+// next again, up to 8 tries; then it returns a wrapped ErrConflict. Nothing
+// is written if next, or stamping its events, fails.
+func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Task{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	log, err := s.resolve(ctx, ref)
+	if err != nil {
+		return store.Task{}, err
+	}
+	if next == nil {
+		return store.Task{}, errors.New("update: no callback")
+	}
+	out, err := s.appendLoop(ctx, log, func(cur []store.Event) ([]store.Event, string, error) {
+		task, findings, _, _ := store.Fold(cur)
+		events, err := next(task, findings)
+		if err != nil {
+			return nil, "", err
+		}
+		stamped, err := s.opts.Stamp(cur, events)
+		if err != nil {
+			return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+		}
+		if len(stamped) == 0 {
+			return nil, "", nil
+		}
+		return stamped, message(stamped, task.Short), nil
+	})
+	if err != nil {
+		return store.Task{}, err
+	}
+	task, _, _, _ := store.Fold(out)
+	return task, nil
+}
+
+// Events returns a task's log in (seq, id) order.
+func (s *Store) Events(ctx context.Context, ref string) ([]store.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	log, err := s.resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return log.events, nil
+}
+
+// Findings returns a task's findings in the order they were added.
+func (s *Store) Findings(ctx context.Context, ref string) ([]store.Finding, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	log, err := s.resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	_, findings, _, _ := store.Fold(log.events)
+	return findings, nil
+}
+
+// AddNote appends a note to its task's log, or to refs/rig/notes when n.Task
+// is empty.
+func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Note{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, err := store.NewEvent(store.KindNote, store.NoteData{Kind: n.Kind, Text: n.Text})
+	if err != nil {
+		return store.Note{}, fmt.Errorf("add note: %w", err)
+	}
+	var log taskLog
+	if n.Task != "" {
+		log, err = s.resolve(ctx, n.Task)
+	} else {
+		log, err = s.readOne(ctx, NotesRef)
+	}
+	if err != nil {
+		return store.Note{}, err
+	}
+	var id string
+	out, err := s.appendLoop(ctx, log, func(cur []store.Event) ([]store.Event, string, error) {
+		stamped, err := s.opts.Stamp(cur, []store.Event{e})
+		if err != nil {
+			return nil, "", fmt.Errorf("add note: %w", err)
+		}
+		var d store.NoteData
+		if err := json.Unmarshal(stamped[0].Data, &d); err != nil {
+			return nil, "", fmt.Errorf("add note: %w", err)
+		}
+		id = stamped[0].ID
+		short := d.Short
+		if t, _, _, _ := store.Fold(cur); t.Short != "" {
+			short = t.Short
+		}
+		return stamped, message(stamped, short), nil
+	})
+	if err != nil {
+		return store.Note{}, err
+	}
+	_, _, notes, _ := store.Fold(out)
+	for _, note := range notes {
+		if note.ID == id {
+			return note, nil
+		}
+	}
+	return store.Note{}, errors.New("add note: the note did not fold")
+}
+
+// Notes lists notes, newest first. With no task it reads every log under
+// refs/rig/ in one for-each-ref and one cat-file.
+func (s *Store) Notes(ctx context.Context, f store.NoteFilter) ([]store.Note, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var all []store.Note
+	if f.Task != "" {
+		log, err := s.resolve(ctx, f.Task)
+		if err != nil {
+			return nil, err
+		}
+		_, _, all, _ = store.Fold(log.events)
+	} else {
+		logs, err := s.readAll(ctx, "refs/rig/")
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range logs {
+			if l.ref != NotesRef && !strings.HasPrefix(l.ref, TasksPrefix) {
+				continue
+			}
+			_, _, notes, _ := store.Fold(l.events)
+			all = append(all, notes...)
+		}
+	}
+	return store.FilterNotes(all, f.Kind, f.Limit), nil
+}
