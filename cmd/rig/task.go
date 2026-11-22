@@ -742,6 +742,9 @@ func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any
 	for n := range wf.Fields {
 		known[n] = true
 	}
+	// An editor that saves CRLF changed no value: compare in LF, as editFile
+	// writes it, and keep the stored value's own CRLFs out of the comparison.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	title, sawTitle := "", false
 	sections := map[string][]string{}
 	cur := ""
@@ -773,7 +776,8 @@ func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any
 	}
 	for n, ls := range sections {
 		raw := strings.Trim(strings.Join(ls, "\n"), "\n")
-		if raw == editSection(t, n) {
+		// The section as editFile wrote it (with its line end), in LF.
+		if raw == strings.Trim(strings.ReplaceAll(editSection(t, n)+"\n", "\r\n", "\n"), "\n") {
 			continue
 		}
 		raw = unescapeLines(raw)

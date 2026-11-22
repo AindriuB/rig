@@ -34,6 +34,9 @@ func init() {
 	if from := os.Getenv("RIG_EDIT_FROM"); from != "" {
 		b = []byte(strings.Replace(string(b), from, os.Getenv("RIG_EDIT_TO"), 1))
 	}
+	if os.Getenv("RIG_EDIT_CRLF") != "" {
+		b = []byte(strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n", "\r\n"))
+	}
 	if os.WriteFile(path, b, 0o600) != nil {
 		os.Exit(98)
 	}
@@ -806,5 +809,38 @@ func TestTaskEditNoOpKeepsAwkwardValues(t *testing.T) {
 	}
 	if r := e.editWith(t, map[string]string{}, "nl"); r.code != 0 || len(e.kinds(nl.ID)) != 1 {
 		t.Fatalf("newline title: %+v, kinds %v", r, e.kinds(nl.ID))
+	}
+}
+
+// A CRLF-saving editor: an unchanged file is a no-op, a changed field is one
+// event whose value carries no "\r".
+func TestTaskEditCRLFSavedNoOp(t *testing.T) {
+	e := newTaskEnv(t)
+	id := e.newTask("crlf", "--body", "old body")["id"].(string)
+	before := len(e.kinds(id))
+	if r := e.editWith(t, map[string]string{"RIG_EDIT_CRLF": "1"}, "crlf"); r.code != 0 || len(e.kinds(id)) != before {
+		t.Fatalf("no-op: %+v, kinds %v", r, e.kinds(id))
+	}
+}
+
+func TestTaskEditCRLFSavedUnsetEnumNoOp(t *testing.T) {
+	e := newTaskEnv(t)
+	id := e.newTask("crlfe", "--body", "b", "--field", "owner=ann")["id"].(string)
+	before := len(e.kinds(id))
+	if r := e.editWith(t, map[string]string{"RIG_EDIT_CRLF": "1"}, "crlfe"); r.code != 0 || len(e.kinds(id)) != before {
+		t.Fatalf("no-op: %+v, kinds %v", r, e.kinds(id))
+	}
+}
+
+func TestTaskEditCRLFSavedOneChange(t *testing.T) {
+	e := newTaskEnv(t)
+	id := e.newTask("crlfc", "--body", "old body")["id"].(string)
+	before := len(e.kinds(id))
+	r := e.editWith(t, map[string]string{"RIG_EDIT_CRLF": "1", "RIG_EDIT_FROM": "old body", "RIG_EDIT_TO": "new body"}, "crlfc")
+	if r.code != 0 || len(e.kinds(id)) != before+1 {
+		t.Fatalf("one change: %+v, kinds %v", r, e.kinds(id))
+	}
+	if got := decodeObj(t, r.out); got["body"] != "new body" {
+		t.Fatalf("body %q", got["body"])
 	}
 }
