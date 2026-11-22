@@ -329,12 +329,12 @@ func (w *work) ownedFiles(ctx context.Context, t store.Task, ownsName string) ([
 	return w.repo.LsFiles(ctx, globSpecs(stringList(t.Fields[ownsName])))
 }
 
-// globSpecs turns paths into ":(glob)" pathspecs.
+// globSpecs turns paths into ":(top,glob)" pathspecs.
 func globSpecs(paths []string) []string {
 	var specs []string
 	for _, p := range paths {
 		if p = strings.TrimSpace(p); p != "" {
-			specs = append(specs, ":(glob)"+p)
+			specs = append(specs, ":(top,glob)"+p)
 		}
 	}
 	return specs
@@ -460,7 +460,7 @@ func (w *work) commitLines(ctx context.Context, files []string) ([]string, error
 	}
 	specs := make([]string, len(files))
 	for i, f := range files {
-		specs[i] = ":(literal)" + f
+		specs[i] = ":(top,literal)" + f
 	}
 	cs, err := w.repo.LogPaths(ctx, branch, specs, commitLimit)
 	if err != nil {

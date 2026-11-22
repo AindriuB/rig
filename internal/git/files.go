@@ -15,14 +15,14 @@ type CommitInfo struct {
 }
 
 // LsFiles lists the tracked files that match pathspecs, sorted, with forward
-// slashes. A pathspec is passed to git as given, so a caller can use
+// slashes, relative to the top of the working tree whatever Dir is. A pathspec is passed to git as given, so a caller can use
 // ":(glob)src/**/*.go". With no pathspecs it returns nil without running git,
 // so it never lists the whole tree by accident.
 func (r Repo) LsFiles(ctx context.Context, pathspecs []string) ([]string, error) {
 	if len(pathspecs) == 0 {
 		return nil, nil
 	}
-	args := append([]string{"ls-files", "-z", "--"}, pathspecs...)
+	args := append([]string{"ls-files", "-z", "--full-name", "--"}, pathspecs...)
 	res, err := r.run(ctx, queryTimeout, args...)
 	if err != nil {
 		return nil, wrap(args, res, err)

@@ -400,3 +400,20 @@ func TestContextGitref(t *testing.T) {
 		t.Error("file contents leaked")
 	}
 }
+
+// Run from a subdirectory, the brief is the same as from the top.
+func TestContextFromSubdirectory(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	ctxTask(t, st, "alpha", "body", "src/*.go")
+	ctxTask(t, st, "beta", "", "src/a.go")
+	repo := ctxRepo(t)
+	a, out, _ := ctxApp(t, repo, st)
+	code, top := ctxRun(t, a, out, "alpha")
+	if code != 0 || !strings.Contains(top, "src/a.go (4 lines)") || !strings.Contains(top, "grow a") {
+		t.Fatalf("top: %d\n%s", code, top)
+	}
+	a.cwd = filepath.Join(repo, "src")
+	if code, sub := ctxRun(t, a, out, "alpha"); code != 0 || sub != top {
+		t.Errorf("from src/: exit %d\n%s\nwant\n%s", code, sub, top)
+	}
+}

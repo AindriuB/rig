@@ -74,3 +74,16 @@ func TestLogPaths(t *testing.T) {
 		t.Error("rev starting with - must be rejected")
 	}
 }
+
+func TestLsFilesFromSubdirectory(t *testing.T) {
+	repo, _ := newRepo(t)
+	commitFile(t, repo, "src/a.go", "add a")
+	r := Repo{Dir: filepath.Join(repo, "src")}
+	got, err := r.LsFiles(ctx, []string{":(top,glob)src/*.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"src/a.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("from a subdirectory = %v, want %v", got, want)
+	}
+}
