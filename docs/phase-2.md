@@ -22,8 +22,9 @@ commands is a separate change in the kit repository.
 - Nothing is written into the working tree. Worktrees share the store,
   because refs live in the repository's common directory.
 - **A repository looks the same whether or not anyone uses rig.** rig
-  never edits a tracked file, `.gitignore` or `.git/info/exclude`, never
-  makes a commit on a branch, and never pushes its own refs unless asked
+  never edits a tracked file (one exception in phase 2.5: a `/.rig/` line
+  in `.gitignore`), never makes a commit on a branch, and never pushes its
+  own refs unless asked
   (see "What rig leaves in a repository").
 - **Not in phase 2:** sharing the store between clones (`rig sync`, phase 4),
   claims (phase 4), importing `docs/plan` trees and generated PLAN/HISTORY
@@ -83,7 +84,7 @@ same tree, branches and history.
 |---|---|---|
 | Task logs | `refs/rig/tasks/*` in the local `.git` | **Local only.** No phase-2 command pushes or fetches them. Phase 4's `rig sync` will push them only when run, or when the user opts in with a config key; never as a side effect of `rig push` (see Q21) |
 | Store commits | objects reachable only from `refs/rig/*` | local, as above; on no branch, so never in a pull request |
-| Tracked files, `.gitignore`, `.git/info/exclude` | — | never written |
+| Tracked files | — | never written, except one `/.rig/` line in `.gitignore` when phase 2.5's `rig config set --local` first creates `.rig/`; never committed by rig |
 | Branches | `task/<short>-<slug>`, made by whoever runs the loop | the kit's naming; rig only reads it |
 | Commit trailers, git notes | — | not written by rig in phase 2 (see Q3) |
 | `.claude/rig.json` | read, never written | the project's own file, as in phase 1 |

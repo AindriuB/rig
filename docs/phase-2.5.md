@@ -52,11 +52,20 @@ two keys it holds (it is specific to the project, so it beats the global
 file), then `--global`, then the built-in default.
 JSON matches `.claude/rig.json` and needs only the standard library.
 
-**rig does not tie a repository to itself.** It never edits a tracked file,
-`.gitignore` or `.git/info/exclude`, and never commits. `<repo>/.rig/` is
-created only by `rig config set … --local`, and then shows in `git status`
-as untracked like any new file. Whether to commit it, ignore it or leave it
-is each developer's choice; rig works the same either way.
+**rig does not tie a repository to itself.** It never commits, and the only
+change it makes to a tracked file is one ignore line:
+
+- `<repo>/.rig/` is created only by `rig config set … --local`.
+- When rig creates that directory, it appends `/.rig/` to the main
+  checkout's `.gitignore` if no line there already ignores it, and creates
+  `.gitignore` if there is none. The change is left unstaged for the
+  developer to commit or not.
+- It does this only at the moment it creates `.rig/`. If `.rig/` already
+  exists, or any file under it is tracked, rig never touches `.gitignore`.
+  So a developer who removes the line to share `.rig/config.json` does not
+  get it back: `.rig/` exists from then on. (If they delete both `.rig/`
+  and the line, the next `--local` set adds the line again.)
+- Nothing else is written: not `.git/info/exclude`, not any other file.
 
 Keys are dotted names on an allow-list, and values are checked when they are
 set and when they are read. `rig config set` refuses an unknown key or a bad
@@ -251,8 +260,12 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
   over every combination.
 - AC8 The repo key normalises ssh, https and `.git` forms of one remote to
   the same string; no `origin` makes `--repo` an error.
-- AC9 Writing `<repo>/.rig/config.json` changes no tracked file,
-  `.gitignore` or `.git/info/exclude` (test compares them before and after).
+- AC9 Creating `<repo>/.rig/` appends `/.rig/` to `.gitignore` once
+  (creating the file if absent) and changes nothing else: a test compares
+  `git status --porcelain` before and after, and the only change is
+  `.gitignore`. A second `--local` set, a `.gitignore` that already ignores
+  `.rig/`, an existing `.rig/` with the line removed, and a tracked
+  `.rig/config.json` each leave `.gitignore` untouched.
 - AC10 `Set` refuses credential-like keys (`*.token`, `*.password`,
   `*.secret`, `*.apikey`, `*.key`, `*.auth`, `*.credential`, any case) in
   every scope, with a message naming `rig login`.
@@ -386,5 +399,6 @@ file keyed by the repository's remote, which every clone and worktree finds;
 or deriving the value from the repository or branch name, which breaks as
 soon as the names do not match the Jira key. *Recommend: the global file,
 keyed by the repo key (`--repo`), with `.rig/` as a private per-clone
-override above it. rig never commits, ignores or hides `.rig/`; sharing it is
-the developer's call.*
+override above it. rig adds `/.rig/` to `.gitignore` once, when it creates
+`.rig/`, and never again; a developer who removes the line to share
+`.rig/config.json` keeps that choice.*
