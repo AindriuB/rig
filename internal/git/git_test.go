@@ -187,3 +187,17 @@ func TestPush(t *testing.T) {
 		t.Fatal("a refused push moved the remote's main")
 	}
 }
+
+func TestUserName(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	repo, _ := newRepo(t)
+	r := Repo{Dir: repo}
+	if got, err := r.UserName(ctx); err == nil {
+		t.Fatalf("UserName unset = %q, want an error", got)
+	}
+	sh(t, repo, "config", "user.name", "Ada Lovelace")
+	if got, err := r.UserName(ctx); err != nil || got != "Ada Lovelace" {
+		t.Fatalf("UserName = %q, %v", got, err)
+	}
+}
