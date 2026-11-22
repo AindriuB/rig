@@ -1,0 +1,176 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Finding statuses.
+const (
+	StatusOpen     = "open"
+	StatusFixed    = "fixed"
+	StatusWontfix  = "wontfix"
+	StatusDeferred = "deferred"
+)
+
+// validStatus reports whether s is a finding status.
+func validStatus(s string) bool {
+	switch s {
+	case StatusOpen, StatusFixed, StatusWontfix, StatusDeferred:
+		return true
+	}
+	return false
+}
+
+// Short id prefixes.
+const (
+	TaskPrefix    = "t-"
+	FindingPrefix = "f-"
+	NotePrefix    = "n-"
+)
+
+// WorkflowRef names the workflow, and its version, a task was created under.
+type WorkflowRef struct {
+	Name    string `json:"name"`
+	Version int    `json:"version"`
+}
+
+// Task is the state a task log folds to.
+type Task struct {
+	ID       string         `json:"id"`
+	Short    string         `json:"short"`
+	Slug     string         `json:"slug"`
+	Title    string         `json:"title"`
+	Body     string         `json:"body"`
+	Fields   map[string]any `json:"fields"`
+	Workflow WorkflowRef    `json:"workflow"`
+	// State is the state the log alone gives (the recorded state).
+	State string `json:"state"`
+	// Previous is the from-state of the latest transition.
+	Previous string `json:"previous,omitempty"`
+	// StateSha is the sha recorded by the transition into the current state,
+	// or "" when that transition recorded none.
+	StateSha     string            `json:"stateSha,omitempty"`
+	Shas         map[string]string `json:"shas"`
+	Branch       string            `json:"branch"`
+	PR           int               `json:"pr,omitempty"`
+	Reason       string            `json:"reason,omitempty"`
+	Counters     map[string]int    `json:"counters"`
+	OpenFindings int               `json:"openFindings"`
+	Created      time.Time         `json:"created"`
+	Updated      time.Time         `json:"updated"`
+}
+
+// Finding is one review finding on a task.
+type Finding struct {
+	ID       string         `json:"id"`
+	Short    string         `json:"short"`
+	Task     string         `json:"task"`
+	Severity string         `json:"severity"`
+	Status   string         `json:"status"`
+	Key      string         `json:"key"`
+	Summary  string         `json:"summary"`
+	Path     string         `json:"path,omitempty"`
+	Fields   map[string]any `json:"fields,omitempty"`
+	// Counters are the task's counters when the finding was added.
+	Counters map[string]int `json:"counters"`
+	Created  time.Time      `json:"created"`
+	Updated  time.Time      `json:"updated"`
+}
+
+// Note is an append-only record: a decision, what landed. Task is empty for
+// a note that belongs to the repository.
+type Note struct {
+	ID      string    `json:"id"`
+	Short   string    `json:"short"`
+	Task    string    `json:"task,omitempty"`
+	Kind    string    `json:"kind"`
+	Text    string    `json:"text"`
+	Created time.Time `json:"created"`
+}
+
+// NewTask is what CreateTask needs. Initial is the state the task starts in.
+type NewTask struct {
+	Slug     string
+	Title    string
+	Body     string
+	Branch   string
+	Fields   map[string]any
+	Workflow WorkflowRef
+	Initial  string
+}
+
+// TaskFilter narrows Tasks. An empty States matches every state.
+type TaskFilter struct {
+	States []string
+}
+
+// NoteFilter narrows Notes. Task is a task reference; Limit 0 means no limit.
+type NoteFilter struct {
+	Task  string
+	Kind  string
+	Limit int
+}
+
+// Store is the port every backend implements.
+type Store interface {
+	// CreateTask starts a new task log.
+	CreateTask(ctx context.Context, t NewTask) (Task, error)
+	// Task resolves ref (full ULID, short id or slug) to a task.
+	Task(ctx context.Context, ref string) (Task, error)
+	// Tasks lists tasks, newest first.
+	Tasks(ctx context.Context, filter TaskFilter) ([]Task, error)
+	// Update appends the events next returns, given the task as it is now.
+	// next returns events with Kind and Data set; the store fills V, ID, Seq,
+	// Time and Actor. If next returns an error, Update returns it and writes
+	// nothing. A backend may call next more than once.
+	Update(ctx context.Context, ref string, next func(Task, []Finding) ([]Event, error)) (Task, error)
+	// Events returns a task's log in (seq, id) order.
+	Events(ctx context.Context, ref string) ([]Event, error)
+	// Findings returns a task's findings in the order they were added.
+	Findings(ctx context.Context, ref string) ([]Finding, error)
+	// AddNote appends a note to its task's log, or to the repository log when
+	// n.Task is empty. n.Task may be any task reference.
+	AddNote(ctx context.Context, n Note) (Note, error)
+	// Notes lists notes, newest first.
+	Notes(ctx context.Context, filter NoteFilter) ([]Note, error)
+}
+
+// ErrNotFound reports a reference that matches nothing.
+var ErrNotFound = errors.New("not found")
+
+// ErrAmbiguous reports a reference that matches more than one task.
+var ErrAmbiguous = errors.New("ambiguous")
+
+// AmbiguousError lists the task ids a reference matched.
+type AmbiguousError struct {
+	Ref     string
+	Matches []string
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("%q is ambiguous: matches %s", e.Ref, strings.Join(e.Matches, ", "))
+}
+
+// Is makes errors.Is(err, ErrAmbiguous) true.
+func (e *AmbiguousError) Is(target error) bool { return target == ErrAmbiguous }
+
+// Options inject the clock and the actor into a backend.
+type Options struct {
+	Now   func() time.Time // nil: time.Now
+	Actor string           // "": "unknown"
+}
+
+// WithDefaults fills the zero fields of o.
+func (o Options) WithDefaults() Options {
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Actor == "" {
+		o.Actor = "unknown"
+	}
+	return o
+}
