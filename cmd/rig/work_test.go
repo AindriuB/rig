@@ -39,7 +39,8 @@ func TestMain(m *testing.M) {
 }
 
 // testWorkflow is a workflow with a sha-bound state, a field gate, a command
-// gate (run by this test binary) and $previous.
+// gate (run by this test binary), a findings gate and $previous, once listed
+// before an explicit route to the same state.
 func testWorkflow(t *testing.T) string {
 	t.Helper()
 	exe, err := os.Executable()
@@ -55,19 +56,26 @@ func testWorkflow(t *testing.T) string {
     "back":    { "action": "rebind" },
     "checked": { "action": "finish" },
     "done":    { "final": true },
-    "stopped": { "action": "decide", "who": "human" }
+    "stopped": { "action": "decide", "who": "human" },
+    "reviewed": { "action": "finish" },
+    "paused":  { "action": "decide", "who": "human" }
   },
   "onNewCommit": "back",
   "transitions": [
     { "from": "open", "to": "bound", "takes": "sha", "gates": [{ "shaIsHead": true }] },
     { "from": "bound", "to": "back" },
     { "from": "back", "to": "bound", "takes": "sha" },
-    { "from": ["open", "bound", "checked"], "to": "done", "gates": [{ "fieldSet": "owner" }] },
+    { "from": ["open", "bound", "checked", "reviewed"], "to": "done", "gates": [{ "fieldSet": "owner" }] },
+    { "from": "open", "to": "reviewed", "gates": [{ "noOpenFindings": { "severity": "P1" } }] },
+    { "from": "open", "to": "paused" },
+    { "from": "paused", "to": "$previous" },
+    { "from": "paused", "to": "open", "gates": [{ "fieldSet": "owner" }] },
     { "from": "open", "to": "checked", "gates": [{ "command": ` + string(argv) + ` }] },
     { "from": "*", "to": "stopped", "takes": "reason" },
     { "from": "stopped", "to": "$previous" }
   ],
-  "fields": { "owner": { "type": "string" } }
+  "fields": { "owner": { "type": "string" } },
+  "findings": { "severities": ["P1", "P2"] }
 }`
 	path := filepath.Join(t.TempDir(), "t.json")
 	if err := os.WriteFile(path, []byte(wf), 0o644); err != nil {
@@ -339,6 +347,132 @@ func TestMoveCommandGateSeesTheView(t *testing.T) {
 	}
 	if v.ID != task.ID || v.State != "open" || v.Branch != "task/"+task.Short+"-s" {
 		t.Fatalf("gate saw %+v", v)
+	}
+}
+
+// sneakyStore runs before once, just before the first Update, as another
+// writer would between the gate check and the write.
+type sneakyStore struct {
+	store.Store
+	before func(ref string)
+	calls  int
+}
+
+func (s *sneakyStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	s.calls++
+	if s.before != nil {
+		s.before(ref)
+		s.before = nil
+	}
+	return s.Store.Update(ctx, ref, next)
+}
+
+// fixed is a clock that never moves, so a change keeps the task's Updated.
+func fixed() time.Time { return time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC) }
+
+func TestMoveRechecksAFindingAddedAtTheSameTime(t *testing.T) {
+	mem := memstore.New(store.Options{Now: fixed})
+	st := &sneakyStore{Store: mem}
+	a, _ := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := newTask(t, mem)
+	st.before = func(ref string) {
+		ev, err := store.NewEvent(store.KindFinding, store.FindingData{Severity: "P1", Summary: "late"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mem.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
+			return []store.Event{ev}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = w.move(ctx, task.Short, "reviewed", workflow.Args{})
+	if code := a.storeFail("task", err); code != 1 || st.calls != 1 {
+		t.Fatalf("exit %d after %d updates, err %v; want 1 after 1", code, st.calls, err)
+	}
+	if got, _ := mem.Task(ctx, task.ID); got.State != "open" || len(transitions(t, mem, task.ID)) != 0 {
+		t.Fatalf("task moved to %s", got.State)
+	}
+}
+
+func TestMoveRechecksAHeadThatMoved(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	mem := memstore.New(store.Options{Now: fixed})
+	st := &sneakyStore{Store: mem}
+	a, _ := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := newTask(t, mem)
+	branch := "task/" + task.Short + "-s"
+	gitc(t, a.cwd, "branch", branch)
+	sha := gitc(t, a.cwd, "rev-parse", branch)
+	st.before = func(string) {
+		gitc(t, a.cwd, "checkout", "-q", branch)
+		gitc(t, a.cwd, "commit", "-q", "--allow-empty", "-m", "more")
+		gitc(t, a.cwd, "checkout", "-q", "main")
+	}
+	_, err = w.move(ctx, task.Short, "bound", workflow.Args{Sha: sha})
+	if code := a.storeFail("task", err); code != 1 || st.calls != 1 {
+		t.Fatalf("exit %d after %d updates, err %v; want 1 after 1", code, st.calls, err)
+	}
+	if got, _ := mem.Task(ctx, task.ID); got.State != "open" || len(transitions(t, mem, task.ID)) != 0 {
+		t.Fatalf("task moved to %s", got.State)
+	}
+}
+
+func TestMoveLiteralPrevious(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, errOut := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := newTask(t, st)
+
+	// A task with no previous state refuses "$previous", exit 1.
+	if _, err := w.move(ctx, task.Short, workflow.Previous, workflow.Args{}); a.storeFail("task", err) != 1 ||
+		!strings.Contains(errOut.String(), "no previous state") {
+		t.Fatalf("no previous: %v, %q", err, errOut.String())
+	}
+
+	if _, err := w.move(ctx, task.Short, "stopped", workflow.Args{Reason: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := w.move(ctx, task.Short, workflow.Previous, workflow.Args{})
+	if err != nil || res.view.State != "open" {
+		t.Fatalf("$previous: %+v, %v", res.view, err)
+	}
+	if tr := transitions(t, st, task.ID); len(tr) != 2 || tr[1].To != "open" {
+		t.Fatalf("transitions %+v", tr)
+	}
+}
+
+func TestMovePrefersTheExplicitRoute(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, errOut := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := newTask(t, st)
+	if _, err := w.move(ctx, task.Short, "paused", workflow.Args{}); err != nil {
+		t.Fatal(err)
+	}
+	// paused → $previous (open) is listed first, but paused → open is the
+	// explicit route, and its fieldSet gate refuses.
+	_, err = w.move(ctx, task.Short, "open", workflow.Args{})
+	if code := a.storeFail("task", err); code != 1 || !strings.Contains(errOut.String(), "field owner is not set") {
+		t.Fatalf("exit %d, stderr %q, err %v", code, errOut.String(), err)
+	}
+	if got, _ := st.Task(ctx, task.ID); got.State != "paused" {
+		t.Fatalf("task moved to %s", got.State)
 	}
 }
 

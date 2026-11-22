@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -174,15 +175,18 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		return moveResult{}, err
 	}
 	from := w.wf.Effective(t, head)
-
-	var tr workflow.Transition
-	found := false
-	for _, c := range w.wf.Transitions(from) {
-		if c.To == to || (c.To == workflow.Previous && t.Previous != "" && t.Previous == to) {
-			tr, found = c, true
-			break
-		}
+	snap, err := snapshot(t, findings)
+	if err != nil {
+		return moveResult{}, err
 	}
+
+	if to == workflow.Previous {
+		if t.Previous == "" {
+			return moveResult{}, &refusal{reason: fmt.Sprintf("%s has no previous state", t.Short)}
+		}
+		to = t.Previous
+	}
+	tr, found := pickTransition(w.wf.Transitions(from), to, t.Previous)
 	if !found {
 		return moveResult{}, &refusal{reason: fmt.Sprintf("no transition from %s to %s", from, to)}
 	}
@@ -195,8 +199,22 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 	}
 
 	var written []store.Event
-	after, err := w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
-		if !cur.Updated.Equal(t.Updated) || cur.State != t.State {
+	after, err := w.st.Update(ctx, t.ID, func(cur store.Task, curFindings []store.Finding) ([]store.Event, error) {
+		// The gates passed on what was read above; anything that changed
+		// since, the task, its findings or its branch head, means they must
+		// be checked again.
+		now, err := snapshot(cur, curFindings)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(now, snap) {
+			return nil, errMoved
+		}
+		curHead, err := w.head(ctx, cur)
+		if err != nil {
+			return nil, err
+		}
+		if curHead != head {
 			return nil, errMoved
 		}
 		evs, err := w.wf.Events(cur, head, tr, to, args)
@@ -213,6 +231,39 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		hookErrs = w.wf.RunHooks(ctx, w.env().Runner, ev, after, head)
 	}
 	return moveResult{view: w.wf.View(after, head), gates: gates, hookErrors: hookErrs}, nil
+}
+
+// pickTransition returns the transition among candidates that goes to to: an
+// explicit one first, so its gates apply, else one to $previous when the
+// task's previous state is to.
+func pickTransition(candidates []workflow.Transition, to, previous string) (workflow.Transition, bool) {
+	for _, c := range candidates {
+		if c.To == to {
+			return c, true
+		}
+	}
+	for _, c := range candidates {
+		if c.To == workflow.Previous && previous != "" && previous == to {
+			return c, true
+		}
+	}
+	return workflow.Transition{}, false
+}
+
+// snapshot encodes a task and its findings, to tell whether either changed
+// between the gate check and the write.
+func snapshot(t store.Task, findings []store.Finding) ([]byte, error) {
+	if len(findings) == 0 {
+		findings = nil
+	}
+	b, err := json.Marshal(struct {
+		Task     store.Task      `json:"task"`
+		Findings []store.Finding `json:"findings"`
+	}{t, findings})
+	if err != nil {
+		return nil, fmt.Errorf("snapshot of %s: %w", t.Short, err)
+	}
+	return b, nil
 }
 
 // stamped returns the logged copy of ev, the transition move just wrote, or
