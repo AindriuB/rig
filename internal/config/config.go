@@ -1,5 +1,8 @@
-// Package config reads a repository's `.claude/rig.json`. Every key is
-// optional; a missing file is the defaults.
+// Package config reads rig's settings. Load reads a repository's
+// `.claude/rig.json`, where every key is optional and a missing file is the
+// defaults. Open reads every layer: the global ~/.rig/config.json (its top
+// level and a section per repository), the checkout's .rig/config.json and
+// rig.json, and Set and Unset write them.
 package config
 
 import (
