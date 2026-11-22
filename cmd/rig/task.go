@@ -520,7 +520,18 @@ func (w *work) updateFields(ctx context.Context, t store.Task, changed map[strin
 	if err != nil {
 		return store.Task{}, err
 	}
-	return w.st.Update(ctx, t.ID, func(store.Task, []store.Finding) ([]store.Event, error) { return evs, nil })
+	return w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		var moved []string
+		for _, n := range sortedNames(changed) {
+			if !sameValue(currentValue(cur, n), currentValue(t, n)) {
+				moved = append(moved, n)
+			}
+		}
+		if len(moved) > 0 {
+			return nil, &refusal{reason: "changed since it was read: " + strings.Join(moved, ", ")}
+		}
+		return evs, nil
+	})
 }
 
 func (a *app) taskSet(ctx context.Context, args []string) int {
@@ -861,6 +872,11 @@ func (a *app) taskEdit(ctx context.Context, args []string) int {
 	}
 	after, err := w.updateFields(ctx, t, changed)
 	if err != nil {
+		var r *refusal
+		if errors.As(err, &r) {
+			fmt.Fprintf(a.stderr, "rig task edit: %s; nothing written, your copy is at %s\n", r.reason, path)
+			return 1
+		}
 		return kept("%v", err)
 	}
 	os.Remove(path)

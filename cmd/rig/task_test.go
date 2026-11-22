@@ -86,6 +86,38 @@ type taskEnv struct {
 	st   *memstore.Store
 	repo string
 	env  map[string]string
+	// before, when set, runs once just before the next Update the command makes.
+	before func()
+}
+
+// hookStore runs hook once, just before the first Update reaches the store.
+type hookStore struct {
+	store.Store
+	hook func()
+}
+
+func (h *hookStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	if h.hook != nil {
+		f := h.hook
+		h.hook = nil
+		f()
+	}
+	return h.Store.Update(ctx, ref, next)
+}
+
+// setUnderneath writes a field value straight to the store, as a concurrent
+// rig would.
+func (e *taskEnv) setUnderneath(ref, name string, v any) {
+	e.t.Helper()
+	ev, err := store.NewEvent(store.KindField, store.FieldData{Name: name, Value: v})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{ev}, nil
+	}); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func newTaskEnv(t *testing.T) *taskEnv {
@@ -99,10 +131,15 @@ func newTaskEnv(t *testing.T) *taskEnv {
 func (e *taskEnv) rig(args ...string) result {
 	e.t.Helper()
 	var out, errOut bytes.Buffer
+	var st store.Store = e.st
+	if e.before != nil {
+		st = &hookStore{Store: e.st, hook: e.before}
+		e.before = nil
+	}
 	a := &app{
 		stdout: &out, stderr: &errOut, cwd: e.repo,
 		getenv: func(k string) string { return e.env[k] },
-		store:  func(context.Context, string) (store.Store, error) { return e.st, nil },
+		store:  func(context.Context, string) (store.Store, error) { return st, nil },
 	}
 	code := a.run(ctx, args)
 	return result{code, out.String(), errOut.String()}
@@ -407,6 +444,59 @@ func TestTaskSet(t *testing.T) {
 	}
 	if len(e.kinds(id)) != mid {
 		t.Fatal("a refused set wrote events")
+	}
+}
+
+// A set whose field moved after the task was read writes nothing; a field it
+// does not change may move freely.
+func TestTaskSetRefusesMovedField(t *testing.T) {
+	e := newTaskEnv(t)
+	task := e.newTask("sc", "--field", "owner=ann")
+	id := task["id"].(string)
+
+	e.before = func() { e.setUnderneath(id, "owner", "cat") }
+	before := len(e.kinds(id))
+	r := e.rig("task", "set", "sc", "--field", "owner=bob")
+	if r.code != 1 || !strings.Contains(r.errOut, "owner") || len(e.kinds(id)) != before+1 {
+		t.Fatalf("moved field: %+v, kinds %v", r, e.kinds(id))
+	}
+	if got := decodeObj(t, e.rig("task", "show", "sc", "--json").out); got["fields"].(map[string]any)["owner"] != "cat" {
+		t.Fatalf("lost update: %v", got)
+	}
+
+	e.before = func() { e.setUnderneath(id, "owner", "dan") }
+	r = e.rig("task", "set", "sc", "--field", "title=Other")
+	if r.code != 0 {
+		t.Fatalf("unrelated field moved: %+v", r)
+	}
+}
+
+// An edit whose field moved while the editor was open writes nothing and keeps
+// the copy.
+func TestTaskEditRefusesMovedField(t *testing.T) {
+	e := newTaskEnv(t)
+	task := e.newTask("ec", "--body", "A")
+	id := task["id"].(string)
+	e.before = func() { e.setUnderneath(id, "body", "B") }
+	before := len(e.kinds(id))
+	r := e.editWith(t, map[string]string{"RIG_EDIT_FROM": "A", "RIG_EDIT_TO": "A2"}, "ec")
+	if r.code != 1 || !strings.Contains(r.errOut, "body") || len(e.kinds(id)) != before+1 {
+		t.Fatalf("moved field: %+v, kinds %v", r, e.kinds(id))
+	}
+	i := strings.LastIndex(r.errOut, "your copy is at ")
+	if i < 0 {
+		t.Fatalf("no copy path in %q", r.errOut)
+	}
+	kept, err := os.ReadFile(strings.TrimSpace(r.errOut[i+len("your copy is at "):]))
+	if err != nil || !strings.Contains(string(kept), "A2") {
+		t.Fatalf("kept copy %q, %v", kept, err)
+	}
+
+	// A field the edit does not change may move.
+	e.before = func() { e.setUnderneath(id, "owner", "dan") }
+	r = e.editWith(t, map[string]string{"RIG_EDIT_FROM": "B", "RIG_EDIT_TO": "C"}, "ec")
+	if r.code != 0 {
+		t.Fatalf("unrelated field moved: %+v", r)
 	}
 }
 
