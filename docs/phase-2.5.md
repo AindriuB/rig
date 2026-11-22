@@ -1,6 +1,7 @@
 # Phase 2.5 plan: `rig config` and `rig login`
 
-Status: draft, waiting for approval. Nothing here is built yet.
+Status: shipped in 0.3.0, together with [phase 2](phase-2.md). This document
+has been amended to describe what shipped.
 
 Two commands the user asked for:
 
@@ -12,17 +13,19 @@ Two commands the user asked for:
 
 They also settle where a project declares its forge and its tracker. They
 do not depend on the store from [phase 2](phase-2.md), so they are a
-phase of their own. It ships as **0.3.0**, after phase 2's 0.2.0. Its first
-wave touches no file phase 2 owns and can run alongside phase 2.
+phase of their own. It shipped as **0.3.0** together with phase 2; there was no
+0.2.0 release. Its first wave touched no file phase 2 owns and ran alongside
+phase 2.
 
 ## What changes in the design
 
-The design says **"rig never holds a token."** For GitHub and GitLab that
+The design used to say **"rig never holds a token."** For GitHub and GitLab that
 stays true: rig keeps using `gh` and `glab`, and `rig login github` hands
 over to `gh auth login`. A service with no CLI of its own, Jira first,
 has nothing to hand over to, so rig stores its token. The decision becomes:
 *rig holds a token only for a service with no CLI, and only in the OS
-keychain unless the user explicitly chooses a file.* See Q9.
+keychain unless the user explicitly chooses a file.* This replaced the old
+decision in [design.md](design.md). See Q9.
 
 ## Config
 
@@ -66,6 +69,13 @@ change it makes to a tracked file is one ignore line:
   get it back: `.rig/` exists from then on. (If they delete both `.rig/`
   and the line, the next `--local` set adds the line again.)
 - Nothing else is written: not `.git/info/exclude`, not any other file.
+
+**`tracker.url` and trust.** `tracker.url` decides where a stored Jira token
+may be sent, and a cloned repository could carry a committed
+`.rig/config.json`. So `tracker.url` is taken from `--url`, `--global` or
+`--repo`; from `--local` (`<repo>/.rig/config.json`) only while that file is
+not tracked by git (decided with `git ls-files`). A tracked file's
+`tracker.url` is refused with a message to use `--url` or to set it globally.
 
 Keys are dotted names on an allow-list, and values are checked when they are
 set and when they are read. `rig config set` refuses an unknown key or a bad
@@ -231,10 +241,10 @@ Since nothing secret is ever written under the repository, rig has no
 
 | Command | What it does | Exit codes |
 |---|---|---|
-| `rig login` | Logs in to this project's forge and, unless `tracker.kind` is `local`, its tracker, each as below. | 0; 1 if either login failed; 2 |
+| `rig login` | Logs in to this project's forge, then to Jira only when `tracker.kind` is `jira`, each as below. A `github` or `gitlab` tracker shares the forge login, so there is nothing more to do for it. The Jira flags (`--url`, `--user`, `--repo`, `--store`) are accepted only when `tracker.kind` is `jira`. | 0; 1 if either login failed; 2 |
 | `rig login github\|gitlab` | If `gh auth status` (or `glab`) says logged in for the host, prints that and stops. Otherwise runs `gh auth login` (`glab auth login`) on the terminal. rig stores nothing. | 0; 1 the tool's login failed; 2 |
 | `rig login jira [--url <site>] [--user <email>] [--repo] [--store keychain\|file]` | The site is `--url`, else `tracker.url`. Prompts for the user if `--user` is absent, then reads the token, checks both with `GET <site>/rest/api/3/myself`, and stores them in one keychain entry. Writes no config. `--repo` makes the login apply to this repository only; the default is every repository. | 0; 1 Jira rejected the token, nothing stored; 2 |
-| `rig logout jira [--url <site>] [--repo]` | Deletes the keychain entry or file entry for the site. | 0, also when already logged out; 2 |
+| `rig logout jira [--url <site>] [--repo]` | Deletes the keychain entry or file entry for the site. Without `--repo` it looks only for the global entry; if that is absent but this repository has its own, it says so and points to `--repo`. | 0, also when already logged out; 2 on an error, and also when a store could not be checked and the entry was found nowhere, because rig cannot then say the login is gone (the one exception to "0 when already logged out") |
 | `rig logout github\|gitlab` | Does nothing and prints the `gh auth logout` (`glab`) command, because that login belongs to `gh` and every other tool that uses it. | 2 |
 | `rig login status [--json]` | Each known service: logged in or not, as whom, which scope and store. Never the token. Checks each with one API or `gh`/`glab` call. | 0; 2 |
 
@@ -328,8 +338,8 @@ Depends on: none.
 - AC3 No token in stdout, stderr, config files or any argument list a stub
   sees (a test greps for a marker token).
 - AC4 `--repo` keys the secret by the repo key and writes no config file.
-- AC6 `rig login` with no service logs in to the forge, then the tracker
-  unless it is `local`; `rig login jira` takes the site from `tracker.url`.
+- AC6 `rig login` with no service logs in to the forge, then to Jira when
+  `tracker.kind` is `jira`; `rig login jira` takes the site from `tracker.url`.
 - AC5 `rig logout github` is exit 2 and prints the `gh auth logout` command.
 
 ### Wave 3

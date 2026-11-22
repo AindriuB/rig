@@ -1,6 +1,8 @@
 # Phase 2 plan: generic tasks, workflows and context
 
-Status: draft, waiting for approval. Nothing here is built yet.
+Status: shipped in 0.3.0, together with [phase 2.5](phase-2.5.md). This
+document has been amended to describe what shipped; the workflow file format
+has its own reference in [workflows.md](workflows.md).
 
 Phase 2 gives rig a store for work in progress and a small set of
 **generic actions** on it: tasks, findings, notes, transitions, "what next"
@@ -9,7 +11,8 @@ file** says what states a task moves through, which transitions exist, and
 which gates guard them. claude-kit's plan → fanout → review → verify →
 record loop becomes one workflow file among others, owned by the kit.
 
-It ships as **0.2.0**: every change is a new command, flag or JSON field, and
+It shipped in **0.3.0** with phase 2.5 (the two phases were released together,
+so there was no 0.2.0): every change is a new command, flag or JSON field, and
 nothing in the phase-1 contract changes. Switching the kit over is a
 follow-up in the kit repository.
 
@@ -48,9 +51,11 @@ A workflow decides the shape of the work. It cannot loosen these:
 - Every write is a compare-and-swap, and gates are re-checked on each retry.
 - A transition that a gate refuses writes nothing. There is no `--force`;
   the way past a gate is to change the workflow file, which is the user's.
-- rig writes only under `refs/rig/` (and, in phase 2.5, `~/.rig/` and one
-  `.gitignore` line). Hooks and command gates run from an argument vector,
-  never through a shell.
+- rig writes only under `refs/rig/` and `<git common dir>/rig/` (and, in
+  phase 2.5, `~/.rig/` and one `.gitignore` line). The second is a directory
+  created with mode 0700 that holds `store.lock`: rig takes that lock around
+  each store write, so writers in several worktrees queue instead of racing.
+  Hooks and command gates run from an argument vector, never through a shell.
 - No config key and no task field holds a secret (phase 2.5).
 
 ## Storage format
@@ -104,13 +109,15 @@ same tree, branches and history.
 |---|---|---|
 | Task logs | `refs/rig/tasks/*` in the local `.git` | **Local only.** No phase-2 command pushes or fetches them. Phase 4's `rig sync` will push them only when run, or when the user opts in with a config key; never as a side effect of `rig push` (see Q21) |
 | Store commits | objects reachable only from `refs/rig/*` | local, as above; on no branch, so never in a pull request |
+| `<git common dir>/rig/` | a 0700 directory holding `store.lock`, taken for the length of each store write; shared by every worktree of the clone | local; inside `.git`, so never in a tree or a pull request |
 | Tracked files | — | never written, except one `/.rig/` line in `.gitignore` when phase 2.5's `rig config set --local` first creates `.rig/`; never committed by rig |
 | Branches | named by the workflow's `branch` template, made by whoever runs the work | rig only reads them |
 | Commit trailers, git notes | — | not written by rig in phase 2 (see Q3) |
 | `.claude/rig.json` | read, never written | phase 1's file, kept for compatibility (see Q28) |
 
 Removing rig's traces from a clone is
-`git for-each-ref --format='%(refname)' refs/rig | xargs -n1 git update-ref -d`.
+`git for-each-ref --format='%(refname)' refs/rig | xargs -n1 git update-ref -d`,
+then deleting `<git common dir>/rig/`.
 
 ### Ids
 
@@ -168,10 +175,11 @@ until phase 2.5, `RIG_WORKFLOW` does, and the default is `basic`.
 ### The built-in `basic` workflow
 
 ```
-open → doing → done          any → stopped,  stopped → (the state before)
+open → active → done         any → stopped,  stopped → (the state before)
 ```
 
-No gates, no finding severities beyond `blocking` and `info`. It exists so
+No gates, no finding severities beyond `blocking` and `info`. Moving to
+`stopped` takes a reason. It exists so
 rig is useful with no setup, and so the tests have a workflow that is not
 claude-kit's.
 
@@ -213,7 +221,7 @@ prove the format can express it.
       "gates": [{ "shaIs": "verified" }] },
     { "from": "ci_green", "to": "ready" },
     { "from": "ready", "to": "merged", "takes": "sha" },
-    { "from": ["reviewed", "verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
+    { "from": ["verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
     { "from": "*", "to": "stopped", "takes": "reason" },
     { "from": "stopped", "to": "$previous" }
   ],
@@ -267,10 +275,21 @@ prove the format can express it.
   already recorded. Hooks and `command` gates are argument vectors with
   `{short}`, `{id}`, `{slug}`, `{state}`, `{reason}`, `{sha}` substituted as
   whole arguments, never through a shell.
+- **A sha-bound state entered without a sha** inherits the sha of the sha-bound
+  state it came from (`verified → pr_open` carries `verified`'s sha); from a
+  state that is not sha-bound it records none.
+
+`reviewed` is left out of the from-list of the plain transition to
+`implementing` on purpose: the gated `reviewed → implementing` (which counts a
+round and has a `counterBelow` gate) is its only route, and a second route
+would let a caller skip the round cap.
 
 `rig workflow validate` checks a file: every state reachable from `initial`,
 every transition's states declared, gates and fields well-typed, no
-transition out of a final state.
+transition out of a final state, and no two routes the same. After `from`
+lists and `*` are expanded, validation refuses two transitions with the same
+(from, to), so `"*" → X` alongside an explicit `a → X` is refused too.
+[workflows.md](workflows.md) has the whole format.
 
 **A task records the workflow's name and version when it is created.**
 Gates use the workflow loaded now. A task in a state the current workflow no
@@ -305,9 +324,9 @@ Types live in `internal/store` and name no workflow.
 | `workflow` | `{name, version}` it was created under |
 | `state` | the effective state, after the sha-bound check |
 | `recordedState` | the state the log alone gives |
-| `stateSha` | the sha recorded entering the current state, if any |
+| `stateSha` | the sha recorded entering the current state; always present, `""` when there is none. After `stopped → $previous` into a sha-bound state it is `""` while `shas` still binds that state |
 | `shas` | object: state → sha recorded entering it |
-| `branch` | from the workflow's template |
+| `branch` | from the workflow's template, applied when the task is read: `task new` leaves the stored branch empty because the short id is assigned by the store. Changing the template therefore renames every task's branch |
 | `pr` | integer, once a transition records one |
 | `headSha` | the branch tip now; absent if the branch does not exist |
 | `reason` | the last `reason` argument, when the state took one |
@@ -351,10 +370,10 @@ Text output is for people; `--json` and exit codes are the contract.
 |---|---|---|
 | `rig task new --slug <s> --title <text> [--body <text> \| --body-file <path>] [--field <name>=<value>]…` | Creates a task in the workflow's `initial` state. `--body-file` is read once, at most 64 KiB. A list field repeats `--field`. | the Task |
 | `rig task show <task> [--findings] [--notes] [--history]` | One task. The text form is a readable Markdown page: title, state and action, body, fields, and with the flags its findings, notes and transitions. | the Task |
-| `rig task edit <task>` | Opens the task's title, body and fields as Markdown in `$VISUAL` or `$EDITOR`; on save, writes one `field` event per changed value. Needs a terminal. | the Task after |
+| `rig task edit <task>` | Opens the task's title, body and fields as Markdown in `$VISUAL` or `$EDITOR`; on save, writes one `field` event per changed value. Needs a terminal on standard output, so `rig task edit --json \| jq` is exit 2. | the Task after |
 | `rig task list [--state <s>]… [--all]` | Tasks, newest first; final states left out without `--all`. | array of Task |
 | `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>]` | One transition, gates checked. | the Task after, and `hookErrors` |
-| `rig task set <task> --field <name>=<value>…` | Sets fields. | the Task after |
+| `rig task set <task> --field <name>=<value>…` | Sets fields. Exit 1, writing nothing, when a field it changes was changed by someone else since rig read it. | the Task after |
 | `rig task count <task> <counter>` | Adds one to a counter outside a transition. | `{task, counter, value}` |
 | `rig task is <task> <state>` | Writes nothing. | exit **0** if the effective state is `<state>`, **1** if not |
 | `rig task log <task>` | Raw events, oldest first. | array of Event |
@@ -363,8 +382,14 @@ Text output is for people; `--json` and exit codes are the contract.
 `rig task show t-3k9f --findings --notes` (or `rig context t-3k9f` for the
 budgeted brief an agent would get), browses with `rig task list` and
 `rig next`, and changes the plan with `rig task edit`. The edit file is
-plain Markdown with one `## <field>` heading per field; if it no longer
-parses, nothing is written and rig prints where the edited copy was kept.
+plain Markdown: a `# <title>` line, then a `## body` heading and one
+`## <field>` heading per field. A value line that starts with `#` or `\` is
+written with one extra leading `\`, so only a heading rig wrote can split the
+file, and the extra `\` is removed on save. An editor that saves CRLF line
+endings changes nothing. Only values whose section text you changed are
+written; the others are left alone. If it no longer parses, nothing is written
+and rig prints where the edited copy was kept. If a field the edit changes
+moved while the editor was open, rig exits 1 and writes nothing.
 State is not editable there: it changes only through `rig task move`, so
 gates still apply.
 
@@ -407,8 +432,13 @@ calls the forge and never writes.
 
 For each task: its effective state's `action` and `who`, the transitions out
 of that state, and for each whether its gates pass now
-(`{to, ok, failing: [gate]}`). A task whose every transition fails a gate
-is listed with the failing gates, so a caller sees *why* it is stuck.
+(`{to, ok, failing: [gate], gates: [{gate, ok, message?}]}`). `ok` is `true`
+when every gate passes, `false` when one fails, and `null` when none fails but
+a `command` gate was not run: `rig next` never runs a program, so a command
+gate's own `ok` is `null` ("not run"). A task whose every transition fails a
+gate is listed with the failing gates, so a caller sees *why* it is stuck.
+A `$previous` target is resolved as a move resolves it, to the task's previous
+state; a task with no previous state gets `ok: false`, failing `previous`.
 
 Order: `who: human` first, as they wait on a person; then states nearer a
 final state first (by shortest path); then oldest first.
@@ -432,7 +462,7 @@ range 200 to 20000. Sections are filled in this order:
 | 4 | Paths | tracked files matching the `owns: true` field, with line counts | fills what is left |
 | 5 | Overlap | other open tasks whose owned paths match any of the same files | fills what is left |
 | 6 | History | closed findings and notes from other tasks on these files, newest first | fills what is left |
-| 7 | Commits | the last commits on the default branch touching these files | fills what is left |
+| 7 | Commits | the last commits on the default branch touching the owned paths, matched by the owns globs, so commits that touched a path since deleted or renamed are included | fills what is left |
 
 A workflow with no `owns` field gets sections 1 to 3 only. Sections 3 to 7
 add one line at a time until the next would pass the budget, then print
@@ -447,8 +477,9 @@ inputs give the same bytes.
 `docs/design.md`'s contract gains, as additions only: the commands above
 with the shared exit codes; the Task, Finding, Note, Event, `next` and
 `context` shapes; the workflow file format at `version: 1`; the storage
-promise (only `refs/rig/`, append-only, unknown events skipped);
-`RIG_ACTOR` and `RIG_WORKFLOW`. `rig version` prints `0.2.0`.
+promise (only `refs/rig/` and `<git common dir>/rig/`, append-only, unknown
+events skipped); `RIG_ACTOR` and `RIG_WORKFLOW`. `rig version` prints
+`0.3.0`, the two phases having shipped together.
 
 A workflow file's format is versioned on its own: a new optional key is
 compatible, and anything else raises the workflow format version, which rig
@@ -582,7 +613,7 @@ their tests. Depends on: 03, 04.
 
 **10 docs-and-version** — owns `docs/design.md`, `README.md`,
 `cmd/rig/version.go`, `docs/phase-2.md`, `docs/workflows.md`. Depends on: 05 to 09.
-- AC1 `version` is `0.2.0`.
+- AC1 `version` is `0.3.0` (phases 2 and 2.5 ship together).
 - AC2 The contract gains the additions above; no existing row changes.
 - AC3 `docs/workflows.md` documents the file format, every gate and hook,
   `basic`, and the kit loop as a worked example.
