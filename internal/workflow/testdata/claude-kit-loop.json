@@ -1,0 +1,49 @@
+{
+  "name": "claude-kit-loop",
+  "version": 1,
+  "initial": "planned",
+  "branch": "task/{short}-{slug}",
+  "states": {
+    "planned":      { "action": "implement" },
+    "implementing": { "action": "review" },
+    "reviewed":     { "action": "verify" },
+    "verified":     { "action": "open-pr",  "shaBound": true },
+    "pr_open":      { "action": "wait-ci",  "shaBound": true },
+    "ci_green":     { "action": "mark-ready", "shaBound": true },
+    "ready":        { "action": "merge", "who": "human", "shaBound": true },
+    "merged":       { "final": true },
+    "stopped":      { "action": "decide", "who": "human" }
+  },
+  "onNewCommit": "implementing",
+  "transitions": [
+    { "from": "planned", "to": "implementing",
+      "gates": [{ "dependsIn": ["merged"] }] },
+    { "from": "implementing", "to": "reviewed",
+      "gates": [{ "noOpenFindings": { "severity": ["P1", "P2", "STYLE", "SPEC"] } }] },
+    { "from": "reviewed", "to": "verified", "takes": "sha",
+      "gates": [{ "shaIsHead": true }] },
+    { "from": "reviewed", "to": "implementing", "count": "rounds",
+      "gates": [{ "counterBelow": { "counter": "rounds", "max": 4 } }] },
+    { "from": "verified", "to": "pr_open", "takes": "pr" },
+    { "from": "pr_open", "to": "ci_green", "takes": "sha",
+      "gates": [{ "shaIs": "verified" }] },
+    { "from": "ci_green", "to": "ready" },
+    { "from": "ready", "to": "merged", "takes": "sha" },
+    { "from": ["verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
+    { "from": "*", "to": "stopped", "takes": "reason" },
+    { "from": "stopped", "to": "$previous" }
+  ],
+  "fields": {
+    "acceptance": { "type": "list", "context": true },
+    "owns":       { "type": "paths", "context": true, "owns": true },
+    "depends":    { "type": "tasks" }
+  },
+  "findings": {
+    "severities": ["P1", "P2", "P3", "STYLE", "SPEC", "NOTE"],
+    "fields": { "route": { "type": "enum", "values": ["implementer", "orchestrator"] } }
+  },
+  "counters": ["rounds"],
+  "hooks": [
+    { "on": "enter:stopped", "run": ["notify-user", "{short}", "{reason}"] }
+  ]
+}
