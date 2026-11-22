@@ -170,35 +170,43 @@ func (a *app) logout(ctx context.Context, args []string) int {
 		return a.fail("logout", "%v", err)
 	}
 	account := accounts[0]
-	var failures []string
-	cleared := false
+	host := strings.TrimPrefix(account, "jira:")
+	var deleted, absent, unknown []string
+	failed := false
 	for _, kind := range storeKinds() {
 		st, err := a.secrets(kind)
 		if err != nil {
-			// A store that cannot be opened holds nothing rig can remove.
+			// A store that cannot be opened cannot be checked.
 			fmt.Fprintf(a.stderr, "rig logout: skipped the %s store: %v\n", kind, err)
+			unknown = append(unknown, kind)
+			continue
+		}
+		if _, err := st.Get(ctx, account); errors.Is(err, secret.ErrNotFound) {
+			absent = append(absent, kind)
+			continue
+		} else if err != nil {
+			fmt.Fprintf(a.stderr, "rig logout: skipped the %s store: %v\n", kind, err)
+			unknown = append(unknown, kind)
 			continue
 		}
 		if err := st.Delete(ctx, account); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", kind, err))
+			fmt.Fprintf(a.stderr, "rig logout: %s: %v\n", kind, err)
+			failed = true
 			continue
 		}
-		cleared = true
+		deleted = append(deleted, kind)
 	}
-	// A store that fails to delete is a warning once another store has
-	// cleared the entry: the failing one (a keychain with no Secret Service)
-	// cannot be told apart from one that never held it.
-	for _, f := range failures {
-		if cleared {
-			fmt.Fprintf(a.stderr, "rig logout: skipped the %s\n", f)
-		} else {
-			fmt.Fprintf(a.stderr, "rig logout: %s\n", f)
-		}
-	}
-	if len(failures) > 0 && !cleared {
+	if failed {
 		return 2
 	}
-	fmt.Fprintf(a.stdout, "Logged out of %s\n", strings.TrimPrefix(account, "jira:"))
+	if len(deleted) > 0 {
+		fmt.Fprintf(a.stdout, "Logged out of %s\n", host)
+		return 0
+	}
+	if len(unknown) > 0 {
+		return a.fail("logout", "could not check the %s store; no entry found in %s", strings.Join(unknown, ", "), strings.Join(absent, ", "))
+	}
+	fmt.Fprintf(a.stdout, "Not logged in to %s\n", host)
 	return 0
 }
 

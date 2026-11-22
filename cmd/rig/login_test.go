@@ -540,31 +540,89 @@ func TestLogoutSkipsAStoreThatCannotOpen(t *testing.T) {
 	}
 }
 
-type failDelStore struct{ memStore }
-
-func (s *failDelStore) Delete(context.Context, string) error {
-	return errors.New("secret-tool clear: no Secret Service")
+// flakyStore is a memStore whose Get and Delete can be made to fail.
+type flakyStore struct {
+	memStore
+	getErr, delErr error
 }
 
-func TestLogoutSkipsAStoreWhoseDeleteFailsWhenEntryClearedElsewhere(t *testing.T) {
+func (s *flakyStore) Get(ctx context.Context, a string) (secret.Secret, error) {
+	if s.getErr != nil {
+		return secret.Secret{}, s.getErr
+	}
+	return s.memStore.Get(ctx, a)
+}
+
+func (s *flakyStore) Delete(ctx context.Context, a string) error {
+	if s.delErr != nil {
+		return s.delErr
+	}
+	return s.memStore.Delete(ctx, a)
+}
+
+const logoutAcct = "jira:acme.atlassian.net"
+
+// logoutEnv wires a flaky keychain and the memory file store.
+func logoutEnv(t *testing.T) (*loginEnv, *flakyStore) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("no file store on windows")
 	}
 	e := newLoginEnv(t)
+	kc := &flakyStore{memStore: memStore{m: map[string]secret.Secret{}}}
 	e.a.secrets = func(kind string) (secret.Store, error) {
 		if kind == storeKeychain {
-			return &failDelStore{}, nil
+			return kc, nil
 		}
 		return e.stores[kind], nil
 	}
-	e.stores[storeFile].m["jira:acme.atlassian.net"] = secret.Secret{User: "u", Token: marker}
+	return e, kc
+}
+
+func TestLogoutFailsWhenKeychainHoldsEntryAndDeleteFails(t *testing.T) {
+	e, kc := logoutEnv(t)
+	kc.m[logoutAcct] = secret.Secret{User: "u", Token: marker}
+	kc.delErr = errors.New("secret-tool clear: no Secret Service")
+	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 2 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if strings.Contains(e.out.String(), "Logged out") {
+		t.Fatalf("stdout %q", e.out.String())
+	}
+}
+
+func TestLogoutUnreachableKeychainFileStoreDeletes(t *testing.T) {
+	e, kc := logoutEnv(t)
+	kc.getErr = errors.New("keychain locked")
+	e.stores[storeFile].m[logoutAcct] = secret.Secret{User: "u", Token: marker}
 	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if !strings.Contains(e.err.String(), "keychain locked") || !strings.Contains(e.out.String(), "Logged out of acme.atlassian.net") {
+		t.Fatalf("stderr %q stdout %q", e.err.String(), e.out.String())
 	}
 	if len(e.stores[storeFile].m) != 0 {
 		t.Fatal("file entry kept")
 	}
-	if !strings.Contains(e.err.String(), "no Secret Service") {
-		t.Fatalf("stderr %q", e.err.String())
+}
+
+func TestLogoutUnreachableKeychainNothingElseFoundFails(t *testing.T) {
+	e, kc := logoutEnv(t)
+	kc.getErr = errors.New("keychain locked")
+	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 2 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if !strings.Contains(e.err.String(), "could not check the keychain store; no entry found in file") || strings.Contains(e.out.String(), "Logged out") {
+		t.Fatalf("stderr %q stdout %q", e.err.String(), e.out.String())
+	}
+}
+
+func TestLogoutNotLoggedInWhenBothStoresAbsent(t *testing.T) {
+	e, _ := logoutEnv(t)
+	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if e.out.String() != "Not logged in to acme.atlassian.net\n" {
+		t.Fatalf("stdout %q", e.out.String())
 	}
 }
