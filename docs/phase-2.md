@@ -370,6 +370,7 @@ Text output is for people; `--json` and exit codes are the contract.
 |---|---|---|
 | `rig task new --slug <s> --title <text> [--body <text> \| --body-file <path>] [--field <name>=<value>]…` | Creates a task in the workflow's `initial` state. `--body-file` is read once, at most 64 KiB. A list field repeats `--field`. | the Task |
 | `rig task show <task> [--findings] [--notes] [--history]` | One task. The text form is a readable Markdown page: title, state and action, body, fields, and with the flags its findings, notes and transitions. | the Task |
+| `rig task export <task> [--findings] [--notes] [--history]` | The same read-only Markdown page as `show`, without JSON output; redirect stdout to save it. | — |
 | `rig task edit <task>` | Opens the task's title, body and fields as Markdown in `$VISUAL` or `$EDITOR`; on save, writes one `field` event per changed value. Needs a terminal on standard output, so `rig task edit --json \| jq` is exit 2. | the Task after |
 | `rig task list [--state <s>]… [--all]` | Tasks, newest first; final states left out without `--all`. | array of Task |
 | `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>]` | One transition, gates checked. | the Task after, and `hookErrors` |
