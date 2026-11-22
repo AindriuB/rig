@@ -23,7 +23,9 @@ commands is a separate change in the kit repository.
   because refs live in the repository's common directory.
 - **Not in phase 2:** sharing the store between clones (`rig sync`, phase 4),
   claims (phase 4), importing `docs/plan` trees and generated PLAN/HISTORY
-  views (phase 3), git notes (see Q3). `rig push`, `rig pr` and `rig status`
+  views (phase 3), git notes (see Q3), and `rig config` and `rig login`,
+  which are planned as their own phase in [phase-2.5.md](phase-2.5.md).
+  `rig push`, `rig pr` and `rig status`
   do not change.
 
 ## Storage format
