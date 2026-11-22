@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -329,13 +331,16 @@ func (w *work) ownedFiles(ctx context.Context, t store.Task, ownsName string) ([
 	return w.repo.LsFiles(ctx, globSpecs(stringList(t.Fields[ownsName])))
 }
 
-// globSpecs turns paths into ":(top,glob)" pathspecs.
+// globSpecs turns paths into ":(top,glob)" pathspecs, dropping empty ones and
+// any that is absolute or leaves the repository.
 func globSpecs(paths []string) []string {
 	var specs []string
 	for _, p := range paths {
-		if p = strings.TrimSpace(p); p != "" {
-			specs = append(specs, ":(top,glob)"+p)
+		p = path.Clean(filepath.ToSlash(strings.TrimSpace(p)))
+		if p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
+			continue // outside the repository, or the whole of it
 		}
+		specs = append(specs, ":(top,glob)"+p)
 	}
 	return specs
 }
@@ -399,7 +404,7 @@ func (w *work) otherTasks(ctx context.Context, t store.Task, ownsName string, fi
 		}
 		theirs, err := w.repo.LsFiles(ctx, globSpecs(stringList(o.Fields[ownsName])))
 		if err != nil {
-			return nil, nil, err
+			continue // another task's bad paths must not fail this brief
 		}
 		var shared []string
 		for _, f := range theirs {

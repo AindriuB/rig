@@ -417,3 +417,19 @@ func TestContextFromSubdirectory(t *testing.T) {
 		t.Errorf("from src/: exit %d\n%s\nwant\n%s", code, sub, top)
 	}
 }
+
+// Owned paths outside the repository are not matched, and another task's do
+// not fail the brief.
+func TestContextPathsOutsideRepo(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	ctxTask(t, st, "alpha", "body", "src/*.go", "../x", "/etc/passwd")
+	ctxTask(t, st, "beta", "", "../x", "/etc/passwd", "src/a.go")
+	a, out, _ := ctxApp(t, ctxRepo(t), st)
+	code, text := ctxRun(t, a, out, "alpha")
+	if code != 0 || !strings.Contains(text, "src/a.go (4 lines)") || !strings.Contains(text, "[planned] src/a.go") {
+		t.Fatalf("exit %d\n%s", code, text)
+	}
+	if strings.Contains(text, "passwd (") {
+		t.Error("an absolute path was matched")
+	}
+}
