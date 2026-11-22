@@ -50,8 +50,8 @@ type nextOut struct {
 	Skipped int        `json:"skipped"`
 }
 
-// unknownState is the action of a task in a state the workflow lacks.
-const unknownState = "unknown-state"
+// actionUnknownState is the action of a task in a state the workflow lacks.
+const actionUnknownState = "unknown-state"
 
 // unreachable is the distance of a state with no path to a final state.
 const unreachable = 1 << 30
@@ -116,7 +116,7 @@ func (a *app) next(ctx context.Context, args []string) int {
 			distance:    unreachable,
 		}
 		if _, ok := w.wf.States[state]; !ok {
-			item.Action = unknownState
+			item.Action = actionUnknownState
 		} else {
 			item.distance = w.distanceOf(dist, t, state)
 		}
