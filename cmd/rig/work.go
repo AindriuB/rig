@@ -249,6 +249,9 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 type depReads struct {
 	tasks map[string][]byte
 	heads map[string]string
+	// changed is set when two reads of the same task or head during one
+	// Check disagree: no single state satisfied every gate.
+	changed bool
 }
 
 // recordingEnv is env, noting every other task and branch head the gates read.
@@ -263,6 +266,9 @@ func (w *work) recordingEnv() (workflow.Env, *depReads) {
 			if merr != nil {
 				return store.Task{}, fmt.Errorf("snapshot of %s: %w", ref, merr)
 			}
+			if was, ok := reads.tasks[ref]; ok && !bytes.Equal(was, b) {
+				reads.changed = true
+			}
 			reads.tasks[ref] = b
 		}
 		return t, err
@@ -270,6 +276,9 @@ func (w *work) recordingEnv() (workflow.Env, *depReads) {
 	env.HeadSha = func(ctx context.Context, t store.Task) (string, error) {
 		h, err := head(ctx, t)
 		if err == nil {
+			if was, ok := reads.heads[t.ID]; ok && was != h {
+				reads.changed = true
+			}
 			reads.heads[t.ID] = h
 		}
 		return h, err
@@ -280,6 +289,9 @@ func (w *work) recordingEnv() (workflow.Env, *depReads) {
 // recheckDeps reads again what reads recorded and returns errMoved if any of
 // it changed.
 func (w *work) recheckDeps(ctx context.Context, reads *depReads) error {
+	if reads.changed {
+		return errMoved
+	}
 	for ref, was := range reads.tasks {
 		cur, err := w.st.Task(ctx, ref)
 		if err != nil {

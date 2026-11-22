@@ -612,3 +612,28 @@ func TestMoveWritesWhenTheDependencyHolds(t *testing.T) {
 		t.Fatalf("%+v, %v", res.view, err)
 	}
 }
+
+// Two gates reading one dependency must see one state: if the reads differ,
+// the move starts over even when the last read matches the store.
+func TestRecheckDepsCatchesReadsThatDisagree(t *testing.T) {
+	mem := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, mem)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := newTask(t, mem)
+	env, reads := w.recordingEnv()
+	if _, err := env.Task(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.move(ctx, dep.ID, "stopped", workflow.Args{Reason: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Task(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.recheckDeps(ctx, reads); !errors.Is(err, errMoved) {
+		t.Fatalf("recheckDeps = %v, want errMoved", err)
+	}
+}
