@@ -87,6 +87,8 @@ Two settings vary independently, so they are two sections:
 | `tracker.kind` | `local`, `jira`, `github`, `gitlab` | `local` | `--global` |
 | `tracker.url` | `https://…`; required for `jira`, and for `github`/`gitlab` on a self-hosted host | none | `--global` |
 | `tracker.project` | Jira: a project key (`[A-Z][A-Z0-9]+`); GitHub: `owner/name`; GitLab: `group/…/name` | `local`: none; `github`/`gitlab`: the forge repository | `--repo` |
+| `workflow` | a preset name (`basic`) or an absolute path to a workflow file | `basic` | global file only, hand-edited |
+| `push.prefixes` | list of branch prefixes | `["task", "record"]` | global file only, hand-edited |
 
 `tracker.kind = local` means rig's own store from phase 2: tasks live in
 `refs/rig/` and nowhere else. It is what "plain files" becomes once rig
@@ -128,13 +130,22 @@ keys can be set one at a time. `rig config list` prints a warning line for an
 incomplete tracker, and the command that needs it exits 2 naming the missing
 key.
 
-**`pushPrefixes` is not a config key.** It decides what `rig push` may push
-without a prompt, and the kit's settings template guards exactly one file
-for it, `.claude/rig.json`. If `rig config set` could write it, or a new file
-could hold it, an agent could widen pushes with one allowed command. So it
-stays only in `.claude/rig.json`, rig never writes that file, and `.rig/`
-cannot set it. `forge` and `host` in `.claude/rig.json` keep working, read as
-`forge.kind` and `forge.host`, above `--global` and below `--repo` (see Q10).
+**Keys that widen what rig may do are global-only and hand-edited.** Two
+keys decide what rig does without asking: `push.prefixes` (which branches
+`rig push` may push) and `workflow` (which can name programs for gates and
+hooks to run). For both:
+
+- they are read only from `~/.rig/config.json`, top level or a `repos`
+  section, never from a project's `.rig/`, which may have arrived in a clone;
+- `rig config set` and `unset` refuse them in every scope, so no command an
+  agent may be allowed to run can change them; the user edits the file;
+- `rig config get` and `list` show them.
+
+So cloning a repository never changes what rig pushes or runs, whatever any
+harness's permission rules allow. `pushPrefixes` in `.claude/rig.json` is
+still honoured, as in phase 1, and wins when present (see Q10). `forge` and
+`host` in `.claude/rig.json` keep working, read as `forge.kind` and
+`forge.host`, above `--global` and below `--repo`.
 
 ### How the tracker relates to the store
 
@@ -254,7 +265,7 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
 
 ### Wave 1 (can run alongside phase 2)
 
-**10 config-layers** — owns `internal/config/**`. Depends on: none.
+**11 config-layers** — owns `internal/config/**`. Depends on: none.
 - AC1 Lookup order local → repo → `.claude/rig.json` (its `forge` and `host`
   read as `forge.kind` and `forge.host`) → global → default; table test
   over every combination.
@@ -274,13 +285,16 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
   With no files, `tracker.kind` is `local`.
 - AC7 `Tracker()` returns the effective tracker or an error naming the
   missing key (`jira` without `tracker.url` or `tracker.project`).
-- AC2 `Set` and `Unset` refuse unknown keys and `pushPrefixes` in any spelling.
+- AC2 `Set` and `Unset` refuse unknown keys, `pushPrefixes` in any spelling,
+  and `push.prefixes` and `workflow` in every scope; both are read only from
+  the global file, and a project `.rig/` that sets them is ignored with a
+  warning.
 - AC3 Writes are atomic (temp file and rename) and leave no temp file behind.
 - AC4 `HOME`/`USERPROFILE` come from an injected function so tests never touch
   the real home.
 - AC5 Existing `Load` callers and tests pass unchanged.
 
-**11 secret-store** — owns `internal/secret/**`. Depends on: none.
+**12 secret-store** — owns `internal/secret/**`. Depends on: none.
 - AC1 The file store writes mode 0600, refuses a file or directory readable
   by others, and round-trips set, get and delete.
 - AC2 The macOS adapter passes the token only on stdin: a test with a stub
@@ -289,7 +303,7 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
 - AC4 Real keychain tests run only when `RIG_TEST_KEYCHAIN=1`; CI skips them.
 - AC5 The Windows adapter builds on `windows` (CI runs `go vet` there).
 
-**12 tty-and-proc** — owns `internal/tty/**`, `internal/proc/**`, `go.mod`, `go.sum`.
+**13 tty-and-proc** — owns `internal/tty/**`, `internal/proc/**`, `go.mod`, `go.sum`.
 Depends on: none.
 - AC1 `ReadSecret` on a non-terminal reads one line and strips `\r\n`.
 - AC2 `proc.Interactive` runs a program with the terminal's stdin, stdout and
@@ -298,14 +312,15 @@ Depends on: none.
 
 ### Wave 2 (after phase 2's task 03, which owns `main.go`)
 
-**13 config-command** — owns `cmd/rig/config.go`, `cmd/rig/config_test.go`,
-`cmd/rig/main.go`, and a stub `cmd/rig/login.go`. Depends on: 10, phase 2's 03.
+**14 config-command** — owns `cmd/rig/config.go`, `cmd/rig/config_test.go`,
+`cmd/rig/main.go`, and a stub `cmd/rig/login.go`. Depends on: 11, phase 2's 03.
 - AC1 Every `rig config` form and exit code above.
-- AC2 `rig config set pushPrefixes …` is exit 2 and writes nothing.
+- AC2 `rig config set pushPrefixes …`, `push.prefixes` and `workflow` are
+  exit 2 and write nothing.
 - AC3 `main.go` dispatches `config`, `login` and `logout`.
 
-**14 login-command** — owns `cmd/rig/login.go`, `cmd/rig/login_test.go`,
-`internal/auth/**`. Depends on: 11, 12, 13.
+**15 login-command** — owns `cmd/rig/login.go`, `cmd/rig/login_test.go`,
+`internal/auth/**`. Depends on: 12, 13, 14.
 - AC1 `rig login github` with a stub `gh` that reports logged in runs no
   `gh auth login`; with one that reports logged out, it runs it.
 - AC2 `rig login jira` against an `httptest` server: a 200 stores the token
@@ -319,8 +334,8 @@ Depends on: none.
 
 ### Wave 3
 
-**15 docs-and-version** — owns `docs/design.md`, `README.md`,
-`cmd/rig/version.go`, `docs/phase-2.5.md`. Depends on: 13, 14.
+**16 docs-and-version** — owns `docs/design.md`, `README.md`,
+`cmd/rig/version.go`, `docs/phase-2.5.md`. Depends on: 14, 15.
 - AC1 `version` is `0.3.0`.
 - AC2 The design's "rig never holds a token" decision is replaced by the one
   above, and the phase table gains 2.5.
@@ -344,9 +359,11 @@ store. *Recommend: phase 2.5, 0.3.0, wave 1 alongside phase 2.*
 no CLI, in the keychain by default; GitHub and GitLab stay with `gh` and
 `glab`.*
 
-**Q10. `.claude/rig.json`.** *Recommend: keep it; it alone holds
-`pushPrefixes`, rig never writes it, and for `forge` and `host` it sits
-between `--repo` and `--global`. Retiring it would mean moving the kit's guard to `.rig/` first.*
+**Q10. `.claude/rig.json` and keys that widen rig.** *Recommend: keep
+reading `.claude/rig.json` through 0.x (its `pushPrefixes` wins when
+present). The generic homes are `push.prefixes` and `workflow` in the global
+file only, never set by `rig config set`, so an agent or a cloned repository
+cannot widen pushes or make rig run programs.*
 
 **Q11. Format.** JSON objects give the `forge` and `tracker` sections an
 INI or TOML file would, with only the standard library, and match

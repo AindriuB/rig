@@ -1,37 +1,57 @@
-# Phase 2 plan: the store, tasks, findings and context
+# Phase 2 plan: generic tasks, workflows and context
 
 Status: draft, waiting for approval. Nothing here is built yet.
 
-Phase 2 moves the loop's working state out of markdown task files and into
-git refs that rig owns. It adds the store port and its git-ref backend from
-[design.md](design.md#the-store-port-phase-2), and five commands on top:
-`rig task`, `rig finding`, `rig verify`, `rig next` and `rig context`.
+Phase 2 gives rig a store for work in progress and a small set of
+**generic actions** on it: tasks, findings, notes, transitions, "what next"
+and a context brief. rig does not know any particular loop. A **workflow
+file** says what states a task moves through, which transitions exist, and
+which gates guard them. claude-kit's plan → fanout → review → verify →
+record loop becomes one workflow file among others, owned by the kit.
 
 It ships as **0.2.0**: every change is a new command, flag or JSON field, and
-nothing in the phase-1 contract changes. Switching the kit over to these
-commands is a separate change in the kit repository.
+nothing in the phase-1 contract changes. Switching the kit over is a
+follow-up in the kit repository.
 
 ## Goals and limits
 
-- State a model would otherwise re-read and re-parse (task state, review
-  rounds, findings, what was verified at which commit) becomes typed data
-  behind commands with `--json` output and exit codes.
-- Rules the kit states in prose become refusals: a task cannot be marked
-  reviewed with a blocking finding open, and cannot be verified at a commit
-  that is not its branch head.
-- Nothing is written into the working tree. Worktrees share the store,
-  because refs live in the repository's common directory.
-- **A repository looks the same whether or not anyone uses rig.** rig
-  never edits a tracked file (one exception in phase 2.5: a `/.rig/` line
-  in `.gitignore`), never makes a commit on a branch, and never pushes its
-  own refs unless asked
-  (see "What rig leaves in a repository").
+- **Generic actions, no built-in lifecycle.** States, transitions, gates,
+  finding severities, counters and task fields are data in a workflow file.
+  rig ships one small default workflow, `basic`; any team can write its own.
+- **Harness-neutral.** Claude Code, other agent CLIs, CI jobs and people all
+  drive rig the same way: a CLI with `--json` and exit codes, and later the
+  MCP server (phase 6). Nothing assumes a harness, its hooks or its agent
+  roles. Who acted comes from `RIG_ACTOR`.
+- **Bring your own workflow.** A team with its own kit and repository
+  layout can adopt rig's actions without adopting claude-kit (see
+  "Extension points").
+- **Rules become refusals.** A gate the workflow declares is checked by rig on
+  every transition, so a caller cannot skip it by forgetting a step.
+- **A repository looks the same whether or not anyone uses rig.** rig never
+  edits a tracked file (one exception in phase 2.5: a `/.rig/` line in
+  `.gitignore`), never makes a commit on a branch, and never pushes its own
+  refs unless asked (see "What rig leaves in a repository").
 - **Not in phase 2:** sharing the store between clones (`rig sync`, phase 4),
-  claims (phase 4), importing `docs/plan` trees and generated PLAN/HISTORY
-  views (phase 3), git notes (see Q3), and `rig config` and `rig login`,
-  which are planned as their own phase in [phase-2.5.md](phase-2.5.md).
-  `rig push`, `rig pr` and `rig status`
-  do not change.
+  claims (phase 4), tracker adapters (phase 4), views and exports
+  (phase 3), and `rig config` and `rig login`, planned in
+  [phase-2.5.md](phase-2.5.md). `rig push`, `rig pr` and `rig status` do not
+  change.
+
+## What rig enforces whatever the workflow says
+
+A workflow decides the shape of the work. It cannot loosen these:
+
+- `rig push` pushes only a plain branch under an allowed prefix: never the
+  default branch, a tag, a refspec, a force or a delete (phase 1's rules).
+- The store is append-only. No command edits or deletes an event; a
+  correction is a new event.
+- Every write is a compare-and-swap, and gates are re-checked on each retry.
+- A transition that a gate refuses writes nothing. There is no `--force`;
+  the way past a gate is to change the workflow file, which is the user's.
+- rig writes only under `refs/rig/` (and, in phase 2.5, `~/.rig/` and one
+  `.gitignore` line). Hooks and command gates run from an argument vector,
+  never through a shell.
+- No config key and no task field holds a secret (phase 2.5).
 
 ## Storage format
 
@@ -85,16 +105,16 @@ same tree, branches and history.
 | Task logs | `refs/rig/tasks/*` in the local `.git` | **Local only.** No phase-2 command pushes or fetches them. Phase 4's `rig sync` will push them only when run, or when the user opts in with a config key; never as a side effect of `rig push` (see Q21) |
 | Store commits | objects reachable only from `refs/rig/*` | local, as above; on no branch, so never in a pull request |
 | Tracked files | — | never written, except one `/.rig/` line in `.gitignore` when phase 2.5's `rig config set --local` first creates `.rig/`; never committed by rig |
-| Branches | `task/<short>-<slug>`, made by whoever runs the loop | the kit's naming; rig only reads it |
+| Branches | named by the workflow's `branch` template, made by whoever runs the work | rig only reads them |
 | Commit trailers, git notes | — | not written by rig in phase 2 (see Q3) |
-| `.claude/rig.json` | read, never written | the project's own file, as in phase 1 |
+| `.claude/rig.json` | read, never written | phase 1's file, kept for compatibility (see Q28) |
 
 Removing rig's traces from a clone is
 `git for-each-ref --format='%(refname)' refs/rig | xargs -n1 git update-ref -d`.
 
 ### Ids
 
-Task, finding and event ids are ULIDs, generated in rig with the standard
+Task, finding, note and event ids are ULIDs, generated in rig with the standard
 library (`crypto/rand` plus the clock, monotonic within one process).
 
 A task's **short id** is `t-` and the last four characters of its ULID in
@@ -106,9 +126,10 @@ characters the same way, unique within its task.
 Anywhere a command takes a task, it accepts the full ULID, the short id or the
 slug. Two matches is exit 2 with the candidates listed.
 
-A task's branch is `task/<short-id>-<slug>`, for example
-`task/t-3k9f-add-parser`. `rig push t-3k9f` already resolves that through its
-existing `task/<id>-*` branch lookup, so `rig push` does not change.
+A task's branch comes from the workflow's `branch` template; the default is
+`task/{short}-{slug}`, for example `task/t-3k9f-add-parser`. `rig push t-3k9f`
+already resolves that through its existing `task/<id>-*` branch lookup, so
+`rig push` does not change.
 
 ## Concurrent writers and merges
 
@@ -117,7 +138,7 @@ every write is a compare-and-swap on one ref:
 
 1. Read the tip and its log.
 2. Fold the log to the current state and check the new event is legal
-   against it. If it is not, exit 1 and write nothing.
+   against it and the workflow's gates. If it is not, exit 1 and write nothing.
 3. Write the blob, tree and commit.
 4. `git update-ref <ref> <new> <old>`. For a new task, `<old>` is the empty
    string, which makes git refuse if the ref exists.
@@ -137,389 +158,518 @@ both tips as parents. Folding a merged log uses the same rules as a local
 one. Phase 2 implements and tests that merge function in the backend, so the
 format is proven merge-safe now, but no command calls it yet (see Q2).
 
+## Workflows
+
+A workflow is a JSON file. It names states, transitions, gates, hooks, task
+fields, finding severities and counters. rig loads one per repository: the
+config key `workflow` (phase 2.5) names a built-in preset or a file path;
+until phase 2.5, `RIG_WORKFLOW` does, and the default is `basic`.
+
+### The built-in `basic` workflow
+
+```
+open → doing → done          any → stopped,  stopped → (the state before)
+```
+
+No gates, no finding severities beyond `blocking` and `info`. It exists so
+rig is useful with no setup, and so the tests have a workflow that is not
+claude-kit's.
+
+### Shape of a workflow file
+
+The kit's loop, written as a workflow, shows every feature. This file lives
+in the kit's repository, not rig's; rig's tests keep a copy as a fixture to
+prove the format can express it.
+
+```json
+{
+  "name": "claude-kit-loop",
+  "version": 1,
+  "initial": "planned",
+  "branch": "task/{short}-{slug}",
+  "states": {
+    "planned":      { "action": "implement" },
+    "implementing": { "action": "review" },
+    "reviewed":     { "action": "verify" },
+    "verified":     { "action": "open-pr",  "shaBound": true },
+    "pr_open":      { "action": "wait-ci",  "shaBound": true },
+    "ci_green":     { "action": "mark-ready", "shaBound": true },
+    "ready":        { "action": "merge", "who": "human", "shaBound": true },
+    "merged":       { "final": true },
+    "stopped":      { "action": "decide", "who": "human" }
+  },
+  "onNewCommit": "implementing",
+  "transitions": [
+    { "from": "planned", "to": "implementing",
+      "gates": [{ "dependsIn": ["merged"] }] },
+    { "from": "implementing", "to": "reviewed",
+      "gates": [{ "noOpenFindings": { "severity": ["P1", "P2", "STYLE", "SPEC"] } }] },
+    { "from": "reviewed", "to": "verified", "takes": "sha",
+      "gates": [{ "shaIsHead": true }] },
+    { "from": "reviewed", "to": "implementing", "count": "rounds",
+      "gates": [{ "counterBelow": { "counter": "rounds", "max": 4 } }] },
+    { "from": "verified", "to": "pr_open", "takes": "pr" },
+    { "from": "pr_open", "to": "ci_green", "takes": "sha",
+      "gates": [{ "shaIs": "verified" }] },
+    { "from": "ci_green", "to": "ready" },
+    { "from": "ready", "to": "merged", "takes": "sha" },
+    { "from": ["reviewed", "verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
+    { "from": "*", "to": "stopped", "takes": "reason" },
+    { "from": "stopped", "to": "$previous" }
+  ],
+  "fields": {
+    "acceptance": { "type": "list", "context": true },
+    "owns":       { "type": "paths", "context": true, "owns": true },
+    "depends":    { "type": "tasks" }
+  },
+  "findings": {
+    "severities": ["P1", "P2", "P3", "STYLE", "SPEC", "NOTE"],
+    "fields": { "route": { "type": "enum", "values": ["implementer", "orchestrator"] } }
+  },
+  "counters": ["rounds"],
+  "hooks": [
+    { "on": "enter:stopped", "run": ["notify-user", "{short}", "{reason}"] }
+  ]
+}
+```
+
+- **States** carry an `action` label for `rig next`, and `who` (`agent` by
+  default, or `human`) so a caller can tell work it may do from a decision it
+  must ask for. `final` states take no transitions out.
+- **`shaBound` and `onNewCommit`.** A sha-bound state is tied to the sha it
+  was entered at. If the task's branch head has moved since, its effective
+  state is `onNewCommit`. This is computed when the task is read, not
+  written (see Q4).
+- **Transitions** may list several `from` states, `*` for any non-final
+  state, and `$previous` as a target. `takes` names an argument the
+  transition records: `sha`, `pr` or `reason`. `count` adds one to a counter.
+- **Gates** are checked before the transition is written. The built-in set:
+
+  | Gate | Passes when |
+  |---|---|
+  | `noOpenFindings {severity}` | no finding with one of those severities is open |
+  | `shaIsHead` | the `sha` argument is the branch head |
+  | `shaIs <state>` | the `sha` argument is the sha recorded entering that state |
+  | `dependsIn [states]` | every task in the `depends` field is in one of those states |
+  | `fieldSet <field>` | the field has a value |
+  | `counterBelow {counter, max}` | the counter is below `max` |
+  | `command [argv]` | a program exits 0; it gets the task as JSON on stdin and a 30 s limit |
+
+- **Fields** are typed (`string`, `text`, `int`, `bool`, `list`, `enum`,
+  `paths`, `tasks`). `context: true` puts a field in `rig context`'s fixed
+  part; `owns: true` marks the paths field that `rig context` keys on.
+- **Findings** take the workflow's severities and its extra fields. `NOTE`
+  or any severity not named in a `noOpenFindings` gate never blocks.
+- **Hooks** run after a transition is written: `on` is `enter:<state>`,
+  `leave:<state>` or `transition`. The program gets the event and the task as
+  JSON on stdin. A hook that fails is reported (stderr, and
+  `hookErrors` in `--json`) but does not undo the transition, which is
+  already recorded. Hooks and `command` gates are argument vectors with
+  `{short}`, `{id}`, `{slug}`, `{state}`, `{reason}`, `{sha}` substituted as
+  whole arguments, never through a shell.
+
+`rig workflow validate` checks a file: every state reachable from `initial`,
+every transition's states declared, gates and fields well-typed, no
+transition out of a final state.
+
+**A task records the workflow's name and version when it is created.**
+Gates use the workflow loaded now. A task in a state the current workflow no
+longer has is reported by `rig workflow validate` and by `rig next` as
+`action: unknown-state`, and can still be moved by any `*` transition.
+
+## Extension points
+
+How a team that does not use claude-kit fits rig to its own way of working:
+
+| Need | How |
+|---|---|
+| Their own states and lifecycle | a workflow file |
+| Their own rules before a step | built-in gates, or a `command` gate running their program |
+| Something to happen after a step | hooks |
+| Extra data on tasks and findings | typed `fields` |
+| Their own severities | `findings.severities` |
+| Their own tracker | phase 4's tracker port: `local`, `jira`, `github`, `gitlab`, and an `exec` tracker that speaks JSON over stdin/stdout to any program |
+| Their own harness | the CLI with `--json` and exit codes, phase 6's MCP server |
+
 ## Data model
 
-Types live in `internal/store` and name no backend.
+Types live in `internal/store` and name no workflow.
 
 **Task** (from `rig task show --json` and each element of `rig task list --json`):
 
 | Field | Value |
 |---|---|
 | `id`, `short`, `slug`, `title` | strings |
-| `spec` | string, the task's goal and context |
-| `acceptance` | array of `{id, text}`; ids are `AC1`, `AC2`, … and never renumbered |
-| `owns` | array of path globs, git pathspec glob syntax |
-| `depends` | array of task ids (full ULIDs) |
-| `branch` | `task/<short>-<slug>` |
-| `pr` | integer; present once a pull request is linked |
-| `state` | see the state machine; the effective state, after the head check below |
+| `body` | string, free text |
+| `fields` | object; keys and types from the workflow |
+| `workflow` | `{name, version}` it was created under |
+| `state` | the effective state, after the sha-bound check |
 | `recordedState` | the state the log alone gives |
-| `verifiedSha`, `ciSha`, `mergeSha` | present once recorded |
+| `stateSha` | the sha recorded entering the current state, if any |
+| `shas` | object: state → sha recorded entering it |
+| `branch` | from the workflow's template |
+| `pr` | integer, once a transition records one |
 | `headSha` | the branch tip now; absent if the branch does not exist |
-| `stopReason` | present when `state` is `stopped` |
-| `round` | review rounds, external reviews and failed verifies, over the task's whole life |
-| `openFindings` | integer, findings with status `open` |
+| `reason` | the last `reason` argument, when the state took one |
+| `counters` | object: counter → integer |
+| `openFindings` | integer |
 | `created`, `updated` | RFC 3339 times |
 
-**Finding:**
+**Finding:** `id`, `short`, `task`, `severity` (from the workflow), `status`
+(`open`, `fixed`, `wontfix` or `deferred`), `key`, `summary`, `path`
+(`path` or `path:line`, optional), `fields` (from the workflow), `counters`
+(the task's counters when it was added, so a finding knows its round),
+`created`, `updated`.
 
-| Field | Value |
-|---|---|
-| `id`, `short`, `task` | strings |
-| `source` | `review`, `verify` or `external` |
-| `severity` | `P1`, `P2`, `P3`, `STYLE`, `SPEC` or `NOTE`, as the kit's code-reviewer uses them |
-| `route` | `implementer` or `orchestrator`; absent for a `NOTE` |
-| `status` | `open`, `fixed`, `wontfix` or `deferred` |
-| `key` | dedupe key |
-| `round` | the task's round when it was added |
-| `summary` | one line |
-| `path` | `path` or `path:line`; optional |
-| `created`, `updated` | RFC 3339 times |
+**Note:** `id`, `short`, `task` (optional: a note can belong to the
+repository), `kind` (free text: `decision`, `history`, …), `text`, `created`.
+Notes are append-only records: what was decided, what landed. They replace
+markdown history sections with something a tool can query.
 
-A finding is **blocking** while it is `open` and its severity is `P1`, `P2`,
-`STYLE` or `SPEC`. `P3` and `NOTE` never block.
+Notes that belong to no task are kept on one more ref, `refs/rig/notes`,
+with the same log format.
 
-**Event kinds:** `created`, `transition` (`{to, sha?, pr?, reason?}`),
-`round` (`{kind: review|external|attempt}`), `finding` (the finding),
-`finding-status` (`{finding, status}`), `verify` (`{sha, result, summary}`).
-
-### State machine
-
-As in the design, with the transitions rig allows:
-
-| From | To | How | Refused (exit 1) when |
-|---|---|---|---|
-| `planned` | `implementing` | `rig task mark <t> implementing` | a task in `depends` is not `merged` |
-| `implementing` | `reviewed` | `rig task mark <t> reviewed` | a blocking finding is open |
-| `reviewed` | `verified` | `rig verify <t> --pass` | the sha is not the branch head |
-| `reviewed` | `implementing` | `rig verify <t> --fail` (also adds an `attempt` round) | the sha is not the branch head |
-| `verified` | `pr_open` | `rig task mark <t> pr_open --pr <n>` | — |
-| `pr_open` | `ci_green` | `rig task mark <t> ci_green --sha <sha>` | the sha is not the verified sha |
-| `ci_green` | `ready` | `rig task mark <t> ready` | — |
-| `ready` | `merged` | `rig task mark <t> merged --sha <merge-sha>` | — |
-| `reviewed` … `ready` | `implementing` | `rig task mark <t> implementing` | — |
-| any but `merged` | `stopped` | `rig task stop <t> --reason <text>` | — |
-| `stopped` | the state before it | `rig task resume <t>` | — |
-
-`merged` is final. The `verified` state carries its sha, so it prints as
-`verified@<sha7>`.
-
-**The head check.** "A new commit on the branch returns the task to
-implementing" is computed when the task is read, not written as an event:
-if the recorded state is `verified`, `pr_open`, `ci_green` or `ready` and the
-branch head is not `verifiedSha`, the effective `state` is `implementing`.
-The log is unchanged, so nothing has to notice the commit at the moment it
-lands (see Q4).
+**Event kinds:** `created`, `transition` (`{from, to, sha?, pr?, reason?}`),
+`field` (`{name, value}`; `title` and `body` are field names too), `count` (`{counter, by}`), `finding`,
+`finding-status` (`{finding, status}`), `note`.
 
 ## Commands
 
-All take `[--repo <dir>]` (default: the current directory) and `--json`
-where they print something. As in phase 1, an unknown flag is exit 2.
+All take `[--repo <dir>]` and `--json` where they print something. As in
+phase 1, an unknown flag is exit 2.
 
-**Exit codes**, the same for all five unless a row says otherwise:
-**0** done; **1** refused by the state machine or a rule above, nothing
-written; **2** usage error, no such task or finding, an ambiguous id, a
-store or git error, or the write retries ran out.
+**Exit codes**, shared by every command below unless a row says otherwise:
+**0** done; **1** refused by a gate or the workflow, nothing written;
+**2** usage error, no such task, an ambiguous id, a bad workflow file, a store
+or git error, or the write retries ran out.
 
-Text output is for people and is not part of the contract; `--json` and exit
-codes are.
+Text output is for people; `--json` and exit codes are the contract.
 
 ### `rig task`
 
 | Command | What it does | `--json` |
 |---|---|---|
-| `rig task new --slug <s> --title <text> [--spec <text> \| --spec-file <path>] [--ac <text>]… [--owns <glob>]… [--depends <task>]…` | Creates a task in `planned`. `--spec-file` is read once, at most 64 KiB. `--ac` repeats, numbered in order. | the Task |
-| `rig task show <task>` | One task. | the Task |
-| `rig task list [--state <s>]… [--all]` | Tasks, newest first. Without `--all`, `merged` tasks are left out. | array of Task |
-| `rig task mark <task> <state> [--pr <n>] [--sha <sha>]` | One transition from the table. | the Task after |
-| `rig task stop <task> --reason <text>` | Stops a task. | the Task after |
-| `rig task resume <task>` | Returns a stopped task to its earlier state. | the Task after |
-| `rig task round <task> --kind review\|external\|attempt` | Starts a new round; prints its number. | `{task, round}` |
-| `rig task log <task>` | The raw events, oldest first. | array of Event |
+| `rig task new --slug <s> --title <text> [--body <text> \| --body-file <path>] [--field <name>=<value>]…` | Creates a task in the workflow's `initial` state. `--body-file` is read once, at most 64 KiB. A list field repeats `--field`. | the Task |
+| `rig task show <task> [--findings] [--notes] [--history]` | One task. The text form is a readable Markdown page: title, state and action, body, fields, and with the flags its findings, notes and transitions. | the Task |
+| `rig task edit <task>` | Opens the task's title, body and fields as Markdown in `$VISUAL` or `$EDITOR`; on save, writes one `field` event per changed value. Needs a terminal. | the Task after |
+| `rig task list [--state <s>]… [--all]` | Tasks, newest first; final states left out without `--all`. | array of Task |
+| `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>]` | One transition, gates checked. | the Task after, and `hookErrors` |
+| `rig task set <task> --field <name>=<value>…` | Sets fields. | the Task after |
+| `rig task count <task> <counter>` | Adds one to a counter outside a transition. | `{task, counter, value}` |
+| `rig task is <task> <state>` | Writes nothing. | exit **0** if the effective state is `<state>`, **1** if not |
+| `rig task log <task>` | Raw events, oldest first. | array of Event |
 
-`slug` uses `[a-z0-9-]`, at most 40 characters. `--owns` globs may not be
-absolute or contain `..`.
+**Looking at a task while planning.** A developer reads a task with
+`rig task show t-3k9f --findings --notes` (or `rig context t-3k9f` for the
+budgeted brief an agent would get), browses with `rig task list` and
+`rig next`, and changes the plan with `rig task edit`. The edit file is
+plain Markdown with one `## <field>` heading per field; if it no longer
+parses, nothing is written and rig prints where the edited copy was kept.
+State is not editable there: it changes only through `rig task move`, so
+gates still apply.
+
+`rig task is <t> verified` is what the kit's "was this verified at the
+current head?" becomes: sha-bound states fall back on a new commit, so one
+exit code answers it.
 
 ### `rig finding`
 
 | Command | What it does | `--json` |
 |---|---|---|
-| `rig finding add <task> --source <s> --severity <sev> [--route <r>] --summary <text> [--path <p[:line]>] [--key <k>]` | Records a finding in the task's current round. `--route` is required unless the severity is `NOTE`. | `{finding, duplicate}` |
-| `rig finding list <task> [--status <s>]… [--blocking]` | Findings, by severity then age. Default `--status open`. | array of Finding |
+| `rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]…` | Records a finding. | `{finding, duplicate}` |
+| `rig finding list <task> [--status <s>]… [--blocking]` | Default `--status open`. `--blocking` keeps those a `noOpenFindings` gate names. | array of Finding |
 | `rig finding set <task> <finding> --status <s>` | Changes a status. | the Finding after |
 
-**Dedupe.** The key defaults to the severity class, the path without its line
+**Dedupe.** The key defaults to the severity, the path without its line
 number, and the summary lower-cased with whitespace collapsed. If an `open`
 finding on the same task has the same key, nothing is written and the
-existing finding comes back with `"duplicate": true`, exit 0. So a reviewer
-that reports the same thing in round 3 as in round 2 does not inflate the
-count, and the round-2 finding keeps its round.
+existing finding comes back with `"duplicate": true`, exit 0.
 
-### `rig verify`
+### `rig note`
 
-| Command | What it does | Exit codes |
+| Command | What it does | `--json` |
 |---|---|---|
-| `rig verify <task> --pass [--sha <sha>] [--summary <text>]` | Records a pass at `--sha` (default: the branch head) and moves `reviewed` to `verified`. | 0; 1 not `reviewed`, or the sha is not the head; 2 |
-| `rig verify <task> --fail [--sha <sha>] --summary <text>` | Records a fail, adds an `attempt` round and a `verify` finding (`P2`, route `implementer`) from the summary, and moves the task to `implementing`. | 0; 1; 2 |
-| `rig verify <task> --check` | Writes nothing. | **0** verified at the current head; **1** not; 2 |
+| `rig note add [<task>] --kind <k> --text <text>` | Appends a note to a task, or to the repository. | the Note |
+| `rig note list [<task>] [--kind <k>] [--limit <n>]` | Newest first. | array of Note |
 
-`--json` gives `{task, sha, result, verified}`. `--check` is what a caller
-uses before opening a pull request: one exit code instead of a parsed
-`## Wave verified — <sha>` heading.
+### `rig workflow`
+
+| Command | What it does |
+|---|---|
+| `rig workflow show [--json]` | The workflow in effect, and where it came from. |
+| `rig workflow validate [<file>] [--json]` | Checks a file, or the one in effect, and any task in a state it lacks. 0 valid, 1 invalid, 2 error. |
 
 ### `rig next`
 
-`rig next [--json] [--limit <n>]` reads the store and the branch heads and
-says what each open task needs next. It never calls the forge and never
-writes.
+`rig next [--who agent|human] [--limit <n>] [--json]` reads the store, the
+workflow and the branch heads and lists what each open task needs. It never
+calls the forge and never writes.
 
-| Effective state | `action` |
-|---|---|
-| `planned`, depends all merged | `implement` |
-| `planned`, a dependency open | `blocked` (with `blockedBy`) |
-| `implementing`, blocking findings open | `fix` |
-| `implementing`, none open | `review` |
-| `reviewed` | `verify` |
-| `verified` | `open-pr` |
-| `pr_open` | `wait-ci` |
-| `ci_green` | `mark-ready` |
-| `ready` | `merge` (a merge is the user's call) |
-| `stopped` | `decide` (with `reason`) |
+For each task: its effective state's `action` and `who`, the transitions out
+of that state, and for each whether its gates pass now
+(`{to, ok, failing: [gate]}`). A task whose every transition fails a gate
+is listed with the failing gates, so a caller sees *why* it is stuck.
 
-Order: `decide` and `merge` first, as they wait on a person; then by state,
-furthest along first; then oldest first. `--json` is
-`{actions: [{task, short, slug, state, action, reason?, blockedBy?}], skipped}`
-where `skipped` counts events the reader did not understand. Exit 0, or 2 on
-a usage or store error.
+Order: `who: human` first, as they wait on a person; then states nearer a
+final state first (by shortest path); then oldest first.
+
+`--json`: `{items: [{task, short, slug, state, action, who, transitions}], skipped}`.
 
 ### `rig context <task>`
 
-`rig context <task> [--budget <tokens>] [--json]` prints a brief for an agent
-starting on the task: what it must do and what it needs to know about the
-code it owns, within a fixed budget. It never prints file contents: it names
-paths, and the agent reads what it needs.
+`rig context <task> [--budget <tokens>] [--json]` prints a brief for whoever
+picks up the task, person or agent, within a fixed budget. It names paths
+and never prints file contents.
 
-**Budget.** Tokens are estimated as bytes ÷ 4, rounded up. The default is
-1500; the range is 200 to 20000. Sections are filled in this order:
+**Budget.** Tokens are estimated as bytes ÷ 4, rounded up. Default 1500;
+range 200 to 20000. Sections are filled in this order:
 
 | # | Section | Contents | Budget rule |
 |---|---|---|---|
-| 1 | Header | id, slug, title, effective state, branch, PR, round | always in full |
-| 2 | Spec | the spec and every acceptance criterion | always in full |
-| 3 | Findings | this task's open findings: blocking first, then by severity, one line each | fills what is left |
-| 4 | Owns | tracked files matching `owns` (`git ls-files` with glob pathspecs), with line counts | fills what is left |
-| 5 | Overlap | other unmerged tasks whose `owns` match any of the same files | fills what is left |
-| 6 | History | closed findings from other tasks whose `path` is in this task's files, newest first | fills what is left |
-| 7 | Commits | the last commits on the default branch touching those files, `<sha7> <subject>` | fills what is left |
+| 1 | Header | id, slug, title, effective state, action, branch, PR, counters | always in full |
+| 2 | Body | the body and every field marked `context: true` | always in full |
+| 3 | Findings | this task's open findings, blocking first, one line each | fills what is left |
+| 4 | Paths | tracked files matching the `owns: true` field, with line counts | fills what is left |
+| 5 | Overlap | other open tasks whose owned paths match any of the same files | fills what is left |
+| 6 | History | closed findings and notes from other tasks on these files, newest first | fills what is left |
+| 7 | Commits | the last commits on the default branch touching these files | fills what is left |
 
-Sections 3 to 7 add items one line at a time until the next line would pass
-the budget, then print `… <n> more` (its size is reserved up front) and move
-to the next section. A later section can still fit a short line after an
-earlier one ran out. If sections 1 and 2 alone pass the budget they print in
-full, nothing else is added, and `overBudget` is true.
+A workflow with no `owns` field gets sections 1 to 3 only. Sections 3 to 7
+add one line at a time until the next would pass the budget, then print
+`… <n> more` (its size reserved up front) and move on. If sections 1 and 2
+alone pass the budget, they print in full and `overBudget` is true. The same
+inputs give the same bytes.
 
-The same store, branch heads and tree give the same output byte for byte.
+`--json`: `{task, budget, used, overBudget, sections: [{name, items, omitted}]}`.
 
-`--json` is `{task, budget, used, overBudget, sections: [{name, items, omitted}]}`;
-items are strings, one per line the text form would print.
+## The contract gains
 
-## The kit contract gains
+`docs/design.md`'s contract gains, as additions only: the commands above
+with the shared exit codes; the Task, Finding, Note, Event, `next` and
+`context` shapes; the workflow file format at `version: 1`; the storage
+promise (only `refs/rig/`, append-only, unknown events skipped);
+`RIG_ACTOR` and `RIG_WORKFLOW`. `rig version` prints `0.2.0`.
 
-`docs/design.md`'s contract tables gain, as additions only:
-
-- the five commands and their exit codes, with the shared rule
-  (0 done, 1 refused, 2 error) and `rig verify --check`'s 0/1;
-- the Task, Finding and Event JSON fields above, and the `next` and `context`
-  shapes;
-- the storage promise: rig writes only under `refs/rig/`, never the working
-  tree, the index or `HEAD`; readers skip unknown event kinds and versions;
-- `RIG_ACTOR` names who acted.
-
-`rig version` prints `0.2.0`. The kit can require it by raising
-`RIG_MIN_VERSION`; that change and the switch of the kit's commands belong to
-the kit's follow-up.
+A workflow file's format is versioned on its own: a new optional key is
+compatible, and anything else raises the workflow format version, which rig
+reads alongside the old one.
 
 ## Package layout
 
 ```
-internal/store/           port: Store, Task, Finding, Event, fold, transitions, ids
-internal/store/memstore/  in memory, for command tests
+internal/store/           port: Store, Task, Finding, Note, Event, fold, ids, merge
+internal/store/memstore/  in memory, for tests
+internal/store/storetest/ the contract test every backend passes
 internal/store/gitref/    the git-ref backend
+internal/workflow/        file format, validation, gates, hooks, the basic preset
 internal/git/plumbing.go  hash-object, mktree, commit-tree, update-ref, for-each-ref, cat-file
-cmd/rig/store.go          opens the store; app gains a store field and a clock
-cmd/rig/task.go, finding.go, verify.go, next.go, context.go
+cmd/rig/store.go          opens the store and workflow; app gains store, workflow and a clock
+cmd/rig/task.go, finding.go, note.go, workflow.go, next.go, context.go
 ```
 
-The port's interface is the design's, with `Claim` and `Release` left out
-until phase 4 and one addition, `Update(ctx, id, func(Task) (Event, error))`,
-which is how the compare-and-swap loop re-checks a transition on each retry:
+The port, without `Claim` and `Release` until phase 4:
 
 ```go
 type Store interface {
-    CreateTask(ctx context.Context, spec TaskSpec) (Task, error)
-    Task(ctx context.Context, id string) (Task, error)    // full, short or slug
+    CreateTask(ctx context.Context, t NewTask) (Task, error)
+    Task(ctx context.Context, ref string) (Task, error)    // full, short or slug
     Tasks(ctx context.Context, filter TaskFilter) ([]Task, error)
-    Update(ctx context.Context, id string, next func(Task) (Event, error)) (Task, error)
-    Events(ctx context.Context, id string) ([]Event, error)
-    Findings(ctx context.Context, id string) ([]Finding, error)
+    Update(ctx context.Context, ref string, next func(Task, []Finding) ([]Event, error)) (Task, error)
+    Events(ctx context.Context, ref string) ([]Event, error)
+    Findings(ctx context.Context, ref string) ([]Finding, error)
+    Notes(ctx context.Context, filter NoteFilter) ([]Note, error)
 }
 ```
 
-`Append` from the design becomes `Update`: a bare append cannot re-check
-legality against a state another writer just changed. The head check needs
-git, so it runs in the commands, not the port.
+`Update` is the compare-and-swap loop: the commands pass a function that
+asks the workflow whether the step is allowed on the state as it is now, so
+a gate is re-checked on every retry. The store knows no workflow; the
+workflow package knows no git.
 
 ## Tasks
 
-Four waves. Tasks in a wave own disjoint files and run in parallel. Each task
-ends with `go vet ./...` and `go test ./...` passing on its branch, one
-code-reviewer pass with nothing at Medium (P2) or above, and a pull request
-against `main` from `task/<name>`, not merged.
+Four waves. Tasks in a wave own disjoint files and run in parallel. Each ends
+with `go vet ./...` and `go test ./...` passing, one code-reviewer pass with
+nothing at P2 or above, and a pull request from `task/<name>`, not merged.
 
 ### Wave 1
 
-**01 store-core** — owns `internal/store/*.go`, `internal/store/memstore/**`, `internal/store/storetest/**`.
-Depends on: none.
-- AC1 `Fold` turns an event list into a Task; a table test covers every row of
-  the transition table, legal and refused.
-- AC2 Unknown `v` and unknown `kind` are skipped and counted, not errors.
-- AC3 Short ids: four characters, longer on collision; resolving a full id,
-  short id or slug works, and two matches is an `ErrAmbiguous` listing both.
-- AC4 Finding dedupe by default key; a duplicate returns the existing finding.
-- AC5 ULIDs from one process sort in creation order (test with an injected
-  clock and 10 000 ids in one millisecond).
-- AC6 `Merge(a, b)` of two logs is the union by id, ordered by `(seq, id)`,
-  and is commutative (test both orders).
-- AC7 memstore passes the shared contract test in `internal/store/storetest`
-  (owned here, run by 03 against gitref too).
+**01 store-core** — owns `internal/store/*.go`, `internal/store/memstore/**`,
+`internal/store/storetest/**`. Depends on: none.
+- AC1 `Fold` turns events into a Task with state, shas, counters, fields and
+  findings; `$previous` resolves to the state before the last `*` move.
+- AC2 Unknown `v` and `kind` are skipped and counted.
+- AC3 Short ids grow on collision; resolving id, short id or slug works; two
+  matches is `ErrAmbiguous`.
+- AC4 Finding dedupe by default key.
+- AC5 ULIDs from one process sort in creation order (10 000 in one ms).
+- AC6 `Merge` of two logs is a commutative union ordered by `(seq, id)`.
+- AC7 memstore passes `storetest`, including notes with and without a task.
 
 **02 git-plumbing** — owns `internal/git/plumbing.go`, `internal/git/plumbing_test.go`.
 Depends on: none.
-- AC1 `WriteBlob`, `MakeTree`, `CommitTree`, `ReadRefs(prefix)`,
-  `CatFileBatch` and `UpdateRef(ref, new, old)` work in a throwaway repo and
-  pass `-C` and an argument vector only.
-- AC2 `UpdateRef` with a stale `old` returns `ErrRefMoved`; with `old` empty
-  and the ref present, also `ErrRefMoved`.
-- AC3 No call touches the index, `HEAD` or the working tree: a test runs each
-  and checks `git status --porcelain` and `HEAD` are unchanged.
-- AC4 Works in a sha256 repository (`git init --object-format=sha256`).
+- AC1 `WriteBlob`, `MakeTree`, `CommitTree`, `ReadRefs`, `CatFileBatch`,
+  `UpdateRef(ref, new, old)` work in a throwaway repo, as argument vectors.
+- AC2 A stale or present-when-expected-absent `old` gives `ErrRefMoved`.
+- AC3 None touches the index, `HEAD` or the working tree.
+- AC4 Works in a sha256 repository.
 
 ### Wave 2
 
 **03 gitref-backend and wiring** — owns `internal/store/gitref/**`,
-`cmd/rig/store.go`, `cmd/rig/main.go`, and stub files
-`cmd/rig/{task,finding,verify,next,context}.go` that later tasks replace.
-Depends on: 01, 02.
+`cmd/rig/store.go`, `cmd/rig/main.go`, and stubs
+`cmd/rig/{task,finding,note,workflow,next,context}.go`. Depends on: 01, 02.
 - AC1 gitref passes `storetest`.
-- AC2 The layout is `refs/rig/tasks/<ULID>` → commit → `log.jsonl`, one event
-  per line; a test reads it back with plain `git cat-file`.
-- AC3 Concurrency: 8 goroutines × 25 appends to one task end with 200 events
-  and contiguous `seq`; a transition made illegal by a racing writer is
-  refused, not written.
+- AC2 Layout `refs/rig/tasks/<ULID>` and `refs/rig/notes` → commit →
+  `log.jsonl`; a test reads it back with plain `git cat-file`.
+- AC3 8 goroutines × 25 appends to one task give 200 events with contiguous
+  `seq`; a step made illegal by a racing writer is refused, not written.
 - AC4 Reading 200 tasks starts at most three git processes.
-- AC5 `main.go` dispatches the five commands and the usage text lists them;
-  `app` gains `store` and `now`; each stub exits 2 "not built yet".
+- AC5 `main.go` dispatches the six commands; stubs exit 2 "not built yet".
+
+**04 workflow-engine** — owns `internal/workflow/**`. Depends on: 01.
+- AC1 Parses and validates the format above; `validate` reports each rule
+  broken with its JSON path.
+- AC2 Every built-in gate, passing and failing, in a table test.
+- AC3 `shaBound`/`onNewCommit` gives the effective state from a head sha.
+- AC4 `command` gates and hooks run as argument vectors with placeholders
+  substituted whole; a placeholder value with spaces or `;` stays one
+  argument; a hook failure is returned, not fatal; 30 s limit.
+- AC5 The `basic` preset is built in; `testdata/claude-kit-loop.json` (the
+  example above) validates and a test walks a task through it end to end.
+- AC6 No import of `internal/git` or any store backend.
 
 ### Wave 3
 
-Each command task owns its file and its `_test.go`, uses memstore through
-`app.store` for logic and gitref in one end-to-end test.
+Each owns its file and `_test.go`, uses memstore and `basic` for logic, and
+the kit-loop fixture and gitref in one end-to-end test.
 
-**04 task-command** — owns `cmd/rig/task.go`, `cmd/rig/task_test.go`. Depends on: 03.
-- AC1 Every `rig task` subcommand and flag above; unknown flag is exit 2.
-- AC2 `mark` follows the transition table: exit 1 and no new event on a
-  refused one.
-- AC3 The head check: a commit on the branch after `verified` shows
-  `state: implementing` with `recordedState: verified`.
-- AC4 `--json` field names match this document exactly (golden test).
+**05 task-command** — owns `cmd/rig/task.go`, `cmd/rig/task_test.go`. Depends on: 03, 04.
+- AC1 Every subcommand and flag; unknown flag exit 2.
+- AC2 A gate refusal is exit 1 and writes no event.
+- AC3 After a new commit, a sha-bound task shows `state` = `onNewCommit` and
+  `rig task is` flips from 0 to 1.
+- AC4 `--json` field names match this document (golden test).
+- AC5 `rig task edit` with `EDITOR` set to a test program that rewrites the
+  file: changed fields become `field` events, unchanged ones write nothing,
+  a file that does not parse writes nothing and keeps the copy; without a
+  terminal and without `EDITOR` it is exit 2.
 
-**05 finding-command** — owns `cmd/rig/finding.go`, `cmd/rig/finding_test.go`. Depends on: 03.
-- AC1 `add`, `list`, `set` with their flags; `--route` required unless `NOTE`.
-- AC2 A duplicate is exit 0, `"duplicate": true`, no new event.
-- AC3 `--blocking` lists exactly the open P1, P2, STYLE and SPEC findings.
+**06 finding-and-note** — owns `cmd/rig/finding.go`, `cmd/rig/note.go` and
+their tests. Depends on: 03, 04.
+- AC1 `finding add/list/set` and `note add/list` with their flags; a
+  severity or field the workflow lacks is exit 2.
+- AC2 Duplicate finding is exit 0, `"duplicate": true`, no new event.
+- AC3 `--blocking` lists exactly what a `noOpenFindings` gate would count.
 
-**06 verify-command** — owns `cmd/rig/verify.go`, `cmd/rig/verify_test.go`. Depends on: 03.
-- AC1 `--pass` at the head moves `reviewed` to `verified`; at any other sha,
-  exit 1.
-- AC2 `--fail` adds an attempt round and a finding and moves to `implementing`.
-- AC3 `--check` is 0 at the verified head, 1 after a new commit, and writes
-  nothing (the event count is unchanged).
+**07 workflow-command** — owns `cmd/rig/workflow.go` and its test. Depends on: 03, 04.
+- AC1 `show` names the source (`preset`, file path, or `RIG_WORKFLOW`).
+- AC2 `validate` exit codes 0, 1, 2, and a task in an unknown state reported.
 
-**07 next-command** — owns `cmd/rig/next.go`, `cmd/rig/next_test.go`. Depends on: 03.
-- AC1 Each row of the action table, from a store built in the test.
-- AC2 The ordering rule, with a test of six tasks in mixed states.
+**08 next-command** — owns `cmd/rig/next.go` and its test. Depends on: 03, 04.
+- AC1 Each task's transitions with gate results, from a store built in the test.
+- AC2 The ordering rule, six tasks in mixed states.
 - AC3 No forge call: the test's forge fails any call.
 
-**08 context-command** — owns `cmd/rig/context.go`, `cmd/rig/context_test.go`. Depends on: 03.
-- AC1 The seven sections, in order, from a repo and store built in the test.
-- AC2 Output never exceeds the budget unless `overBudget` is true; tested at
-  200, 1500 and 20000.
-- AC3 Truncation prints `… <n> more` with the right `n`.
-- AC4 Two runs give identical bytes.
-- AC5 No file contents: a test puts a unique marker string in an owned file
-  and checks it is absent from the output.
+**09 context-command** — owns `cmd/rig/context.go` and its test. Depends on: 03, 04.
+- AC1 The seven sections in order; three when the workflow has no `owns` field.
+- AC2 Never over budget unless `overBudget`; tested at 200, 1500, 20000.
+- AC3 `… <n> more` with the right `n`; two runs give identical bytes.
+- AC4 A marker string in an owned file is absent from the output.
 
 ### Wave 4
 
-**09 docs-and-version** — owns `docs/design.md`, `README.md`,
-`cmd/rig/version.go`, `docs/phase-2.md`. Depends on: 04 to 08.
+**10 docs-and-version** — owns `docs/design.md`, `README.md`,
+`cmd/rig/version.go`, `docs/phase-2.md`, `docs/workflows.md`. Depends on: 05 to 09.
 - AC1 `version` is `0.2.0`.
-- AC2 The contract section gains the additions under "The kit contract
-  gains"; no existing row changes (`git diff` shows only added lines in the
-  contract tables).
-- AC3 README lists the new commands; design.md's status line says phase 2 is
-  built; this document's status says built.
+- AC2 The contract gains the additions above; no existing row changes.
+- AC3 `docs/workflows.md` documents the file format, every gate and hook,
+  `basic`, and the kit loop as a worked example.
+
+## What the kit changes to become one consumer
+
+A follow-up in the kit repository, not here:
+
+- Ship its loop as a workflow file (the example above, refined) and point
+  rig at it.
+- Replace parsing of `## Review round N` and `## Wave verified` headings with
+  `rig finding`, `rig task count` and `rig task is`; let rig's gates enforce
+  the round cap and the blocking-finding rule.
+- Write findings with `route` as a workflow field; read `rig next` for what
+  to run; build agent briefs from `rig context`.
+- Keep everything Claude-specific (agent roles, hooks, permission templates)
+  in the kit.
 
 ## Open questions
 
 Each has a recommendation; the plan above assumes it.
 
-**Q1. Task short ids and branch names.** `t-` plus the ULID's last four
-characters, branch `task/t-3k9f-<slug>`, so `rig push` works unchanged. The
-alternative, keeping the kit's sequential `NN` numbers, collides between
-developers, which is one of the reasons for phase 2.
-*Recommend: the ULID short id.*
+**Q1. Task short ids.** *Recommend: `t-` plus four or more ULID characters,
+growing on collision.*
 
-**Q2. The union merge now or in phase 4.** Nothing calls it until `rig sync`.
-Building and testing it now (AC6 of task 01, about 40 lines) proves the
-format can be merged before anything depends on the format.
-*Recommend: build the merge function now; `rig sync` stays in phase 4.*
+**Q2. The union merge now.** *Recommend: build and test `Merge` now so the
+format is proven mergeable; `rig sync` stays in phase 4.*
 
-**Q3. Git notes and the `Task:` trailer.** The design also writes verify and
-review results as notes on `refs/notes/rig`. `git notes` has no
-compare-and-swap, so concurrent writers can lose a note, and everything a
-note would say is already in the task's log. The trailer is written by
-whoever commits, which is the kit's implementer, not rig. Both would put
-rig's marks into history that every user of the repository shares.
-*Recommend: no notes in phase 2; if they come later, local-only like the task
-refs. The trailer is the kit's choice, off unless a project opts in, and rig
-never requires it.*
+**Q3. Git notes and commit trailers.** *Recommend: rig writes neither in
+phase 2. A workflow that wants a `Task:` trailer asks its committer for one;
+a hook can check it.*
 
-**Q4. New commits: derived or recorded.** Derived (above) needs no hook and
-cannot be missed, but costs one `rev-parse` per task read. Recording an
-event would need something to notice every commit.
-*Recommend: derived.*
+**Q4. Sha-bound states: derived or recorded.** *Recommend: derived when
+read, as above; nothing has to watch for commits.*
 
-**Q5. Forge-observed states.** `pr_open`, `ci_green` and `merged` are set by
-`rig task mark`, which the kit calls after `rig pr open`, `rig pr wait` and a
-merge. A `rig task sync` that asks the forge and marks them itself would
-save those calls but puts forge calls into the store's commands.
-*Recommend: `mark` only in phase 2; add `rig task sync` later if the kit's
-switch shows the calls are a burden.*
+**Q5. Forge-observed transitions.** Moving to `pr_open` or `merged` is a
+`rig task move` the caller makes after `rig pr`. *Recommend: no forge calls
+in the store commands in phase 2; a hook or a later `rig task sync` can
+automate it.*
 
-**Q6. The store stays in one clone.** Until `rig sync` (phase 4), the state
-is in this clone's refs only: a fresh clone starts empty and deleting the
-clone loses it. Worktrees are fine. For one developer on one machine that is
-the same as today's uncommitted task files.
-*Recommend: accept for phase 2, and say so in the README.*
+**Q6. The store stays in one clone.** *Recommend: accept for phase 2 and say
+so in the README.*
 
-**Q7. `rig status`.** It keeps listing `docs/plan/tasks` files. Adding store
-tasks would be a new field (`storeTasks`), a minor change, but it was not
-asked for. *Recommend: leave `rig status` alone; list it as a follow-up for
-the kit switch.*
+**Q7. `rig status`.** *Recommend: unchanged in phase 2 (see Q28).*
 
-**Q21. Sharing the store.** The task refs never leave the clone in phase 2.
-When phase 4 adds `rig sync`, pushing `refs/rig/*` to `origin` is opt-in:
-an explicit `rig sync` or a `store.share` key the user sets, and never a
-side effect of another command. A remote that receives them shows nothing
-on any branch or pull request. *Recommend: as stated.*
+**Q21. Sharing the store.** *Recommend: opt-in only, via an explicit
+`rig sync` or a config key, in phase 4.*
+
+**Q22. Where the kit's loop lives.** *Recommend: in the kit's repository as
+a workflow file. rig ships only `basic`, plus the loop as a test fixture
+proving the format can express it. rig carries no kit preset to keep in
+step.*
+
+**Q23. Gates: a fixed set plus `command`.** A fixed set keeps common rules
+fast and checkable by `rig next` without running programs; `command` covers
+the rest. An embedded expression language would be more to secure and
+document. *Recommend: the seven built-ins above, nothing more.*
+
+**Q24. Trusting a workflow file.** A workflow can run programs. *Recommend:
+rig loads a workflow only from a preset name or a path the user's own
+config or `RIG_WORKFLOW` names; it never discovers one inside a repository,
+so cloning a repository never runs its programs.*
+
+**Q25. Hooks after the write.** *Recommend: hooks run after the event is
+recorded and cannot undo it; a step that must be able to refuse is a
+`command` gate.*
+
+**Q26. No `--force`.** *Recommend: no override flag. Changing the workflow
+file is the escape, and it is the user's file.*
+
+**Q27. Findings and notes as two primitives.** *Recommend: both. A finding
+has a status and can block; a note is an append-only record of a decision or
+an outcome. Merging them would give every note a status nobody uses.*
+
+**Q28. Phase 1's kit-specific parts.** `rig status` reads
+`claude-handoff.md` and `docs/plan/tasks`; `rig push` resolves a task id from
+`docs/plan/tasks`; `.claude/rig.json` sits under a Claude directory; the
+default push prefixes are `task` and `record`. Changing any of them is a
+major change. *Recommend: keep them through 0.x. Phase 2.5 adds the generic
+homes (`~/.rig/config.json`, `push.prefixes`); phase 3 gives `rig status`
+a store-based view; 1.0 drops the kit-specific reads.*
+
+**Q29. `rig verify` and the kit's names.** *Recommend: no `rig verify`, no
+"round" or "review" in rig. Verifying is a transition with a `shaIsHead`
+gate, a round is a counter, and the check is `rig task is <t> verified`.*
+
+**Q30. Reading and editing a task by hand.** *Recommend: `rig task show`
+prints Markdown for people, with `--findings`, `--notes` and `--history`;
+`rig task edit` opens title, body and fields in the user's editor. A
+Markdown export of the whole plan, for reading in an editor or a browser,
+is phase 3's views.*
