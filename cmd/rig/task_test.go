@@ -672,3 +672,49 @@ func TestTaskEndToEndGitRef(t *testing.T) {
 		t.Fatalf("log kinds: %v", kinds)
 	}
 }
+
+// A value line that looks like a heading or an escape survives an edit, and an
+// edit that changes another field leaves the body byte-identical.
+func TestTaskEditEscapesHeadingLines(t *testing.T) {
+	e := newTaskEnv(t)
+	body := "intro\n## owner\nsee\n\\x\n## body\n# h\n\\\\y"
+	task := e.newTask("esc", "--body", body, "--field", "notes=## notes\nmore")
+	id := task["id"].(string)
+	before := len(e.kinds(id))
+	if r := e.editWith(t, map[string]string{}, "esc"); r.code != 0 || len(e.kinds(id)) != before {
+		t.Fatalf("no-op: %+v, kinds %v", r, e.kinds(id))
+	}
+	r := e.editWith(t, map[string]string{"RIG_EDIT_FROM": "## kind\n\n", "RIG_EDIT_TO": "## kind\n\nb"}, "esc")
+	if r.code != 0 || len(e.kinds(id)) != before+1 {
+		t.Fatalf("one change: %+v, kinds %v", r, e.kinds(id))
+	}
+	got := decodeObj(t, r.out)
+	if got["body"] != body || got["fields"].(map[string]any)["kind"] != "b" || got["fields"].(map[string]any)["notes"] != "## notes\nmore" {
+		t.Fatalf("after: %v", got)
+	}
+}
+
+// Values that do not survive the round trip are not rewritten by a no-op edit.
+func TestTaskEditNoOpKeepsAwkwardValues(t *testing.T) {
+	e := newTaskEnv(t)
+	r := e.rig("task", "new", "--slug", "awk", "--title", "Fix it ", "--body", "a\r\nb\r\n", "--field", "owner= ann", "--json")
+	if r.code != 0 {
+		t.Fatal(r)
+	}
+	id := decodeObj(t, r.out)["id"].(string)
+	before := len(e.kinds(id))
+	if r := e.editWith(t, map[string]string{}, "awk"); r.code != 0 || len(e.kinds(id)) != before {
+		t.Fatalf("no-op: %+v, kinds %v", r, e.kinds(id))
+	}
+	task, _ := e.st.Task(ctx, id)
+	if task.Title != "Fix it " || task.Body != "a\r\nb\r\n" || task.Fields["owner"] != " ann" {
+		t.Fatalf("rewritten: %+v", task)
+	}
+	nl, err := e.st.CreateTask(ctx, store.NewTask{Slug: "nl", Title: "two\nlines", Initial: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := e.editWith(t, map[string]string{}, "nl"); r.code != 0 || len(e.kinds(nl.ID)) != 1 {
+		t.Fatalf("newline title: %+v, kinds %v", r, e.kinds(nl.ID))
+	}
+}

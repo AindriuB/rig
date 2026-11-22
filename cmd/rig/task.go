@@ -672,31 +672,69 @@ func renderList(items []string) string {
 	return strings.Join(items, ", ")
 }
 
+// escapeLines writes a value into the edit file: a line that starts with "#"
+// or "\" gets one extra leading "\", so no value line can read as a heading.
+// unescapeLines is its inverse: a line starting with "\" loses one.
+func escapeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "#") || strings.HasPrefix(l, `\`) {
+			lines[i] = `\` + l
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func unescapeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimPrefix(l, `\`)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// editTitle is the title as the edit file's first line holds it: one line.
+func editTitle(t store.Task) string {
+	return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(t.Title)
+}
+
+// editSection is the text of one "## <name>" section as editFile writes it.
+func editSection(t store.Task, name string) string {
+	v := t.Body
+	if name != "body" {
+		v = renderValue(t.Fields[name])
+	}
+	return escapeLines(strings.Trim(v, "\n"))
+}
+
 // editFile renders the task as the Markdown the editor gets: the title, then
-// a "## body" section and one "## <field>" section per workflow field.
+// a "## body" section and one "## <field>" section per workflow field. Value
+// lines are escaped (see escapeLines), so only a heading rig wrote can split
+// the file.
 func editFile(wf *workflow.Workflow, t store.Task) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n## body\n\n%s\n", t.Title, strings.Trim(t.Body, "\n"))
-	for _, n := range sortedNames(wf.Fields) {
-		fmt.Fprintf(&b, "\n## %s\n\n%s\n", n, strings.Trim(renderValue(t.Fields[n]), "\n"))
+	fmt.Fprintf(&b, "# %s\n", editTitle(t))
+	for _, n := range append([]string{"body"}, sortedNames(wf.Fields)...) {
+		fmt.Fprintf(&b, "\n## %s\n\n%s\n", n, editSection(t, n))
 	}
 	return b.String()
 }
 
-// parseEdit reads an edit file back into the values that differ from t's.
-// Only the headings the file was written with split it, so a "## " line
-// inside a body or text field stays in it. A section that is missing leaves
-// its field alone.
+// parseEdit reads an edit file back into the values that changed. A value
+// changed when its section's text differs from the text editFile wrote for
+// it, not when it differs from the stored value, so a value that does not
+// survive the round trip (trailing spaces, a newline in a title, CRLF) is left
+// alone unless the user touched it. A section that is missing leaves its field
+// alone.
 func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any, error) {
 	known := map[string]bool{"body": true}
 	for n := range wf.Fields {
 		known[n] = true
 	}
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	title, sawTitle := "", false
 	sections := map[string][]string{}
 	cur := ""
-	for _, l := range lines {
+	for _, l := range strings.Split(text, "\n") {
 		if name, ok := strings.CutPrefix(l, "## "); ok && known[strings.TrimSpace(name)] {
 			cur = strings.TrimSpace(name)
 			if _, dup := sections[cur]; dup {
@@ -707,7 +745,7 @@ func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any
 		}
 		if cur == "" {
 			if h, ok := strings.CutPrefix(l, "# "); ok && !sawTitle {
-				title, sawTitle = strings.TrimSpace(h), true
+				title, sawTitle = strings.TrimRight(h, "\r"), true
 			} else if strings.TrimSpace(l) != "" && !sawTitle {
 				return nil, errors.New("the first line must be \"# <title>\"")
 			}
@@ -715,20 +753,24 @@ func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any
 		}
 		sections[cur] = append(sections[cur], l)
 	}
-	if !sawTitle || title == "" {
+	if !sawTitle || strings.TrimSpace(title) == "" {
 		return nil, errors.New("the title line \"# <title>\" is missing or empty")
 	}
-	vals := map[string]any{"title": title}
+	changed := map[string]any{}
+	if title != editTitle(t) {
+		changed["title"] = strings.TrimSpace(title)
+	}
 	for n, ls := range sections {
 		raw := strings.Trim(strings.Join(ls, "\n"), "\n")
+		if raw == editSection(t, n) {
+			continue
+		}
+		raw = unescapeLines(raw)
 		if n == "body" {
-			vals[n] = raw
+			changed[n] = raw
 			continue
 		}
 		f := wf.Fields[n]
-		if raw == "" && t.Fields[n] == nil {
-			continue
-		}
 		if f.Type != workflow.TypeText {
 			raw = strings.TrimSpace(raw)
 		}
@@ -736,21 +778,7 @@ func parseEdit(wf *workflow.Workflow, t store.Task, text string) (map[string]any
 		if err != nil {
 			return nil, fmt.Errorf("section %q: %w", n, err)
 		}
-		vals[n] = v
-	}
-	changed := map[string]any{}
-	for n, v := range vals {
-		cur := currentValue(t, n)
-		if s, ok := v.(string); ok {
-			if c, ok := cur.(string); ok {
-				cur = strings.Trim(c, "\n")
-			}
-			if cur == nil {
-				cur = ""
-			}
-			v = strings.Trim(s, "\n")
-		}
-		if !sameValue(cur, v) {
+		if !sameValue(currentValue(t, n), v) {
 			changed[n] = v
 		}
 	}
