@@ -4,4 +4,4 @@ package main
 // claude-kit's installer, compares it with the minimum it needs. Raise the
 // minor for a new command, flag or JSON field, and the major for any change
 // to an existing command, exit code or JSON field.
-const version = "0.1.0"
+const version = "0.3.0"
