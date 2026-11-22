@@ -4,19 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/git"
 )
-
-// configKeys mirrors internal/config's allow-list, so that `get` can tell an
-// unknown key (exit 2) from one that is merely not set (exit 1).
-var configKeys = []string{
-	config.KeyForgeHost, config.KeyForgeKind, config.KeyPushPrefixes,
-	config.KeyTrackerKind, config.KeyTrackerProject, config.KeyTrackerURL, config.KeyWorkflow,
-}
 
 // config implements `rig config get|set|unset|list`.
 func (a *app) config(ctx context.Context, args []string) int {
@@ -66,14 +60,27 @@ func (a *app) config(ctx context.Context, args []string) int {
 		return a.fail(cmd, "a scope is required: --global, --repo or --local")
 	}
 
-	layers, err := a.openConfig(ctx)
+	layers, root, remote, err := a.openConfig(ctx)
 	if err != nil {
 		return a.fail(cmd, "%v", err)
+	}
+	if sub == "get" || sub == "list" {
+		if scope == config.ScopeLocal && root == "" {
+			return a.fail(cmd, "no local scope: not in a git repository")
+		}
+		if scope == config.ScopeRepo {
+			if root == "" {
+				return a.fail(cmd, "no repo scope: not in a git repository")
+			}
+			if _, err := config.RepoKey(remote); err != nil || remote == "" {
+				return a.fail(cmd, "no repo scope: the repository has no origin remote with a repo key")
+			}
+		}
 	}
 	switch sub {
 	case "get":
 		key := pos[0]
-		if !slices.Contains(configKeys, key) {
+		if !slices.Contains(config.Keys(), key) {
 			return a.fail(cmd, "unknown config key %q", key)
 		}
 		var v config.Value
@@ -111,7 +118,7 @@ func (a *app) config(ctx context.Context, args []string) int {
 	if scope == "" {
 		vals = layers.List()
 	} else {
-		for _, k := range configKeys {
+		for _, k := range config.Keys() {
 			if v, found := layers.GetIn(scope, k); found {
 				vals = append(vals, v)
 			}
@@ -138,23 +145,36 @@ func valueText(v any) string {
 	return fmt.Sprint(v)
 }
 
-// openConfig opens the layered config for the current directory. Outside a
-// repository there is no Root, and a repository with no origin has no Remote.
-func (a *app) openConfig(ctx context.Context) (*config.Layers, error) {
+// openConfig opens the layered config for the current directory and returns
+// the Root and Remote it used. Outside a repository there is no Root, and a
+// repository with no origin has no Remote. In a bare repository there is no
+// main checkout, so the current worktree's top level is the Root.
+func (a *app) openConfig(ctx context.Context) (layers *config.Layers, root, remote string, err error) {
 	o := config.Options{Home: a.homeDir}
 	r := git.Repo{Dir: a.cwd}
 	if wts, err := r.Worktrees(ctx); err == nil && len(wts) > 0 {
-		o.Root = wts[0].Path
+		if wts[0].Bare {
+			if top, err := r.TopLevel(ctx); err == nil {
+				o.Root = top
+			}
+		} else {
+			o.Root = wts[0].Path
+		}
 		if url, err := r.RemoteURL(ctx, "origin"); err == nil {
 			o.Remote = url
 		}
 	}
-	return config.Open(o)
+	layers, err = config.Open(o)
+	return layers, o.Root, o.Remote, err
 }
 
 // homeDir is the user's home directory, from the app's environment first.
 func (a *app) homeDir() (string, error) {
-	for _, k := range []string{"HOME", "USERPROFILE"} {
+	names := []string{"HOME"}
+	if runtime.GOOS == "windows" {
+		names = []string{"USERPROFILE", "HOME"}
+	}
+	for _, k := range names {
 		if v := a.getenv(k); v != "" {
 			return v, nil
 		}

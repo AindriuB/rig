@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,5 +95,16 @@ func TestCheckSettableRefusesGlobalOnlyAndUnknown(t *testing.T) {
 		if err := checkSettable(key); err != nil {
 			t.Errorf("checkSettable(%q) = %v", key, err)
 		}
+	}
+}
+
+func TestKeysIsACopy(t *testing.T) {
+	k := Keys()
+	if len(k) != len(keys) || !slices.IsSorted(k) {
+		t.Fatalf("Keys() = %v", k)
+	}
+	k[0] = "mutated"
+	if keys[0] == "mutated" {
+		t.Fatal("Keys() returned the internal slice")
 	}
 }
