@@ -9,19 +9,6 @@ import (
 	"github.com/AindriuB/rig/internal/store"
 )
 
-// AC5: the six phase-2 commands dispatch to stubs that exit 2.
-func TestPhase2StubsNotBuilt(t *testing.T) {
-	for _, cmd := range []string{"task", "finding", "note", "workflow", "next", "context"} {
-		r := rig(t, t.TempDir(), nil, nil, cmd, "anything")
-		if r.code != 2 || r.out != "" || r.errOut != "rig "+cmd+": not built yet\n" {
-			t.Fatalf("%s: %+v", cmd, r)
-		}
-		if h := rig(t, t.TempDir(), nil, nil, "help"); !strings.Contains(h.out, "rig "+cmd+" ") {
-			t.Fatalf("usage does not list %s", cmd)
-		}
-	}
-}
-
 func TestOpenStore(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
@@ -61,5 +48,16 @@ func TestOpenStore(t *testing.T) {
 	a := &app{getenv: func(string) string { return "" }, now: time.Now}
 	if _, err := a.openStore(ctx, t.TempDir()); err == nil {
 		t.Fatal("openStore outside a repository succeeded")
+	}
+}
+
+// TestHelpListsPhase2Commands: `rig help` lists every phase-2 command, so a
+// command cannot drop out of the usage text unnoticed.
+func TestHelpListsPhase2Commands(t *testing.T) {
+	r := rig(t, t.TempDir(), nil, nil, "help")
+	for _, cmd := range []string{"task", "finding", "note", "workflow", "next", "context"} {
+		if !strings.Contains(r.out, "rig "+cmd+" ") {
+			t.Errorf("usage does not list rig %s", cmd)
+		}
 	}
 }
