@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -680,6 +681,37 @@ func TestForgeTargetFor(t *testing.T) {
 	}
 }
 
+func TestForgeTargetForForcedService(t *testing.T) {
+	remotes := map[string]string{"github": "git@github.com:o/r.git", "none": ""}
+	cases := []struct {
+		name, service, cfgKind, cfgHost, remote string
+		want                                    forgeTarget
+	}{
+		{"github, gitlab-looking host, kind unset", "github", "", "gitlab.example.com", "none", forgeTarget{"gh", forge.GitHub, "github.com"}},
+		{"gitlab, github.com host, kind unset", "gitlab", "", "github.com", "none", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"github, unplaceable host, kind unset", "github", "", "git.corp.com", "none", forgeTarget{"gh", forge.GitHub, "git.corp.com"}},
+		{"gitlab, gitlab host, kind unset", "gitlab", "", "gitlab.example.com", "github", forgeTarget{"glab", forge.GitLab, "gitlab.example.com"}},
+		{"github, gitlab-looking host, kind github", "github", "github", "gitlab.example.com", "none", forgeTarget{"gh", forge.GitHub, "gitlab.example.com"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newLoginEnv(t)
+			fc := map[string]any{"host": c.cfgHost}
+			if c.cfgKind != "" {
+				fc["kind"] = c.cfgKind
+			}
+			e.globalConfig(map[string]any{"forge": fc})
+			layers, _, _, err := e.a.openConfig(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := forgeTargetFor(layers, remotes[c.remote], c.service); got != c.want {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestLogoutPointsToRepoLoginWhenOnlyRepoEntryExists(t *testing.T) {
 	e := newLoginEnv(t)
 	srv := jiraServer(t, 200)
@@ -696,5 +728,93 @@ func TestLogoutPointsToRepoLoginWhenOnlyRepoEntryExists(t *testing.T) {
 	}
 	if len(e.stores[storeKeychain].m) != 1 {
 		t.Fatalf("repo entry not kept: %v", e.stores[storeKeychain].m)
+	}
+}
+
+// localTrackerURL writes <repo>/.rig/config.json with tracker.url set.
+func (e *loginEnv) localTrackerURL(url string) {
+	e.t.Helper()
+	b, _ := json.Marshal(map[string]any{"tracker": map[string]any{"url": url}})
+	if err := os.MkdirAll(filepath.Join(e.repo, ".rig"), 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.repo, ".rig", "config.json"), b, 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestLoginJiraRefusesTrackedLocalTrackerURL(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	e.localTrackerURL(srv.URL)
+	gitc(t, e.repo, "add", ".rig/config.json")
+	e.stdin("u\n" + marker + "\n")
+	if code := e.run("login", "jira"); code != 2 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if !strings.Contains(e.err.String(), "which is committed to this repository") || strings.Contains(e.err.String(), "Jira site:") {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+	if len(e.stores[storeKeychain].m) != 0 {
+		t.Fatal("token stored")
+	}
+	if b, _ := io.ReadAll(e.a.stdin); !strings.Contains(string(b), marker) {
+		t.Fatal("stdin was read before the refusal")
+	}
+	// --url overrides the tracked file.
+	e.stdin(marker + "\n")
+	if code := e.run("login", "jira", "--url", srv.URL, "--user", "u"); code != 0 {
+		t.Fatalf("--url: exit %d\n%s", code, e.err.String())
+	}
+}
+
+func TestLoginJiraAcceptsUntrackedLocalTrackerURL(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	e.localTrackerURL(srv.URL)
+	e.stdin("u\n" + marker + "\n")
+	if code := e.run("login", "jira"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+}
+
+func TestLoginJiraTrackedLocalFileDoesNotAffectGlobalURL(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	// A tracked local file that does not set tracker.url.
+	b, _ := json.Marshal(map[string]any{"tracker": map[string]any{"project": "RIG"}})
+	os.MkdirAll(filepath.Join(e.repo, ".rig"), 0o755)
+	if err := os.WriteFile(filepath.Join(e.repo, ".rig", "config.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, e.repo, "add", ".rig/config.json")
+	e.jiraConfig(srv.URL)
+	e.stdin("u\n" + marker + "\n")
+	if code := e.run("login", "jira"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+}
+
+func TestLoginForgeNamesHostBeforeAuthLogin(t *testing.T) {
+	stubTool(t, "gh", false)
+	e := newLoginEnv(t)
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@evil.example.net:o/r.git")
+	e.globalConfig(map[string]any{"forge": map[string]any{"kind": "github"}})
+	if code := e.run("login", "github"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if want := "gh login for evil.example.net (from the origin remote)\n"; !strings.Contains(e.err.String(), want) {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+	e.globalConfig(map[string]any{"forge": map[string]any{"kind": "github", "host": "ghe.corp.com"}})
+	e.run("login", "github")
+	if want := "gh login for ghe.corp.com (from forge.host in global config)\n"; !strings.Contains(e.err.String(), want) {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@gitlab.com:o/r.git")
+	e.globalConfig(map[string]any{})
+	e.run("login", "github")
+	if want := "gh login for github.com (from default)\n"; !strings.Contains(e.err.String(), want) {
+		t.Fatalf("stderr %q", e.err.String())
 	}
 }
