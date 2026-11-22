@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -47,7 +48,7 @@ type Event struct {
 func NewEvent(kind string, data any) (Event, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		return Event{}, err
+		return Event{}, fmt.Errorf("new %s event: %w", kind, err)
 	}
 	return Event{Kind: kind, Data: raw}, nil
 }

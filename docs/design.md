@@ -1,7 +1,16 @@
-# `rig`: a CLI for the loop's mechanical parts
+# `rig`: generic actions for agentic workflows
 
-Status: phase 1 is released as 0.1.0. Phases 2 to 6 are outlines; each is
-planned separately before it is built.
+Status: phase 1 is released as 0.1.0. Phases 2 and 2.5 are planned in
+[phase-2.md](phase-2.md) and [phase-2.5.md](phase-2.5.md); later phases are
+outlines, each planned separately before it is built.
+
+**Direction.** rig provides generic actions (tasks, findings, notes,
+workflow transitions, push, pull requests, CI waits, context briefs, config,
+login) that any loop can use, driven by any harness: Claude Code, other agent
+CLIs, CI or a person. It has no built-in lifecycle: a workflow file defines
+states, transitions and the gates that guard them. claude-kit's loop is one
+such workflow, owned by the kit. The sections below that describe the kit
+are the history of how rig started.
 
 `rig` is its own tool. It was built inside claude-kit under `cli/` and moved
 here with its history in phase 1.5. Nothing in it imports from or reads
@@ -38,6 +47,12 @@ has to recognise one in arbitrary shell.
   `.claude/rig.json` overrides it.
 - **rig never holds a token.** Adapters shell out to `gh` and `glab`, so they
   use whatever `gh auth` or `glab auth` the user already has.
+- **No built-in workflow.** States, transitions, gates, severities and task
+  fields come from a workflow file; rig ships only a small `basic` one.
+  What rig enforces whatever the workflow says is listed in
+  [phase-2.md](phase-2.md#what-rig-enforces-whatever-the-workflow-says).
+- **Harness-neutral.** The CLI with `--json` and exit codes, and later an
+  MCP server, are the only surfaces. Nothing assumes Claude Code.
 - **`scripts/push-guard.sh` is unchanged.** It stays as the backstop for a raw
   `git push`. `rig push` is the allowed route; the guard is not extended.
 
@@ -85,9 +100,9 @@ against the minimum the kit needs (`RIG_MIN_VERSION`, declared once in each
 installer), and carry on with a message when Go or the fetch is missing: the
 kit's older scripts still work without rig.
 
-## The contract between the kit and rig
+## The contract between rig and its callers
 
-The kit talks to rig only through its commands, their exit codes and their
+A caller, claude-kit being the first, talks to rig only through its commands, their exit codes and their
 `--json` output. It never imports rig's code or reads its files, and rig
 never reads the kit's. That is what lets rig live in another repository and
 be versioned on its own.
@@ -246,54 +261,19 @@ default 1800). `ci-wait.sh` becomes a wrapper that execs `rig pr wait`.
 Phase 1 is read-only on documents. State still comes from the existing
 `docs/plan` files, git and the forge.
 
-## The store port (phase 2)
+## The store and workflows (phase 2)
 
-A store holds the loop's working state outside the code tree.
+A store holds work in progress outside the code tree: one append-only event
+log per task under `refs/rig/tasks/<ULID>`, local to the clone unless the
+user opts in to sharing it. A task's state is a fold over its events. Which
+states exist, which transitions are allowed and which gates guard them come
+from a workflow file, not from rig. Tasks, findings and notes carry typed
+fields the workflow declares. [phase-2.md](phase-2.md) has the format, the
+commands and the extension points.
 
-```go
-type Store interface {
-    CreateTask(ctx context.Context, spec TaskSpec) (Task, error)
-    Task(ctx context.Context, id TaskID) (Task, error)
-    Tasks(ctx context.Context, filter TaskFilter) ([]Task, error)
-    Append(ctx context.Context, id TaskID, ev Event) error
-    Events(ctx context.Context, id TaskID) ([]Event, error)
-    Findings(ctx context.Context, id TaskID) ([]Finding, error)
-    Claim(ctx context.Context, c Claim) error        // phase 4
-    Release(ctx context.Context, c Claim) error      // phase 4
-}
-```
-
-The first backend is git refs: one ref per task, `refs/rig/tasks/<ulid>`,
-holding an append-only event log. Verify and review results are also written
-as git notes on the commit they judged (`refs/notes/rig`), and commits carry a
-`Task: <id>` trailer. Nothing is written into the working tree, so two
-developers never conflict on a plan file.
-
-### Data model
-
-| Entity | Fields |
-|---|---|
-| **Task** | id, slug, spec, acceptance criteria, `Owns` paths, branch, PR, state, attempts |
-| **Finding** | source (review, verify, external), severity, route, status, dedupe key, round |
-| **Event** | task id, time, actor, kind, payload. Append-only; a task's state is a fold over its events |
-| **Claim** | paths, holder, expiry. A lease on files, so two tasks do not edit the same ones |
-
-Task ids are ULIDs: they sort by creation time and two developers cannot mint
-the same one. They are shown short with the slug, for example
-`t-3k9f add-parser`.
-
-### State machine
-
-```
-planned → implementing → reviewed → verified@sha → pr_open → ci_green → ready → merged
-                                                                              ↘ stopped(reason)
-```
-
-- `verified@sha` records the commit that was verified. A new commit on the
-  branch returns the task to `implementing`.
-- `stopped(reason)` is reachable from every state. It is how a task leaves the
-  loop for a human decision: a spec change, a round cap or a new flake.
-- A transition is an event. No transition edits an earlier one.
+The state machine this section used to define (planned → implementing →
+reviewed → verified@sha → pr_open → ci_green → ready → merged) is now
+claude-kit's workflow file, shown in phase-2.md as the worked example.
 
 ## Phases
 
@@ -302,11 +282,15 @@ planned → implementing → reviewed → verified@sha → pr_open → ci_green 
 | 0 | This document, and a baseline of permission prompts and tokens per task |
 | 1 | `rig push`, `rig pr`, `rig status`, `rig version`; the github and gitlab adapters; the kit's commands and agents switched to them |
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history; the kit installs a pinned release |
-| 2 | The store port, the git-ref backend, the data model above. `rig task`, `rig finding`, `rig verify`, `rig next`, and `rig context <task>` (a budgeted brief keyed by the task's `Owns` paths) |
-| 3 | Docs out of the tree. An importer for existing `docs/plan` trees. PLAN, HISTORY and the handoff become generated views; the scribe promotes into ADRs, `architecture.md` and conventions, with size budgets checked in CI |
-| 4 | Team scale. `rig claim`, tiered retention and `rig gc`, a local search index rebuilt from refs, and a tracker adapter for human-facing task identity |
-| 5 | Agile checks and metrics. `rig ready`, `rig done`, `rig standup`; cycle time, rounds, stop reasons and findings by area |
-| 6 | An MCP server over the same core, so `push(task_id)` is a typed tool |
+| 2 | Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. The kit's loop is a test fixture, not built in |
+| 2.5 | `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
+| 3 | Views and exports: Markdown and HTML renderings of tasks, notes and history from the store, by template, for any workflow. Importers for existing plans (the kit's `docs/plan` first) as programs the user runs |
+| 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs, and tracker adapters (`jira`, `github`, `gitlab`, and `exec` for any program) |
+| 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
+| 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
+| 1.0 | The kit-specific parts of phase 1 (`.claude/rig.json`, `claude-handoff.md` and `docs/plan/tasks` reads, default push prefixes) move behind config or are dropped, as a major change |
 
 README, architecture, conventions, release notes and ADRs stay in the tree
-throughout. Plans, tasks, designs, findings and history are what move.
+throughout. Plans, tasks, findings and history are what move into the store,
+for the projects that choose to use it. The kit's own changes to become one
+consumer of these actions are a follow-up in the kit's repository.
