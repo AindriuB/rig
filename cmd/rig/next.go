@@ -127,8 +127,37 @@ func (a *app) next(ctx context.Context, args []string) int {
 			out.Skipped++
 			continue
 		}
-		for _, tr := range w.wf.Transitions(state) {
-			item.Transitions = append(item.Transitions, w.nextTransition(ctx, env, t, findings, tr, head))
+		// Resolve each transition as work.moveOnce does (work.go): a
+		// $previous target is the task's previous state, and an explicit
+		// transition to that state, with its gates, is preferred. Targets
+		// are listed once.
+		all := w.wf.Transitions(state)
+		seen := map[string]bool{}
+		for _, tr := range all {
+			to := tr.To
+			if to == workflow.Previous {
+				if t.Previous == "" {
+					if !seen[to] {
+						seen[to] = true
+						f := false
+						item.Transitions = append(item.Transitions, nextTransition{
+							To: to, OK: &f, Failing: []string{"previous"},
+							Gates: []nextGate{{Gate: "previous", OK: &f, Message: t.Short + " has no previous state"}},
+						})
+					}
+					continue
+				}
+				to = t.Previous
+			}
+			if seen[to] {
+				continue
+			}
+			seen[to] = true
+			if picked, ok := pickTransition(all, to, t.Previous); ok {
+				nt := w.nextTransition(ctx, env, t, findings, picked, head)
+				nt.To = to
+				item.Transitions = append(item.Transitions, nt)
+			}
 		}
 		out.Items = append(out.Items, item)
 	}

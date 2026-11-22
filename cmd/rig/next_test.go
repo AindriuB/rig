@@ -13,7 +13,49 @@ import (
 	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/store/memstore"
+	"github.com/AindriuB/rig/internal/workflow"
 )
+
+// A $previous transition is checked as a move would: as the explicit
+// transition to the previous state, with its gates, when there is one.
+func TestNextPreviousPrefersTheExplicitRoute(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := nextTask(t, st, "alpha", "open")
+	if _, err := w.move(ctx, task.Short, "paused", workflow.Args{}); err != nil {
+		t.Fatal(err)
+	}
+	// paused -> $previous comes first in the file; paused -> open needs owner.
+	got := nextJSON(t, a)
+	var opens []nextTransition
+	for _, tr := range got.Items[0].Transitions {
+		if tr.To == "open" || tr.To == "$previous" {
+			opens = append(opens, tr)
+		}
+	}
+	if len(opens) != 1 || opens[0].To != "open" || opens[0].OK == nil || *opens[0].OK || opens[0].Failing[0] != "fieldSet" {
+		t.Fatalf("transitions to the previous state: %+v", opens)
+	}
+	if _, err := w.move(ctx, task.Short, workflow.Previous, workflow.Args{}); err == nil {
+		t.Fatal("move agrees: want a refusal")
+	}
+}
+
+// A task with no previous state cannot take a $previous transition.
+func TestNextPreviousMissing(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, st)
+	nextTask(t, st, "alpha", "stopped")
+	got := nextJSON(t, a)
+	tr := find(t, got.Items[0].Transitions, "$previous")
+	if tr.OK == nil || *tr.OK || len(tr.Failing) != 1 || tr.Failing[0] != "previous" {
+		t.Fatalf("%+v", tr)
+	}
+}
 
 // nextTask creates a task with the slug directly in state.
 func nextTask(t *testing.T, st store.Store, slug, state string) store.Task {
