@@ -386,7 +386,7 @@ func forgeTargetFor(layers *config.Layers, remote, service string) forgeTarget {
 	switch {
 	case cfgHost != "" && (cfgKind == "" || cfgKind == string(kind)):
 		host = cfgHost
-	case remoteHost != "" && cfgKind == "" && (remoteKind == kind || (service == "" && !remotePlaced)):
+	case remoteHost != "" && (cfgKind == "" || cfgKind == string(kind)) && (remoteKind == kind || (!remotePlaced && (service == "" || cfgKind != ""))):
 		host = remoteHost
 	case remoteHost != "" && remotePlaced && remoteKind == kind:
 		host = remoteHost

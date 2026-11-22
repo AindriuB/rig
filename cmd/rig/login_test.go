@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/proc"
 	"github.com/AindriuB/rig/internal/secret"
 )
@@ -627,5 +628,54 @@ func TestLogoutNotLoggedInWhenBothStoresAbsent(t *testing.T) {
 	}
 	if e.out.String() != "Not logged in to acme.atlassian.net\n" {
 		t.Fatalf("stdout %q", e.out.String())
+	}
+}
+
+func TestForgeTargetFor(t *testing.T) {
+	remotes := map[string]string{
+		"github": "git@github.com:o/r.git",
+		"gitlab": "git@gitlab.com:o/r.git",
+		"corp":   "git@git.corp.com:o/r.git",
+		"none":   "",
+	}
+	cases := []struct {
+		name, cfgKind, cfgHost, remote string
+		want                           forgeTarget
+	}{
+		{"nothing, github remote", "", "", "github", forgeTarget{"gh", forge.GitHub, "github.com"}},
+		{"nothing, gitlab remote", "", "", "gitlab", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"nothing, corp remote", "", "", "corp", forgeTarget{"gh", forge.GitHub, "git.corp.com"}},
+		{"nothing, no remote", "", "", "none", forgeTarget{"gh", forge.GitHub, "github.com"}},
+		{"host only, corp remote", "", "gitlab.com", "corp", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"host only, no remote", "", "git.corp.com", "none", forgeTarget{"gh", forge.GitHub, "git.corp.com"}},
+		{"github kind, corp remote", "github", "", "corp", forgeTarget{"gh", forge.GitHub, "git.corp.com"}},
+		{"github kind, gitlab remote", "github", "", "gitlab", forgeTarget{"gh", forge.GitHub, "github.com"}},
+		{"github kind, no remote", "github", "", "none", forgeTarget{"gh", forge.GitHub, "github.com"}},
+		{"github kind and host", "github", "ghe.corp.com", "github", forgeTarget{"gh", forge.GitHub, "ghe.corp.com"}},
+		{"gitlab kind, corp remote", "gitlab", "", "corp", forgeTarget{"glab", forge.GitLab, "git.corp.com"}},
+		{"gitlab kind, gitlab remote", "gitlab", "", "gitlab", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"gitlab kind, github remote", "gitlab", "", "github", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"gitlab kind, no remote", "gitlab", "", "none", forgeTarget{"glab", forge.GitLab, "gitlab.com"}},
+		{"gitlab kind and host", "gitlab", "gl.corp.com", "corp", forgeTarget{"glab", forge.GitLab, "gl.corp.com"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newLoginEnv(t)
+			fc := map[string]any{}
+			if c.cfgKind != "" {
+				fc["kind"] = c.cfgKind
+			}
+			if c.cfgHost != "" {
+				fc["host"] = c.cfgHost
+			}
+			e.globalConfig(map[string]any{"forge": fc})
+			layers, _, _, err := e.a.openConfig(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := forgeTargetFor(layers, remotes[c.remote], ""); got != c.want {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
 	}
 }
