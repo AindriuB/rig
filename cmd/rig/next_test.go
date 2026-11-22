@@ -45,6 +45,27 @@ func TestNextPreviousPrefersTheExplicitRoute(t *testing.T) {
 	}
 }
 
+// A stopped task that can resume to a state two steps from final sorts by
+// that distance, not last as unreachable.
+func TestNextOrderCountsPrevious(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumable := nextTask(t, st, "a-resumable", "back")
+	if _, err := w.move(ctx, resumable.Short, "stopped", workflow.Args{Reason: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	nextTask(t, st, "b-stuck", "stopped") // no previous state: unreachable
+	nextTask(t, st, "c-paused", "paused")  // human, two steps
+	got := nextJSON(t, a)
+	if g := strings.Join(shorts(got.Items), ","); g != "a-resumable,c-paused,b-stuck" {
+		t.Fatalf("order %s", g)
+	}
+}
+
 // A task with no previous state cannot take a $previous transition.
 func TestNextPreviousMissing(t *testing.T) {
 	st := memstore.New(store.Options{Now: tick()})

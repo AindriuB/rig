@@ -117,8 +117,8 @@ func (a *app) next(ctx context.Context, args []string) int {
 		}
 		if _, ok := w.wf.States[state]; !ok {
 			item.Action = unknownState
-		} else if d, ok := dist[state]; ok {
-			item.distance = d
+		} else {
+			item.distance = w.distanceOf(dist, t, state)
 		}
 		if item.Who == "" {
 			item.Who = workflow.WhoAgent
@@ -203,7 +203,8 @@ func (a *app) next(ctx context.Context, args []string) int {
 }
 
 // distances returns, for each declared state with a path to a final state,
-// the length of the shortest one. $previous targets are not followed.
+// the length of the shortest one. $previous targets are not followed here;
+// distanceOf adds the one a task's previous state gives.
 func (w *work) distances() map[string]int {
 	dist := map[string]int{}
 	var queue []string
@@ -233,6 +234,29 @@ func (w *work) distances() map[string]int {
 		}
 	}
 	return dist
+}
+
+// distanceOf is the task's distance from a final state in state: the shortest
+// path in dist, or through a $previous edge, which for this task leads to its
+// previous state. Without a previous state that edge does not exist.
+func (w *work) distanceOf(dist map[string]int, t store.Task, state string) int {
+	best := unreachable
+	if d, ok := dist[state]; ok {
+		best = d
+	}
+	if t.Previous == "" {
+		return best
+	}
+	pd, ok := dist[t.Previous]
+	if !ok || pd+1 >= best {
+		return best
+	}
+	for _, tr := range w.wf.Transitions(state) {
+		if tr.To == workflow.Previous {
+			return pd + 1
+		}
+	}
+	return best
 }
 
 // nextTransition checks tr's gates for t with the branch head as the sha
