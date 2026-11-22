@@ -29,7 +29,7 @@
       "gates": [{ "shaIs": "verified" }] },
     { "from": "ci_green", "to": "ready" },
     { "from": "ready", "to": "merged", "takes": "sha" },
-    { "from": ["reviewed", "verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
+    { "from": ["verified", "pr_open", "ci_green", "ready"], "to": "implementing" },
     { "from": "*", "to": "stopped", "takes": "reason" },
     { "from": "stopped", "to": "$previous" }
   ],

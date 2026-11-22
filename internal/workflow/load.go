@@ -41,7 +41,9 @@ func Presets() []string {
 // Load reads a workflow: nameOrPath is a built-in preset's name, such as
 // "basic", or an absolute path to a workflow file. When the workflow parses
 // but breaks the format's rules, Load returns it together with an
-// *InvalidError listing the problems.
+// *InvalidError listing the problems. A workflow returned with an
+// *InvalidError is for reporting only: Check fails every gate of it, and no
+// caller should move a task under it.
 func Load(nameOrPath string) (*Workflow, Source, error) {
 	var (
 		data []byte

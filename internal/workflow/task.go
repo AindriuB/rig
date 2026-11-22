@@ -39,10 +39,12 @@ func (w *Workflow) Effective(t store.Task, headSha string) string {
 	return t.State
 }
 
-// Events returns the events that record tr, taken from tr.From[0] (as
-// Transitions gives it) to the state to; the caller resolves a Previous
-// target from t.Previous. The transition records the argument tr takes,
-// which args must carry, and a count event follows when tr counts.
+// Events returns the events that record tr, taken from the task's current
+// state to the state to. The current state is Effective(t, headSha), and tr
+// must leave it: its From names that state, or AnyState when that state is
+// not final and is not tr's target. to must be tr.To, or t.Previous when
+// tr.To is Previous. The transition records the argument tr takes, which args
+// must carry, and a count event follows when tr counts.
 //
 // A transition into a sha-bound state that takes no sha binds the target to
 // the sha the from-state was bound to, when the from-state is sha-bound too;
@@ -50,14 +52,23 @@ func (w *Workflow) Effective(t store.Task, headSha string) string {
 // entered at. So "verified → pr_open" carries verified's sha, and returning
 // from "stopped" to "ready" keeps ready's original sha, which a commit made
 // while stopped then moves the task off.
-func (w *Workflow) Events(t store.Task, tr Transition, to string, args Args) ([]store.Event, error) {
-	if len(tr.From) != 1 {
-		return nil, errors.New("transition: give one from-state, as Transitions returns it")
+func (w *Workflow) Events(t store.Task, headSha string, tr Transition, to string, args Args) ([]store.Event, error) {
+	from := w.Effective(t, headSha)
+	if !w.leaves(tr, from) {
+		return nil, fmt.Errorf("transition: from %v does not leave the task's state %q", []string(tr.From), from)
 	}
-	if to == "" || to == Previous {
+	want := tr.To
+	if want == Previous {
+		want = t.Previous
+	}
+	switch {
+	case to == "" || to == Previous:
 		return nil, errors.New("transition: target state is not resolved")
+	case want == "":
+		return nil, fmt.Errorf("transition %s → %s: the task has no previous state", from, Previous)
+	case to != want:
+		return nil, fmt.Errorf("transition: target %q is not the transition's target %q", to, want)
 	}
-	from := tr.From[0]
 	d := store.TransitionData{From: from, To: to}
 	switch tr.Takes {
 	case TakesSha:
@@ -92,4 +103,18 @@ func (w *Workflow) Events(t store.Task, tr Transition, to string, args Args) ([]
 		out = append(out, ev)
 	}
 	return out, nil
+}
+
+// leaves reports whether tr leaves state from: its From names from, or names
+// AnyState while from is not final and is not tr's target.
+func (w *Workflow) leaves(tr Transition, from string) bool {
+	for _, f := range tr.From {
+		if f == from {
+			return true
+		}
+		if f == AnyState && !w.States[from].Final && tr.To != from {
+			return true
+		}
+	}
+	return false
 }

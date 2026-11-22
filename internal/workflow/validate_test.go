@@ -29,7 +29,7 @@ func TestParseFixture(t *testing.T) {
 	if !w.States["verified"].ShaBound || !w.States["merged"].Final || w.States["ready"].Who != WhoHuman {
 		t.Fatalf("states = %+v", w.States)
 	}
-	if got := w.AllTransitions[8].From; len(got) != 5 || got[4] != "ready" {
+	if got := w.AllTransitions[8].From; len(got) != 4 || got[3] != "ready" {
 		t.Fatalf("list from = %v", got)
 	}
 	if got := w.AllTransitions[0].From; len(got) != 1 || got[0] != "planned" {
@@ -136,6 +136,9 @@ func TestValidate(t *testing.T) {
 		{"hook empty run", `["prog", "{short}", "--", "{reason}"]`, `[]`, "hooks[0].run"},
 		{"hook placeholder", `"{reason}"]`, `"{why}"]`, "hooks[0].run[3]"},
 		{"unreachable", `"s": {}`, `"s": {}, "d": {}`, "states.d"},
+		{"duplicate route", `{"from": "b", "to": "c"}`, `{"from": "b", "to": "c"}, {"from": ["a", "b"], "to": "c"}`, "transitions[2]"},
+		{"duplicate in one list", `{"from": "b", "to": "c"}`, `{"from": ["b", "b"], "to": "c"}`, "transitions[1]"},
+		{"route under *", `{"from": "s", "to": "$previous"}`, `{"from": "s", "to": "$previous"}, {"from": "a", "to": "s", "takes": "reason"}`, "transitions[4]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -176,7 +179,7 @@ func TestTransitions(t *testing.T) {
 	}
 	cases := map[string]string{
 		"planned":  "implementing stopped",
-		"reviewed": "verified implementing implementing stopped",
+		"reviewed": "verified implementing stopped",
 		"ready":    "merged implementing stopped",
 		"stopped":  "$previous",
 		"merged":   "",
@@ -195,5 +198,28 @@ func TestBlocking(t *testing.T) {
 		if got := w.Blocking(sev); got != want {
 			t.Errorf("Blocking(%q) = %v", sev, got)
 		}
+	}
+}
+
+func TestValidateRefusesOverlappingRoutes(t *testing.T) {
+	// The fixture before review round 1: a from-list transition back to
+	// implementing that also named reviewed, beside the gated, counted
+	// reviewed → implementing.
+	data, err := os.ReadFile(filepath.Join("testdata", "claude-kit-loop.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := `{ "from": ["verified", "pr_open", "ci_green", "ready"], "to": "implementing" }`
+	old := `{ "from": ["reviewed", "verified", "pr_open", "ci_green", "ready"], "to": "implementing" }`
+	if !strings.Contains(string(data), now) {
+		t.Fatal("the fixture's from-list transition has changed")
+	}
+	w, err := Parse([]byte(strings.Replace(string(data), now, old, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := w.Validate()
+	if len(ps) != 1 || ps[0].Path != "transitions[8]" || !strings.Contains(ps[0].Message, "reviewed → implementing is also taken by transitions[3]") {
+		t.Fatalf("problems = %v", ps)
 	}
 }

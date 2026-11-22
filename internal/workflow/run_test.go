@@ -129,7 +129,7 @@ func TestHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := store.Task{ID: "01X", Short: "t-1", Slug: "s", State: "stopped", Reason: hostile}
-	errs := w.RunHooks(ctx, r, ev, task)
+	errs := w.RunHooks(ctx, r, ev, task, "")
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "hook 3") {
 		t.Fatalf("errs = %v", errs)
 	}
@@ -149,15 +149,32 @@ func TestHooks(t *testing.T) {
 	}
 	var in struct {
 		Event store.Event `json:"event"`
-		Task  store.Task  `json:"task"`
+		Task  TaskView    `json:"task"`
 	}
 	if err := json.Unmarshal([]byte(recs[1].Stdin), &in); err != nil || in.Event.Kind != store.KindTransition || in.Task.Short != "t-1" {
 		t.Fatalf("hook stdin = %s (%v)", recs[1].Stdin, err)
 	}
 
+	if in.Task.State != "stopped" || in.Task.RecordedState != "stopped" || in.Task.Reason != hostile {
+		t.Fatalf("hook task = %+v", in.Task)
+	}
+
+	// The hook's task is the view at the head given.
+	bound := &Workflow{States: map[string]State{"ready": {ShaBound: true}}, OnNewCommit: "implementing",
+		Hooks: []Hook{{On: "enter:ready", Run: []string{"h"}}}}
+	fr := &fakeRunner{}
+	rev, _ := store.NewEvent(store.KindTransition, store.TransitionData{From: "ci_green", To: "ready"})
+	ready := store.Task{State: "ready", Shas: map[string]string{"ready": "s1"}}
+	if errs := bound.RunHooks(ctx, fr, rev, ready, "s2"); errs != nil {
+		t.Fatal(errs)
+	}
+	if !strings.Contains(fr.stdin, `"state":"implementing","recordedState":"ready"`) || !strings.Contains(fr.stdin, `"headSha":"s2"`) {
+		t.Fatalf("hook stdin = %s", fr.stdin)
+	}
+
 	// Events other than transitions run no hooks.
 	note, _ := store.NewEvent(store.KindNote, store.NoteData{Text: "x"})
-	if errs := w.RunHooks(ctx, r, note, task); errs != nil {
+	if errs := w.RunHooks(ctx, r, note, task, ""); errs != nil {
 		t.Fatalf("note event: %v", errs)
 	}
 }
@@ -174,13 +191,13 @@ func TestLimit(t *testing.T) {
 	w := &Workflow{Hooks: []Hook{{On: "transition", Run: []string{exe}}}}
 	ev, _ := store.NewEvent(store.KindTransition, store.TransitionData{From: "a", To: "b"})
 	start := time.Now()
-	errs := w.RunHooks(ctx, r, ev, store.Task{})
+	errs := w.RunHooks(ctx, r, ev, store.Task{}, "")
 	if len(errs) != 1 || !errors.Is(errs[0], proc.ErrTimeout) {
 		t.Fatalf("errs = %v", errs)
 	}
 	var g Gate
 	_ = g.UnmarshalJSON(mustJSON(t, map[string][]string{"command": {exe}}))
-	res := (&Workflow{}).Check(ctx, Env{Runner: r}, store.Task{}, nil, Transition{Gates: []Gate{g}}, Args{})
+	res := fixture(t).Check(ctx, Env{Runner: r}, store.Task{}, nil, Transition{Gates: []Gate{g}}, Args{})
 	if res[0].OK || !strings.Contains(res[0].Message, "timed out") {
 		t.Fatalf("gate = %+v", res[0])
 	}

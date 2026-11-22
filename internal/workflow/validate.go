@@ -204,6 +204,21 @@ func (w *Workflow) Validate() []Problem {
 		}
 	}
 
+	// Routes: no two transitions, nor one transition twice, may take the
+	// same from-state to the same target, once from-lists and AnyState are
+	// expanded. AnyState expands to every declared state that is not final.
+	routes := map[[2]string]int{}
+	for i, tr := range w.AllTransitions {
+		for _, from := range w.expandFrom(tr) {
+			key := [2]string{from, tr.To}
+			if j, ok := routes[key]; ok {
+				add(fmt.Sprintf("transitions[%d]", i), "route %s → %s is also taken by transitions[%d]", from, tr.To, j)
+				continue
+			}
+			routes[key] = i
+		}
+	}
+
 	// Hooks.
 	for i, h := range w.Hooks {
 		path := fmt.Sprintf("hooks[%d]", i)
@@ -231,6 +246,25 @@ func (w *Workflow) Validate() []Problem {
 		}
 	}
 	return ps
+}
+
+// expandFrom returns the states tr leaves: its from-list, with AnyState
+// replaced by every declared non-final state other than tr's target, in
+// sorted order.
+func (w *Workflow) expandFrom(tr Transition) []string {
+	var out []string
+	for _, f := range tr.From {
+		if f != AnyState {
+			out = append(out, f)
+			continue
+		}
+		for _, n := range sortedKeys(w.States) {
+			if !w.States[n].Final && n != tr.To {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 type addFunc func(path, format string, v ...any)

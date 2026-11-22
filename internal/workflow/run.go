@@ -99,15 +99,16 @@ func run(ctx context.Context, r Runner, argv []string, stdin []byte) error {
 // hookInput is what a hook reads on stdin.
 type hookInput struct {
 	Event store.Event `json:"event"`
-	Task  store.Task  `json:"task"`
+	Task  TaskView    `json:"task"`
 }
 
 // RunHooks runs, in file order, every hook the event matches: for a
 // transition event, "leave:<from>", "enter:<to>" and "transition". t is the
-// task after the event. Each hook gets the event and the task as JSON on
+// task after the event and headSha its branch head now ("" when the branch
+// does not exist). Each hook gets the event and View(t, headSha) as JSON on
 // stdin and Limit to run. A hook that fails does not stop the others; its
 // error is returned, and the transition, already written, stands.
-func (w *Workflow) RunHooks(ctx context.Context, r Runner, event store.Event, t store.Task) []error {
+func (w *Workflow) RunHooks(ctx context.Context, r Runner, event store.Event, t store.Task, headSha string) []error {
 	if event.Kind != store.KindTransition {
 		return nil
 	}
@@ -115,7 +116,7 @@ func (w *Workflow) RunHooks(ctx context.Context, r Runner, event store.Event, t 
 	if err := json.Unmarshal(event.Data, &d); err != nil {
 		return []error{fmt.Errorf("hooks: read transition: %w", err)}
 	}
-	stdin, err := json.Marshal(hookInput{Event: event, Task: t})
+	stdin, err := json.Marshal(hookInput{Event: event, Task: w.View(t, headSha)})
 	if err != nil {
 		return []error{fmt.Errorf("hooks: %w", err)}
 	}

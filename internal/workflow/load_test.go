@@ -130,7 +130,7 @@ func (h *harness) move(ref, to string, args Args) error {
 			refused = append(refused, failed...)
 			continue
 		}
-		if events, err = h.w.Events(task, tr, target, args); err != nil {
+		if events, err = h.w.Events(task, h.heads[task.Short], tr, target, args); err != nil {
 			return err
 		}
 		break
@@ -157,7 +157,7 @@ func (h *harness) move(ref, to string, args Args) error {
 	for i := len(log) - 1; i >= 0; i-- {
 		if log[i].Kind == store.KindTransition {
 			r := &fakeRunner{}
-			if errs := h.w.RunHooks(ctx, recorder{h, r}, log[i], after); errs != nil {
+			if errs := h.w.RunHooks(ctx, recorder{h, r}, log[i], after, h.heads[after.Short]); errs != nil {
 				return errors.Join(errs...)
 			}
 			break
@@ -291,9 +291,9 @@ func TestWalkBasic(t *testing.T) {
 	h := newHarness(t, w)
 	ref := h.create("job", nil).Short
 	h.refused(ref, "done", Args{}, "no transition open → done")
-	h.must(ref, "doing", Args{})
+	h.must(ref, "active", Args{})
 	h.must(ref, "stopped", Args{Reason: "blocked"})
-	h.must(ref, "doing", Args{})
+	h.must(ref, "active", Args{})
 	h.must(ref, "done", Args{})
 	h.refused(ref, "stopped", Args{Reason: "late"}, "no transition done → stopped")
 	if w.Blocking("blocking") || w.Blocking("info") {

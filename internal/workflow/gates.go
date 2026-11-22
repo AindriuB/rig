@@ -31,8 +31,21 @@ type GateResult struct {
 
 // Check evaluates tr's gates, in order, for task t with its findings and the
 // arguments the caller gives the transition. Every gate is evaluated; the
-// transition may be written only when every result is OK.
+// transition may be written only when every result is OK. A workflow that
+// does not pass Validate fails every gate, and a transition with no gates
+// gets one failing result, so nothing moves under a broken workflow.
 func (w *Workflow) Check(ctx context.Context, env Env, t store.Task, findings []store.Finding, tr Transition, args Args) []GateResult {
+	if ps := w.Validate(); len(ps) > 0 {
+		msg := (&InvalidError{Name: w.Name, Problems: ps}).Error()
+		if len(tr.Gates) == 0 {
+			return []GateResult{{Gate: "workflow", Message: msg}}
+		}
+		out := make([]GateResult, len(tr.Gates))
+		for i, g := range tr.Gates {
+			out[i] = GateResult{Gate: g.Kind, Message: msg}
+		}
+		return out
+	}
 	out := make([]GateResult, 0, len(tr.Gates))
 	for _, g := range tr.Gates {
 		r := GateResult{Gate: g.Kind}
@@ -147,7 +160,15 @@ func (w *Workflow) check(ctx context.Context, env Env, t store.Task, findings []
 		return true, ""
 
 	case GateCommand:
-		stdin, err := json.Marshal(t)
+		head := ""
+		if env.HeadSha != nil {
+			h, err := env.HeadSha(ctx, t)
+			if err != nil {
+				return false, fmt.Sprintf("read the branch head: %v", err)
+			}
+			head = h
+		}
+		stdin, err := json.Marshal(w.View(t, head))
 		if err != nil {
 			return false, err.Error()
 		}

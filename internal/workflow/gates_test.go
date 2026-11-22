@@ -167,3 +167,41 @@ func TestCommandGateInput(t *testing.T) {
 		t.Fatalf("stdin = %s", r.stdin)
 	}
 }
+
+func TestCommandGateGetsTheView(t *testing.T) {
+	w := fixture(t)
+	var g Gate
+	_ = g.UnmarshalJSON([]byte(`{"command": ["check"]}`))
+	r := &fakeRunner{}
+	head := func(context.Context, store.Task) (string, error) { return "s2", nil }
+	task := store.Task{Short: "t-1", State: "ready", StateSha: "s1", Shas: map[string]string{"ready": "s1"}}
+	res := w.Check(ctx, Env{Runner: r, HeadSha: head}, task, nil, Transition{From: StateList{"implementing"}, Gates: []Gate{g}}, Args{})
+	if !res[0].OK {
+		t.Fatalf("result = %+v", res[0])
+	}
+	if !strings.Contains(r.stdin, `"state":"implementing","recordedState":"ready"`) || !strings.Contains(r.stdin, `"headSha":"s2"`) {
+		t.Fatalf("stdin = %s", r.stdin)
+	}
+	// A head that cannot be read fails the gate rather than guessing.
+	broken := func(context.Context, store.Task) (string, error) { return "", errors.New("boom") }
+	res = w.Check(ctx, Env{Runner: r, HeadSha: broken}, task, nil, Transition{From: StateList{"implementing"}, Gates: []Gate{g}}, Args{})
+	if res[0].OK || !strings.Contains(res[0].Message, "boom") {
+		t.Fatalf("broken head: %+v", res[0])
+	}
+}
+
+func TestCheckRefusesInvalidWorkflow(t *testing.T) {
+	w := fixture(t)
+	w.Initial = "nowhere"
+	var g Gate
+	_ = g.UnmarshalJSON([]byte(`{"counterBelow": {"counter": "rounds", "max": 9}}`))
+	res := w.Check(ctx, Env{}, store.Task{}, nil, Transition{From: StateList{"reviewed"}, Gates: []Gate{g, g}}, Args{})
+	if len(res) != 2 || res[0].OK || res[1].OK || !strings.Contains(res[0].Message, "is invalid") || !strings.Contains(res[0].Message, "initial") {
+		t.Fatalf("results = %+v", res)
+	}
+	// A transition with no gates still gets a failing result.
+	res = w.Check(ctx, Env{}, store.Task{}, nil, Transition{From: StateList{"ci_green"}, To: "ready"}, Args{})
+	if len(res) != 1 || res[0].OK || res[0].Gate != "workflow" {
+		t.Fatalf("no gates: %+v", res)
+	}
+}

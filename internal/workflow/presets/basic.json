@@ -5,13 +5,13 @@
   "branch": "task/{short}-{slug}",
   "states": {
     "open":    { "action": "start" },
-    "doing":   { "action": "finish" },
+    "active":  { "action": "finish" },
     "done":    { "final": true },
     "stopped": { "action": "decide", "who": "human" }
   },
   "transitions": [
-    { "from": "open", "to": "doing" },
-    { "from": "doing", "to": "done" },
+    { "from": "open", "to": "active" },
+    { "from": "active", "to": "done" },
     { "from": "*", "to": "stopped", "takes": "reason" },
     { "from": "stopped", "to": "$previous" }
   ],
