@@ -162,16 +162,13 @@ func (a *app) workflowValidate(ctx context.Context, args []string) int {
 		if err != nil {
 			return a.fail("workflow validate", "%v", err)
 		}
-		open := a.store
-		if open == nil {
-			open = a.openStore
-			// Outside a repository there are no tasks to check; the file's
-			// validity is still the answer.
-			if _, cerr := (git.Repo{Dir: dir}).CommonDir(ctx); cerr != nil {
-				open = nil
+		// Outside a repository there are no tasks to check; the file's
+		// validity is still the answer.
+		if _, cerr := (git.Repo{Dir: dir}).CommonDir(ctx); cerr == nil {
+			open := a.store
+			if open == nil {
+				open = a.openStore
 			}
-		}
-		if open != nil {
 			if st, err = open(ctx, dir); err != nil {
 				return a.fail("workflow validate", "%v", err)
 			}

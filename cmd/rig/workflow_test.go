@@ -270,7 +270,9 @@ func TestWorkflowValidateFileOutsideRepo(t *testing.T) {
 	bad := writeWF(t, dir, "bad.json", `{"name":"bad","version":1,"initial":"nowhere","states":{"a":{}},"transitions":[]}`)
 	run := func(file string) (int, string) {
 		var out, errOut bytes.Buffer
+		// Built as main builds it, with the real store opener.
 		a := &app{stdout: &out, stderr: &errOut, cwd: dir, getenv: func(string) string { return "" }}
+		a.store = a.openStore
 		return a.run(ctx, []string{"workflow", "validate", "--json", file}), out.String() + errOut.String()
 	}
 	code, out := run(good)
