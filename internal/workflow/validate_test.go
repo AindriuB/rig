@@ -55,12 +55,14 @@ func TestParseFixture(t *testing.T) {
 
 func TestParseRefuses(t *testing.T) {
 	for name, src := range map[string]string{
-		"not json":     `{`,
-		"unknown key":  `{"name":"x","states":{},"shabound":true}`,
-		"state typo":   `{"states":{"a":{"shaBond":true}}}`,
-		"gate not obj": `{"transitions":[{"from":"a","to":"b","gates":["x"]}]}`,
-		"from number":  `{"transitions":[{"from":3,"to":"b"}]}`,
-		"trailing":     `{} {}`,
+		"not json":      `{`,
+		"unknown key":   `{"name":"x","states":{},"shabound":true}`,
+		"state typo":    `{"states":{"a":{"shaBond":true}}}`,
+		"gate not obj":  `{"transitions":[{"from":"a","to":"b","gates":["x"]}]}`,
+		"from number":   `{"transitions":[{"from":3,"to":"b"}]}`,
+		"trailing":      `{} {}`,
+		"stray brace":   `{}}`,
+		"stray bracket": `{}]`,
 	} {
 		if _, err := Parse([]byte(src)); err == nil {
 			t.Errorf("%s: Parse succeeded", name)

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -265,7 +266,9 @@ func strict(data []byte, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	if dec.More() {
+	// More is false before a stray ']' or '}', so ask for a second value and
+	// require end of input.
+	if err := dec.Decode(&json.RawMessage{}); err != io.EOF {
 		return errors.New("trailing data after the JSON value")
 	}
 	return nil
