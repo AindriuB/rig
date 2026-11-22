@@ -568,6 +568,10 @@ func TestTaskShowText(t *testing.T) {
 	if _, err := e.st.AddNote(ctx, store.Note{Task: task.ID, Kind: "decision", Text: "chose X"}); err != nil {
 		t.Fatal(err)
 	}
+	before, err := e.st.Events(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if r := e.rig("task", "show", "tx"); r.code != 0 || strings.Contains(r.out, "chose X") || !strings.Contains(r.out, "# Title tx") ||
 		!strings.Contains(r.out, "The body.") || !strings.Contains(r.out, "action: decide") || !strings.Contains(r.out, "owner: ann") {
 		t.Fatalf("plain: %+v", r)
@@ -577,6 +581,22 @@ func TestTaskShowText(t *testing.T) {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("show with flags lacks %q:\n%s", want, r.out)
 		}
+	}
+	export := e.rig("task", "export", "tx", "--findings", "--notes", "--history")
+	if export.code != 0 || export.out != r.out {
+		t.Errorf("export should match the Markdown show view: %+v", export)
+	}
+	if got := e.rig("task", "export", "tx", "--json"); got.code != 2 {
+		t.Errorf("export --json should be rejected: %+v", got)
+	}
+	after, err := e.st.Events(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.EqualFunc(before, after, func(a, b store.Event) bool {
+		return a.ID == b.ID && a.Seq == b.Seq && a.Kind == b.Kind && bytes.Equal(a.Data, b.Data)
+	}) {
+		t.Fatalf("task show changed the task event log:\nbefore: %+v\nafter:  %+v", before, after)
 	}
 }
 
