@@ -58,7 +58,8 @@ func testWorkflow(t *testing.T) string {
     "done":    { "final": true },
     "stopped": { "action": "decide", "who": "human" },
     "reviewed": { "action": "finish" },
-    "paused":  { "action": "decide", "who": "human" }
+    "paused":  { "action": "decide", "who": "human" },
+    "gated":   { "action": "finish" }
   },
   "onNewCommit": "back",
   "transitions": [
@@ -71,10 +72,11 @@ func testWorkflow(t *testing.T) string {
     { "from": "paused", "to": "$previous" },
     { "from": "paused", "to": "open", "gates": [{ "fieldSet": "owner" }] },
     { "from": "open", "to": "checked", "gates": [{ "command": ` + string(argv) + ` }] },
+    { "from": "open", "to": "gated", "gates": [{ "dependsIn": ["stopped"] }] },
     { "from": "*", "to": "stopped", "takes": "reason" },
     { "from": "stopped", "to": "$previous" }
   ],
-  "fields": { "owner": { "type": "string" } },
+  "fields": { "owner": { "type": "string" }, "depends": { "type": "tasks" } },
   "findings": { "severities": ["P1", "P2"] }
 }`
 	path := filepath.Join(t.TempDir(), "t.json")
@@ -532,5 +534,81 @@ func TestWorkGitref(t *testing.T) {
 	}
 	if tr := transitions(t, w.st, task.ID); len(tr) != 2 || tr[1].From != "back" {
 		t.Fatalf("transitions %+v", tr)
+	}
+}
+
+// depStore runs hook once, right after the first read of the task dep, as a
+// dependency changing while a gate runs.
+type depStore struct {
+	store.Store
+	dep  string
+	hook func()
+}
+
+func (s *depStore) Task(ctx context.Context, ref string) (store.Task, error) {
+	t, err := s.Store.Task(ctx, ref)
+	if err == nil && t.ID == s.dep && s.hook != nil {
+		h := s.hook
+		s.hook = nil
+		h()
+	}
+	return t, err
+}
+
+// dependentTask is a task depending on a second one, which is stopped.
+func dependentTask(t *testing.T, mem store.Store, w *work) (task, dep store.Task) {
+	t.Helper()
+	dep = newTask(t, mem)
+	task = newTask(t, mem)
+	ev, err := store.NewEvent(store.KindField, store.FieldData{Name: "depends", Value: []string{dep.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{ev}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.move(ctx, dep.ID, "stopped", workflow.Args{Reason: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	return task, dep
+}
+
+func TestMoveRechecksADependencyThatLeftItsState(t *testing.T) {
+	mem := memstore.New(store.Options{Now: tick()})
+	st := &depStore{Store: mem}
+	a, _ := workApp(t, st)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, dep := dependentTask(t, mem, w)
+	st.dep = dep.ID
+	st.hook = func() {
+		if _, err := w.move(ctx, dep.ID, "$previous", workflow.Args{}); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err = w.move(ctx, task.Short, "gated", workflow.Args{})
+	if code := a.storeFail("task", err); code != 1 {
+		t.Fatalf("exit %d, err %v; want 1", code, err)
+	}
+	if got, _ := mem.Task(ctx, task.ID); got.State != "open" || len(transitions(t, mem, task.ID)) != 0 {
+		t.Fatalf("task moved to %s", got.State)
+	}
+}
+
+func TestMoveWritesWhenTheDependencyHolds(t *testing.T) {
+	mem := memstore.New(store.Options{Now: tick()})
+	a, _ := workApp(t, mem)
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := dependentTask(t, mem, w)
+	res, err := w.move(ctx, task.Short, "gated", workflow.Args{})
+	if err != nil || res.view.State != "gated" {
+		t.Fatalf("%+v, %v", res.view, err)
 	}
 }

@@ -191,11 +191,22 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		return moveResult{}, &refusal{reason: fmt.Sprintf("no transition from %s to %s", from, to)}
 	}
 
-	gates := w.wf.Check(ctx, w.env(), t, findings, tr, args)
+	env, deps := w.recordingEnv()
+	gates := w.wf.Check(ctx, env, t, findings, tr, args)
 	for _, g := range gates {
 		if !g.OK {
 			return moveResult{}, &refusal{reason: fmt.Sprintf("%s → %s refused by its gates", from, to), gates: gates}
 		}
+	}
+
+	// A dependsIn gate read other tasks and their branch heads. Read them
+	// again now, outside the Update callback (a store callback must not call
+	// the store), and start over if any differs from what the gates used.
+	// A dependency can still change between this re-read and the write, as
+	// the branch head can between its check in the callback and the write;
+	// that window is not closed.
+	if err := w.recheckDeps(ctx, deps); err != nil {
+		return moveResult{}, err
 	}
 
 	var written []store.Event
@@ -231,6 +242,67 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		hookErrs = w.wf.RunHooks(ctx, w.env().Runner, ev, after, head)
 	}
 	return moveResult{view: w.wf.View(after, head), gates: gates, hookErrors: hookErrs}, nil
+}
+
+// depReads is what the gates of one move read of other tasks: each task's
+// JSON as returned for a reference, and each branch head by task ID.
+type depReads struct {
+	tasks map[string][]byte
+	heads map[string]string
+}
+
+// recordingEnv is env, noting every other task and branch head the gates read.
+func (w *work) recordingEnv() (workflow.Env, *depReads) {
+	reads := &depReads{tasks: map[string][]byte{}, heads: map[string]string{}}
+	env := w.env()
+	task, head := env.Task, env.HeadSha
+	env.Task = func(ctx context.Context, ref string) (store.Task, error) {
+		t, err := task(ctx, ref)
+		if err == nil {
+			b, merr := json.Marshal(t)
+			if merr != nil {
+				return store.Task{}, fmt.Errorf("snapshot of %s: %w", ref, merr)
+			}
+			reads.tasks[ref] = b
+		}
+		return t, err
+	}
+	env.HeadSha = func(ctx context.Context, t store.Task) (string, error) {
+		h, err := head(ctx, t)
+		if err == nil {
+			reads.heads[t.ID] = h
+		}
+		return h, err
+	}
+	return env, reads
+}
+
+// recheckDeps reads again what reads recorded and returns errMoved if any of
+// it changed.
+func (w *work) recheckDeps(ctx context.Context, reads *depReads) error {
+	for ref, was := range reads.tasks {
+		cur, err := w.st.Task(ctx, ref)
+		if err != nil {
+			return err
+		}
+		b, err := json.Marshal(cur)
+		if err != nil {
+			return fmt.Errorf("snapshot of %s: %w", ref, err)
+		}
+		if !bytes.Equal(b, was) {
+			return errMoved
+		}
+		if h, ok := reads.heads[cur.ID]; ok {
+			now, err := w.head(ctx, cur)
+			if err != nil {
+				return err
+			}
+			if now != h {
+				return errMoved
+			}
+		}
+	}
+	return nil
 }
 
 // pickTransition returns the transition among candidates that goes to to: an
