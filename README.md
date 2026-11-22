@@ -101,3 +101,8 @@ planned next.
    raises the minor version; a change to an existing one raises the major.
 2. Tag the commit `v<version>` and push the tag.
 3. The release workflow builds the binaries and drafts a GitHub release.
+
+## License
+
+Copyright 2026 Andrew Bannister. Licensed under the Apache License,
+Version 2.0; see [LICENSE](LICENSE).
