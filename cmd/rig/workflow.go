@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/AindriuB/rig/internal/git"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/workflow"
 )
@@ -164,9 +165,16 @@ func (a *app) workflowValidate(ctx context.Context, args []string) int {
 		open := a.store
 		if open == nil {
 			open = a.openStore
+			// Outside a repository there are no tasks to check; the file's
+			// validity is still the answer.
+			if _, cerr := (git.Repo{Dir: dir}).CommonDir(ctx); cerr != nil {
+				open = nil
+			}
 		}
-		if st, err = open(ctx, dir); err != nil {
-			return a.fail("workflow validate", "%v", err)
+		if open != nil {
+			if st, err = open(ctx, dir); err != nil {
+				return a.fail("workflow validate", "%v", err)
+			}
 		}
 	} else {
 		w, err := a.openWork(ctx, *repoFlag, false)
@@ -184,9 +192,11 @@ func (a *app) workflowValidate(ctx context.Context, args []string) int {
 		problems = invalid.Problems
 	}
 	unknown := []unknownState{}
-	tasks, err := st.Tasks(ctx, store.TaskFilter{})
-	if err != nil {
-		return a.fail("workflow validate", "%v", err)
+	var tasks []store.Task
+	if st != nil {
+		if tasks, err = st.Tasks(ctx, store.TaskFilter{}); err != nil {
+			return a.fail("workflow validate", "%v", err)
+		}
 	}
 	for _, t := range tasks {
 		if _, ok := wf.States[t.State]; !ok {

@@ -256,3 +256,31 @@ func TestWorkflowEndToEnd(t *testing.T) {
 		t.Fatalf("validate file: %+v", r)
 	}
 }
+
+func TestWorkflowValidateFileOutsideRepo(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	root := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(root))
+	dir := filepath.Join(root, "plain")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := testWorkflow(t)
+	bad := writeWF(t, dir, "bad.json", `{"name":"bad","version":1,"initial":"nowhere","states":{"a":{}},"transitions":[]}`)
+	run := func(file string) (int, string) {
+		var out, errOut bytes.Buffer
+		a := &app{stdout: &out, stderr: &errOut, cwd: dir, getenv: func(string) string { return "" }}
+		return a.run(ctx, []string{"workflow", "validate", "--json", file}), out.String() + errOut.String()
+	}
+	code, out := run(good)
+	var v validateOut
+	if code != 0 || json.Unmarshal([]byte(out), &v) != nil || !v.Valid || len(v.UnknownStates) != 0 {
+		t.Fatalf("valid file outside repo: %d %s", code, out)
+	}
+	code, out = run(bad)
+	v = validateOut{}
+	if code != 1 || json.Unmarshal([]byte(out), &v) != nil || v.Valid || len(v.Problems) == 0 {
+		t.Fatalf("invalid file outside repo: %d %s", code, out)
+	}
+}
