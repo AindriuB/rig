@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,5 +48,16 @@ func TestOpenStore(t *testing.T) {
 	a := &app{getenv: func(string) string { return "" }, now: time.Now}
 	if _, err := a.openStore(ctx, t.TempDir()); err == nil {
 		t.Fatal("openStore outside a repository succeeded")
+	}
+}
+
+// TestHelpListsPhase2Commands: `rig help` lists every phase-2 command, so a
+// command cannot drop out of the usage text unnoticed.
+func TestHelpListsPhase2Commands(t *testing.T) {
+	r := rig(t, t.TempDir(), nil, nil, "help")
+	for _, cmd := range []string{"task", "finding", "note", "workflow", "next", "context"} {
+		if !strings.Contains(r.out, "rig "+cmd+" ") {
+			t.Errorf("usage does not list rig %s", cmd)
+		}
 	}
 }
