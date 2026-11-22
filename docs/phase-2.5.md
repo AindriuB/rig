@@ -31,14 +31,14 @@ keychain unless the user explicitly chooses a file.* See Q9.
 An organisation's choices, such as Jira as the tracker, are the same across
 its projects, so **the global file is the main place for settings**. What
 differs between projects, such as the Jira project key, goes in a section of
-the global file keyed by the repository. A file in the project is only a
-private override for one clone, and is never committed.
+the global file keyed by the repository. A file in the project overrides
+both for one checkout; rig never commits it and never hides it.
 
 | Scope | Where | For |
 |---|---|---|
 | `--global` | `~/.rig/config.json` (`%USERPROFILE%\.rig\config.json` on Windows), top level | the organisation's forge and tracker |
 | `--repo` | the same file, under `repos."<repo key>"` | values that differ per project: the tracker project key |
-| `--local` | `<repo>/.rig/config.json`, `<repo>` being the main checkout's root, so worktrees share it | a private override for this clone only |
+| `--local` | `<repo>/.rig/config.json`, `<repo>` being the main checkout's root, so worktrees share it | an override for this checkout; a developer may commit it to share it |
 
 The **repo key** is the `origin` remote normalised to `host/path` without
 `.git` or a user: `git@github.com:acme/rig.git` and
@@ -52,10 +52,11 @@ two keys it holds (it is specific to the project, so it beats the global
 file), then `--global`, then the built-in default.
 JSON matches `.claude/rig.json` and needs only the standard library.
 
-**The project file is not committed.** The first time rig writes
-`<repo>/.rig/`, it adds `/.rig/` to `.git/info/exclude`, which git reads but
-never commits, rather than editing the tracked `.gitignore`. That is the
-repository's common directory, so it covers every worktree.
+**rig does not tie a repository to itself.** It never edits a tracked file,
+`.gitignore` or `.git/info/exclude`, and never commits. `<repo>/.rig/` is
+created only by `rig config set … --local`, and then shows in `git status`
+as untracked like any new file. Whether to commit it, ignore it or leave it
+is each developer's choice; rig works the same either way.
 
 Keys are dotted names on an allow-list, and values are checked when they are
 set and when they are read. `rig config set` refuses an unknown key or a bad
@@ -100,11 +101,14 @@ A global file for an organisation on GitHub that tracks in Jira:
 `rig config set tracker.project RIG --repo` in a clone of `acme/rig` writes
 the `repos` entry.
 
-**No key holds an account or a secret, in any scope.** With the project file
-no longer committed, the risk that rule guarded against is smaller, but a
-`.rig/` file is still one `git add -f` away from a commit and is copied by
-every backup and sync tool. Tokens and the accounts they belong to stay in
-the keychain entry a login creates (see Login and Q18).
+**No key holds an account or a secret, in any scope.** A developer may
+commit `.rig/config.json`, so it must be safe to commit by construction.
+Tokens and the accounts they belong to stay in the keychain entry a login
+creates (see Login and Q18). The key allow-list has no secret key, and
+`rig config set` refuses any key whose last part looks like a credential
+(`token`, `secret`, `password`, `apikey`, `key`, `auth`, `credential`, in
+any case) with a message pointing to `rig login`, so the refusal stays
+explicit even if the allow-list grows.
 
 **With no config at all**, rig behaves as today: the forge is detected from
 `origin`, and the tracker is `local`.
@@ -247,9 +251,11 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
   over every combination.
 - AC8 The repo key normalises ssh, https and `.git` forms of one remote to
   the same string; no `origin` makes `--repo` an error.
-- AC9 The first write to `<repo>/.rig/` adds `/.rig/` to
-  `.git/info/exclude` once, in the common directory, and never touches
-  `.gitignore`; `git status --porcelain` is unchanged after it.
+- AC9 Writing `<repo>/.rig/config.json` changes no tracked file,
+  `.gitignore` or `.git/info/exclude` (test compares them before and after).
+- AC10 `Set` refuses credential-like keys (`*.token`, `*.password`,
+  `*.secret`, `*.apikey`, `*.key`, `*.auth`, `*.credential`, any case) in
+  every scope, with a message naming `rig login`.
 - AC6 Each key's values are checked on `Set` and on load: `forge.kind`,
   `tracker.kind` enums; `tracker.url` https only; `tracker.project` by kind.
   With no files, `tracker.kind` is `local`.
@@ -363,10 +369,10 @@ state is in git, needs no service, and does not conflict on merge. The
 kit's markdown task files are not a kind rig reads; phase 3 imports them.
 *Recommend: these four, default `local`.*
 
-**Q18. Secrets in config, now that nothing is committed.** *Recommend:
-keep the rule that no config key holds an account or a token in any scope;
-tokens stay in the keychain. An uncommitted file is still one `git add -f`
-from a commit and is copied by backups.*
+**Q18. Secrets in config.** A developer may commit `.rig/config.json`.
+*Recommend: no config key holds an account or a token in any scope; tokens
+stay in the keychain; credential-like keys are refused by name as well as by
+the allow-list.*
 
 **Q19. The store and the tracker.** *Recommend: the store holds the loop's
 state under every tracker kind, and `rig task`/`rig next` never go through
@@ -380,4 +386,5 @@ file keyed by the repository's remote, which every clone and worktree finds;
 or deriving the value from the repository or branch name, which breaks as
 soon as the names do not match the Jira key. *Recommend: the global file,
 keyed by the repo key (`--repo`), with `.rig/` as a private per-clone
-override above it.*
+override above it. rig never commits, ignores or hides `.rig/`; sharing it is
+the developer's call.*

@@ -21,6 +21,10 @@ commands is a separate change in the kit repository.
   that is not its branch head.
 - Nothing is written into the working tree. Worktrees share the store,
   because refs live in the repository's common directory.
+- **A repository looks the same whether or not anyone uses rig.** rig
+  never edits a tracked file, `.gitignore` or `.git/info/exclude`, never
+  makes a commit on a branch, and never pushes its own refs unless asked
+  (see "What rig leaves in a repository").
 - **Not in phase 2:** sharing the store between clones (`rig sync`, phase 4),
   claims (phase 4), importing `docs/plan` trees and generated PLAN/HISTORY
   views (phase 3), git notes (see Q3), and `rig config` and `rig login`,
@@ -69,6 +73,23 @@ the working tree.
 `refs/rig/*` is outside `refs/heads` and `refs/tags`, so `git push`,
 `git fetch` and `git clone` ignore it by default, and `rig push` cannot name
 it. `git gc` keeps everything reachable from it.
+
+### What rig leaves in a repository
+
+A repository must not depend on rig: someone who never installs it sees the
+same tree, branches and history.
+
+| What | Where | Shared? |
+|---|---|---|
+| Task logs | `refs/rig/tasks/*` in the local `.git` | **Local only.** No phase-2 command pushes or fetches them. Phase 4's `rig sync` will push them only when run, or when the user opts in with a config key; never as a side effect of `rig push` (see Q21) |
+| Store commits | objects reachable only from `refs/rig/*` | local, as above; on no branch, so never in a pull request |
+| Tracked files, `.gitignore`, `.git/info/exclude` | — | never written |
+| Branches | `task/<short>-<slug>`, made by whoever runs the loop | the kit's naming; rig only reads it |
+| Commit trailers, git notes | — | not written by rig in phase 2 (see Q3) |
+| `.claude/rig.json` | read, never written | the project's own file, as in phase 1 |
+
+Removing rig's traces from a clone is
+`git for-each-ref --format='%(refname)' refs/rig | xargs -n1 git update-ref -d`.
 
 ### Ids
 
@@ -467,9 +488,11 @@ format can be merged before anything depends on the format.
 review results as notes on `refs/notes/rig`. `git notes` has no
 compare-and-swap, so concurrent writers can lose a note, and everything a
 note would say is already in the task's log. The trailer is written by
-whoever commits, which is the kit's implementer, not rig.
-*Recommend: leave notes to phase 3, as a generated view if still wanted;
-the trailer goes into the kit's follow-up.*
+whoever commits, which is the kit's implementer, not rig. Both would put
+rig's marks into history that every user of the repository shares.
+*Recommend: no notes in phase 2; if they come later, local-only like the task
+refs. The trailer is the kit's choice, off unless a project opts in, and rig
+never requires it.*
 
 **Q4. New commits: derived or recorded.** Derived (above) needs no hook and
 cannot be missed, but costs one `rev-parse` per task read. Recording an
@@ -493,3 +516,9 @@ the same as today's uncommitted task files.
 tasks would be a new field (`storeTasks`), a minor change, but it was not
 asked for. *Recommend: leave `rig status` alone; list it as a follow-up for
 the kit switch.*
+
+**Q21. Sharing the store.** The task refs never leave the clone in phase 2.
+When phase 4 adds `rig sync`, pushing `refs/rig/*` to `origin` is opt-in:
+an explicit `rig sync` or a `store.share` key the user sets, and never a
+side effect of another command. A remote that receives them shows nothing
+on any branch or pull request. *Recommend: as stated.*
