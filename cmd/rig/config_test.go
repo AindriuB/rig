@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,7 @@ func TestConfigList(t *testing.T) {
 
 func TestConfigRefusalsWriteNothing(t *testing.T) {
 	repo, _ := newRepo(t)
+	gitc(t, repo, "remote", "set-url", "origin", "git@github.com:acme/rig.git")
 	env, home := cfgEnv(t)
 	for _, key := range []string{"pushPrefixes", "push.prefixes", "workflow", "jira.token", "tracker.kind=x"} {
 		for _, scope := range []string{"--global", "--repo", "--local"} {
@@ -208,5 +210,75 @@ func TestUsageListsConfigAndLogin(t *testing.T) {
 		if !strings.Contains(r.out, want) {
 			t.Fatalf("usage lacks %q", want)
 		}
+	}
+}
+
+// TestConfigGetListNeedScope: get and list exit 2 when the asked scope does
+// not exist.
+func TestConfigGetListNeedScope(t *testing.T) {
+	env, _ := cfgEnv(t)
+	noOrigin, _ := newRepo(t)
+	gitc(t, noOrigin, "remote", "remove", "origin")
+	localOrigin, _ := newRepo(t) // its origin is a local path: no repo key
+	for _, c := range []struct {
+		name, dir, scope string
+	}{
+		{"local outside a repository", t.TempDir(), "--local"},
+		{"repo outside a repository", t.TempDir(), "--repo"},
+		{"repo with no origin", noOrigin, "--repo"},
+		{"repo with a local-path origin", localOrigin, "--repo"},
+	} {
+		for _, args := range [][]string{
+			{"config", "get", "tracker.kind", c.scope},
+			{"config", "list", c.scope},
+		} {
+			t.Run(c.name+"/"+args[1], func(t *testing.T) {
+				if r := rig(t, c.dir, nil, env, args...); r.code != 2 {
+					t.Fatalf("%v: %+v", args, r)
+				}
+			})
+		}
+	}
+}
+
+func TestConfigBareRepoWithWorktree(t *testing.T) {
+	src, _ := newRepo(t)
+	root := filepath.Dir(src)
+	bare, wt := filepath.Join(root, "bare.git"), filepath.Join(root, "wt")
+	gitc(t, root, "clone", "-q", "--bare", src, bare)
+	gitc(t, bare, "worktree", "add", "-q", "../wt", "main")
+	env, _ := cfgEnv(t)
+
+	if r := rig(t, wt, nil, env, "config", "set", "forge.kind", "gitlab", "--local"); r.code != 0 {
+		t.Fatalf("set: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".rig", "config.json")); err != nil {
+		t.Fatalf("local file is not in the worktree: %v", err)
+	}
+	for _, n := range []string{".rig", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(bare, n)); err == nil {
+			t.Fatalf("the bare directory has %s", n)
+		}
+	}
+
+	// With no local value, the worktree's .claude/rig.json is read.
+	os.Remove(filepath.Join(wt, ".rig", "config.json"))
+	os.MkdirAll(filepath.Join(wt, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(wt, ".claude", "rig.json"), []byte(`{"forge":"github"}`), 0o644)
+	if r := rig(t, wt, nil, env, "config", "get", "forge.kind"); r.code != 0 || r.out != "github\n" {
+		t.Fatalf("get: %+v", r)
+	}
+}
+
+func TestConfigHomeFromEnv(t *testing.T) {
+	env := map[string]string{"HOME": "/h/home", "USERPROFILE": `C:\u\profile`}
+	a := &app{getenv: func(k string) string { return env[k] }}
+	got, err := a.homeDir()
+	want := "/h/home"
+	if runtime.GOOS == "windows" {
+		want = `C:\u\profile`
+	}
+	if err != nil || got != want {
+		t.Fatalf("homeDir = %q, %v; want %q", got, err, want)
 	}
 }
