@@ -433,3 +433,40 @@ func TestContextPathsOutsideRepo(t *testing.T) {
 		t.Error("an absolute path was matched")
 	}
 }
+
+// A finding recorded with a path:line still matches the owned file.
+func TestContextHistoryPathWithLine(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	ctxTask(t, st, "alpha", "", "src/a.go")
+	done := ctxTask(t, st, "gamma", "", "src/*.go")
+	ctxEvent(t, st, done.ID, store.KindFinding, store.FindingData{Severity: "P2", Summary: "lined", Path: "src/a.go:12"})
+	fs, _ := st.Findings(ctx, done.ID)
+	ctxEvent(t, st, done.ID, store.KindFindingStatus, store.FindingStatusData{Finding: fs[0].ID, Status: store.StatusFixed})
+	a, out, _ := ctxApp(t, ctxRepo(t), st)
+	code, text := ctxRun(t, a, out, "alpha")
+	if code != 0 || !strings.Contains(text, "P2 fixed: lined") {
+		t.Fatalf("exit %d, history missing the finding:\n%s", code, text)
+	}
+}
+
+// With no local default branch the brief falls back to origin/<branch>.
+func TestContextNoLocalDefaultBranch(t *testing.T) {
+	repo := ctxRepo(t)
+	gitc(t, repo, "push", "-q", "origin", "main")
+	gitc(t, repo, "fetch", "-q", "origin")
+	gitc(t, repo, "remote", "set-head", "origin", "main")
+	gitc(t, repo, "checkout", "-q", "-b", "task/x")
+	gitc(t, repo, "branch", "-q", "-D", "main")
+	st := memstore.New(store.Options{Now: tick()})
+	ctxTask(t, st, "alpha", "", "src/a.go")
+	a, out, errOut := ctxApp(t, repo, st)
+	code, text := ctxRun(t, a, out, "alpha")
+	if code != 0 || !strings.Contains(text, " grow a\n") {
+		t.Fatalf("exit %d (%s):\n%s", code, errOut, text)
+	}
+	// Neither a local nor a remote ref: Commits is empty, the brief still prints.
+	gitc(t, repo, "update-ref", "-d", "refs/remotes/origin/main")
+	if code, text := ctxRun(t, a, out, "alpha"); code != 0 || strings.Contains(text, "grow a") {
+		t.Fatalf("exit %d:\n%s", code, text)
+	}
+}

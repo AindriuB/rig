@@ -87,3 +87,14 @@ func TestLsFilesFromSubdirectory(t *testing.T) {
 		t.Errorf("from a subdirectory = %v, want %v", got, want)
 	}
 }
+
+func TestRefExists(t *testing.T) {
+	repo, _ := newRepo(t)
+	r := Repo{Dir: repo}
+	if ok, err := r.RefExists(ctx, "refs/heads/main"); err != nil || !ok {
+		t.Errorf("main = %v, %v", ok, err)
+	}
+	if ok, err := r.RefExists(ctx, "refs/remotes/origin/nope"); err != nil || ok {
+		t.Errorf("nope = %v, %v", ok, err)
+	}
+}

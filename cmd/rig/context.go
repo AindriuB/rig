@@ -477,11 +477,20 @@ func (w *work) commitLines(ctx context.Context, files []string) ([]string, error
 	if err != nil || branch == "" {
 		return nil, err
 	}
+	rev := branch
+	if ok, err := w.repo.BranchExists(ctx, branch); err != nil {
+		return nil, err
+	} else if !ok {
+		rev = "refs/remotes/origin/" + branch
+		if ok, err := w.repo.RefExists(ctx, rev); err != nil || !ok {
+			return nil, err // no such ref: leave Commits empty
+		}
+	}
 	specs := make([]string, len(files))
 	for i, f := range files {
 		specs[i] = ":(top,literal)" + f
 	}
-	cs, err := w.repo.LogPaths(ctx, branch, specs, commitLimit)
+	cs, err := w.repo.LogPaths(ctx, rev, specs, commitLimit)
 	if err != nil {
 		return nil, err
 	}

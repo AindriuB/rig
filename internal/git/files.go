@@ -2,10 +2,13 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/AindriuB/rig/internal/proc"
 )
 
 // CommitInfo is one commit as `git log` lists it.
@@ -61,4 +64,18 @@ func (r Repo) LogPaths(ctx context.Context, rev string, pathspecs []string, limi
 		commits = append(commits, CommitInfo{SHA: sha, Subject: subject})
 	}
 	return commits, nil
+}
+
+// RefExists reports whether the full ref name (for example
+// "refs/remotes/origin/main") exists.
+func (r Repo) RefExists(ctx context.Context, ref string) (bool, error) {
+	res, err := r.run(ctx, queryTimeout, "show-ref", "--verify", "--quiet", ref)
+	var ee *proc.ExitError
+	if errors.As(err, &ee) && ee.Code == 1 {
+		return false, nil
+	}
+	if err != nil {
+		return false, wrap([]string{"show-ref"}, res, err)
+	}
+	return true, nil
 }
