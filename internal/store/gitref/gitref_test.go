@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,17 +153,28 @@ func TestUnknownLinesSurviveAppend(t *testing.T) {
 	}
 }
 
-// AC3: 8 goroutines append 25 events each to one task; every append lands
-// with a contiguous seq. (Racing processes are the two tests below.)
+// unlocked opens a store whose writes skip the shared store lock, as a
+// writer racing from outside it would. Tests use it to lose the
+// compare-and-swap on purpose.
+func unlocked(t *testing.T, repo git.Repo) *Store {
+	t.Helper()
+	s := open(t, repo)
+	s.lockPath = filepath.Join(t.TempDir(), "own.lock")
+	return s
+}
+
+// AC3: 8 writers, each with its own Store as separate processes would have,
+// append 25 events each to one task; every append lands with a contiguous
+// seq. (Racing past the lock is the two tests below.)
 func TestConcurrentAppends(t *testing.T) {
 	repo := newRepo(t)
-	s := open(t, repo)
-	task := newTask(t, s, "busy")
+	task := newTask(t, open(t, repo), "busy")
 	const writers, each = 8, 25
 	var wg sync.WaitGroup
 	errs := make(chan error, writers)
 	for w := 0; w < writers; w++ {
 		wg.Add(1)
+		s := open(t, repo)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
@@ -203,7 +215,7 @@ func TestConcurrentAppends(t *testing.T) {
 // and nothing of it is written.
 func TestRacingWriterMakesStepIllegal(t *testing.T) {
 	repo := newRepo(t)
-	a, b := open(t, repo), open(t, repo)
+	a, b := open(t, repo), unlocked(t, repo)
 	task := newTask(t, a, "race")
 	refused := errors.New("not in todo")
 	calls := 0
@@ -239,7 +251,7 @@ func TestConflictAfterEightTries(t *testing.T) {
 	repo := newRepo(t)
 	s := open(t, repo)
 	s.sleep = func(context.Context, time.Duration) error { return nil }
-	other := open(t, repo)
+	other := unlocked(t, repo)
 	task := newTask(t, s, "starved")
 	calls := 0
 	_, err := s.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
@@ -363,5 +375,185 @@ func TestReturnedValuesAreCopies(t *testing.T) {
 	again, _ := s.Events(ctx, task.ID)
 	if !json.Valid(again[0].Data) {
 		t.Fatalf("event data changed: %q", again[0].Data)
+	}
+}
+
+// lockFile is the store lock's path in repo.
+func lockFile(t *testing.T, repo git.Repo) string {
+	t.Helper()
+	common, err := repo.CommonDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(common, "rig", "store.lock")
+}
+
+func holdLock(t *testing.T, repo git.Repo, age time.Duration) string {
+	t.Helper()
+	path := lockFile(t, repo)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("1 other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if age > 0 {
+		old := time.Now().Add(-age)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func addCount(s *Store, ref string) error {
+	_, err := s.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
+		e, err := store.NewEvent(store.KindCount, store.CountData{Counter: "n", By: 1})
+		return []store.Event{e}, err
+	})
+	return err
+}
+
+// A write takes the lock and leaves no lock file behind.
+func TestLockReleased(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	task := newTask(t, s, "tidy")
+	if err := addCount(s, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lockFile(t, repo)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock file left behind: %v", err)
+	}
+}
+
+// A lock file older than a minute is broken and the write goes ahead.
+func TestStaleLockIsBroken(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	task := newTask(t, s, "stale")
+	path := holdLock(t, repo, 2*lockStale)
+	if err := addCount(s, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale lock still there: %v", err)
+	}
+	if got, _ := s.Task(ctx, task.ID); got.Counters["n"] != 1 {
+		t.Fatalf("counter = %d", got.Counters["n"])
+	}
+}
+
+// A writer waits on a fresh lock held by someone else, then succeeds once it
+// is released; another that gives up first returns ErrConflict and writes
+// nothing.
+func TestHeldLockMakesWriterWait(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	task := newTask(t, s, "held")
+	path := holdLock(t, repo, 0)
+
+	quick := open(t, repo)
+	quick.lockWait = 50 * time.Millisecond
+	if err := addCount(quick, task.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- addCount(s, task.ID) }()
+	select {
+	case err := <-done:
+		t.Fatalf("write did not wait for the lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got, _ := open(t, repo).Task(ctx, task.ID); got.Counters["n"] != 0 {
+		t.Fatalf("written while locked: %d", got.Counters["n"])
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("write still waiting after the lock was released")
+	}
+	if got, _ := s.Task(ctx, task.ID); got.Counters["n"] != 1 {
+		t.Fatalf("counter = %d, want 1", got.Counters["n"])
+	}
+}
+
+// parseLog skips and counts a line of an unknown version and a line that is
+// not JSON; it never fails.
+func TestParseLogSkips(t *testing.T) {
+	raw := []byte(`{"v":1,"id":"01A","seq":1,"kind":"count","data":{}}
+{"v":9,"seq":"two","kind":"teleport"}
+not json
+{"v":1,"id":"01B","seq":"bad"}
+{"v":1,"id":"01C","seq":2,"kind":"count","data":{}}
+`)
+	evs, skipped := parseLog(raw)
+	if len(evs) != 2 || evs[0].ID != "01A" || evs[1].ID != "01C" || skipped != 3 {
+		t.Fatalf("events %+v, skipped %d", evs, skipped)
+	}
+}
+
+// writeLog points ref at a commit whose log.jsonl is data.
+func writeLog(t *testing.T, repo git.Repo, ref, data string) {
+	t.Helper()
+	blob, err := repo.WriteBlob(ctx, []byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: LogFile}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := repo.CommitTree(ctx, tree, nil, "test\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, repo.Dir, "update-ref", ref, c)
+}
+
+// A malformed line in one task's log does not fail reads of the others, and
+// survives an append to its own task.
+func TestMalformedLineDoesNotFailOtherTasks(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	good := newTask(t, s, "good")
+	bad := newTask(t, s, "bad")
+	ref := TasksPrefix + bad.ID
+	old := gitc(t, repo.Dir, "cat-file", "blob", ref+":"+LogFile)
+	writeLog(t, repo, ref, old+"\n{broken\n")
+	tasks, err := s.Tasks(ctx, store.TaskFilter{})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("Tasks = %d, %v", len(tasks), err)
+	}
+	if _, err := s.Task(ctx, good.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := addCount(s, bad.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitc(t, repo.Dir, "cat-file", "blob", ref+":"+LogFile); !strings.Contains(got, "{broken") {
+		t.Fatalf("malformed line dropped: %q", got)
+	}
+}
+
+// Notes reads only the notes ref and task refs: an unrelated ref under
+// refs/rig/ with no log.jsonl is neither read nor an error.
+func TestNotesIgnoresUnrelatedRefs(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	if _, err := s.AddNote(ctx, store.Note{Kind: "history", Text: "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, repo.Dir, "update-ref", "refs/rig/other", gitc(t, repo.Dir, "rev-parse", "HEAD"))
+	notes, err := s.Notes(ctx, store.NoteFilter{})
+	if err != nil || len(notes) != 1 || notes[0].Text != "kept" {
+		t.Fatalf("Notes = %+v, %v", notes, err)
 	}
 }

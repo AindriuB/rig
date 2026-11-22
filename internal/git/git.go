@@ -108,6 +108,12 @@ func (r Repo) RemoteURL(ctx context.Context, remote string) (string, error) {
 	return r.out(ctx, "remote", "get-url", "--", remote)
 }
 
+// UserName is git's user.name for the repository. It is an error when
+// user.name is not set.
+func (r Repo) UserName(ctx context.Context) (string, error) {
+	return r.out(ctx, "config", "user.name")
+}
+
 // DefaultBranch is origin's HEAD branch, falling back to the first of main,
 // master, trunk and develop that exists locally. It is "" when none does.
 func (r Repo) DefaultBranch(ctx context.Context) (string, error) {

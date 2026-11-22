@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/AindriuB/rig/internal/git"
-	"github.com/AindriuB/rig/internal/proc"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/store/gitref"
 )
@@ -28,9 +26,8 @@ func (a *app) actor(ctx context.Context, dir string) string {
 	if v := strings.TrimSpace(a.getenv("RIG_ACTOR")); v != "" {
 		return v
 	}
-	res, err := proc.Run(ctx, proc.Options{Env: []string{"LC_ALL=C", "GIT_TERMINAL_PROMPT=0"}, Timeout: 30 * time.Second},
-		"git", "-C", dir, "config", "user.name")
-	if v := strings.TrimSpace(string(res.Stdout)); err == nil && v != "" {
+	name, err := git.Repo{Dir: dir}.UserName(ctx)
+	if v := strings.TrimSpace(name); err == nil && v != "" {
 		return v
 	}
 	return "unknown"

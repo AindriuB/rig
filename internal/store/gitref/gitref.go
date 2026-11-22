@@ -52,17 +52,22 @@ type plumbing interface {
 	ResolveRef(ctx context.Context, ref string) (string, bool, error)
 	ReadRefs(ctx context.Context, prefix string) ([]git.Ref, error)
 	ReadBlobs(ctx context.Context, specs []string) ([]git.Blob, error)
+	CommonDir(ctx context.Context) (string, error)
 }
 
-// Store keeps task logs as refs in one repository. Its writes are serialized
-// within the process, so goroutines sharing a Store do not spend their tries
-// racing each other; the compare-and-swap guards against other processes.
-// An Update callback must not write through the same Store.
+// Store keeps task logs as refs in one repository. Each write holds the
+// store lock (see lock.go) for its read, callback and append, so writers in
+// this and other processes take turns instead of spending their tries racing
+// each other; the compare-and-swap still guards correctness. Reads take no
+// lock. An Update callback must not write through any Store of the same
+// repository.
 type Store struct {
-	mu    sync.Mutex // held for the whole of each write
-	git   plumbing
-	opts  store.Options
-	sleep func(context.Context, time.Duration) error
+	mu       sync.Mutex // held for the whole of each write, around the file lock
+	git      plumbing
+	opts     store.Options
+	sleep    func(context.Context, time.Duration) error
+	lockPath string        // resolved on the first write
+	lockWait time.Duration // how long a write waits for the lock
 }
 
 var _ store.Store = (*Store)(nil)
@@ -74,7 +79,7 @@ func Open(repo git.Repo, opts store.Options) (*Store, error) {
 }
 
 func newStore(g plumbing, opts store.Options) *Store {
-	return &Store{git: g, opts: opts.WithDefaults(), sleep: sleepCtx}
+	return &Store{git: g, opts: opts.WithDefaults(), sleep: sleepCtx, lockWait: lockWait}
 }
 
 // sleepCtx waits for d or until ctx is done.
@@ -90,38 +95,59 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // taskLog is one log as read: its ref, the commit it was read at ("" when the
-// ref does not exist), the blob's bytes and the events they hold.
+// ref does not exist), the blob's bytes, the events they hold and how many
+// lines were skipped.
 type taskLog struct {
-	ref    string
-	tip    string
-	raw    []byte
-	events []store.Event
+	ref     string
+	tip     string
+	raw     []byte
+	events  []store.Event
+	skipped int
 }
 
-// parseLog decodes log.jsonl. A line that is not JSON is an error: rewriting
-// the log around it would lose it.
-func parseLog(ref string, raw []byte) ([]store.Event, error) {
-	var out []store.Event
-	for i, line := range bytes.Split(raw, []byte("\n")) {
+// parseLog decodes log.jsonl. A line whose v this rig does not know, or that
+// does not parse, is skipped and counted, never an error: one bad line must
+// not hide every other task. Skipped lines stay in raw, so an append keeps
+// them byte for byte.
+func parseLog(raw []byte) (events []store.Event, skipped int) {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
+		var head struct {
+			V int `json:"v"`
+		}
+		if err := json.Unmarshal(line, &head); err != nil || head.V != store.Version {
+			skipped++
+			continue
+		}
 		var e store.Event
 		if err := json.Unmarshal(line, &e); err != nil {
-			return nil, fmt.Errorf("%s:%s line %d: %w", ref, LogFile, i+1, err)
+			skipped++
+			continue
 		}
-		out = append(out, e)
+		events = append(events, e)
 	}
-	store.SortEvents(out)
-	return out, nil
+	store.SortEvents(events)
+	return events, skipped
 }
 
-// readAll reads every log under prefix: one for-each-ref and one cat-file.
-func (s *Store) readAll(ctx context.Context, prefix string) ([]taskLog, error) {
-	refs, err := s.git.ReadRefs(ctx, prefix)
+// readAll reads every log under prefix whose ref keep accepts (nil keeps
+// all): one for-each-ref and one cat-file.
+func (s *Store) readAll(ctx context.Context, prefix string, keep func(string) bool) ([]taskLog, error) {
+	all, err := s.git.ReadRefs(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("read store: %w", err)
+	}
+	refs := all
+	if keep != nil {
+		refs = nil
+		for _, r := range all {
+			if keep(r.Name) {
+				refs = append(refs, r)
+			}
+		}
 	}
 	if len(refs) == 0 {
 		return nil, nil
@@ -139,11 +165,8 @@ func (s *Store) readAll(ctx context.Context, prefix string) ([]taskLog, error) {
 		if blobs[i].Missing {
 			return nil, fmt.Errorf("read store: %s has no %s", r.Name, LogFile)
 		}
-		evs, err := parseLog(r.Name, blobs[i].Data)
-		if err != nil {
-			return nil, fmt.Errorf("read store: %w", err)
-		}
-		logs = append(logs, taskLog{ref: r.Name, tip: r.OID, raw: blobs[i].Data, events: evs})
+		evs, skipped := parseLog(blobs[i].Data)
+		logs = append(logs, taskLog{ref: r.Name, tip: r.OID, raw: blobs[i].Data, events: evs, skipped: skipped})
 	}
 	return logs, nil
 }
@@ -164,11 +187,8 @@ func (s *Store) readOne(ctx context.Context, ref string) (taskLog, error) {
 	if blobs[0].Missing {
 		return taskLog{}, fmt.Errorf("read %s: no %s", ref, LogFile)
 	}
-	evs, err := parseLog(ref, blobs[0].Data)
-	if err != nil {
-		return taskLog{}, fmt.Errorf("read %s: %w", ref, err)
-	}
-	return taskLog{ref: ref, tip: tip, raw: blobs[0].Data, events: evs}, nil
+	evs, skipped := parseLog(blobs[0].Data)
+	return taskLog{ref: ref, tip: tip, raw: blobs[0].Data, events: evs, skipped: skipped}, nil
 }
 
 // fold folds every task log, newest first, and maps task id to its log.
@@ -189,7 +209,7 @@ func fold(logs []taskLog) ([]store.Task, map[string]taskLog) {
 
 // resolve reads every task and returns the log of the one ref names.
 func (s *Store) resolve(ctx context.Context, ref string) (taskLog, error) {
-	logs, err := s.readAll(ctx, TasksPrefix)
+	logs, err := s.readAll(ctx, TasksPrefix, nil)
 	if err != nil {
 		return taskLog{}, err
 	}
@@ -298,9 +318,12 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	logs, err := s.readAll(ctx, TasksPrefix)
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return store.Task{}, err
+	}
+	defer unlock()
+	logs, err := s.readAll(ctx, TasksPrefix, nil)
 	if err != nil {
 		return store.Task{}, err
 	}
@@ -333,7 +356,7 @@ func (s *Store) Task(ctx context.Context, ref string) (store.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
 	}
-	logs, err := s.readAll(ctx, TasksPrefix)
+	logs, err := s.readAll(ctx, TasksPrefix, nil)
 	if err != nil {
 		return store.Task{}, err
 	}
@@ -347,7 +370,7 @@ func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, er
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	logs, err := s.readAll(ctx, TasksPrefix)
+	logs, err := s.readAll(ctx, TasksPrefix, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -369,8 +392,11 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return store.Task{}, err
+	}
+	defer unlock()
 	log, err := s.resolve(ctx, ref)
 	if err != nil {
 		return store.Task{}, err
@@ -431,8 +457,11 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Note{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return store.Note{}, err
+	}
+	defer unlock()
 	e, err := store.NewEvent(store.KindNote, store.NoteData{Kind: n.Kind, Text: n.Text})
 	if err != nil {
 		return store.Note{}, fmt.Errorf("add note: %w", err)
@@ -489,14 +518,13 @@ func (s *Store) Notes(ctx context.Context, f store.NoteFilter) ([]store.Note, er
 		}
 		_, _, all, _ = store.Fold(log.events)
 	} else {
-		logs, err := s.readAll(ctx, "refs/rig/")
+		logs, err := s.readAll(ctx, "refs/rig/", func(name string) bool {
+			return name == NotesRef || strings.HasPrefix(name, TasksPrefix)
+		})
 		if err != nil {
 			return nil, err
 		}
 		for _, l := range logs {
-			if l.ref != NotesRef && !strings.HasPrefix(l.ref, TasksPrefix) {
-				continue
-			}
 			_, _, notes, _ := store.Fold(l.events)
 			all = append(all, notes...)
 		}
