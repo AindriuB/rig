@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,5 +51,17 @@ func TestInteractiveTimeout(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("took %v", d)
+	}
+}
+
+func TestInteractiveStaysInParentProcessGroup(t *testing.T) {
+	var out bytes.Buffer
+	code, err := Interactive(context.Background(), Options{Stdout: &out}, "sh", "-c", "ps -o pgid= -p $$")
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v", code, err)
+	}
+	got := strings.TrimSpace(out.String())
+	if want := strconv.Itoa(syscall.Getpgrp()); got != want {
+		t.Fatalf("child pgid %q, want parent's %q", got, want)
 	}
 }

@@ -109,8 +109,12 @@ func Run(ctx context.Context, o Options, name string, args ...string) (Result, e
 // (default os.Stdin), Options.Stdout (default os.Stdout) and Options.Stderr
 // (default os.Stderr). It returns the program's exit code. A non-zero exit is
 // not an error here; the caller decides what it means. A missing program
-// returns ErrNotFound and a passed deadline ErrTimeout, with the program and
-// everything it started killed.
+// returns ErrNotFound and a passed deadline ErrTimeout.
+//
+// The program stays in rig's own process group, so it is in the terminal's
+// foreground group: it can read the tty and receives Ctrl-C itself. For that
+// reason, on a deadline or cancel only the direct child is killed, not
+// anything it started.
 func Interactive(ctx context.Context, o Options, name string, args ...string) (int, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -137,7 +141,7 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 		cmd.Stderr = o.Stderr
 	}
 	cmd.WaitDelay = waitDelay
-	killTree(cmd)
+	cmd.Cancel = func() error { return cmd.Process.Kill() }
 
 	err = cmd.Run()
 	code := 0
