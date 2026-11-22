@@ -539,3 +539,32 @@ func TestLogoutSkipsAStoreThatCannotOpen(t *testing.T) {
 		t.Fatal("file entry kept")
 	}
 }
+
+type failDelStore struct{ memStore }
+
+func (s *failDelStore) Delete(context.Context, string) error {
+	return errors.New("secret-tool clear: no Secret Service")
+}
+
+func TestLogoutSkipsAStoreWhoseDeleteFailsWhenEntryClearedElsewhere(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no file store on windows")
+	}
+	e := newLoginEnv(t)
+	e.a.secrets = func(kind string) (secret.Store, error) {
+		if kind == storeKeychain {
+			return &failDelStore{}, nil
+		}
+		return e.stores[kind], nil
+	}
+	e.stores[storeFile].m["jira:acme.atlassian.net"] = secret.Secret{User: "u", Token: marker}
+	if code := e.run("logout", "jira", "--url", "https://acme.atlassian.net"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if len(e.stores[storeFile].m) != 0 {
+		t.Fatal("file entry kept")
+	}
+	if !strings.Contains(e.err.String(), "no Secret Service") {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+}

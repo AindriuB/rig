@@ -170,7 +170,8 @@ func (a *app) logout(ctx context.Context, args []string) int {
 		return a.fail("logout", "%v", err)
 	}
 	account := accounts[0]
-	failed := false
+	var failures []string
+	cleared := false
 	for _, kind := range storeKinds() {
 		st, err := a.secrets(kind)
 		if err != nil {
@@ -179,11 +180,22 @@ func (a *app) logout(ctx context.Context, args []string) int {
 			continue
 		}
 		if err := st.Delete(ctx, account); err != nil {
-			fmt.Fprintf(a.stderr, "rig logout: %s: %v\n", kind, err)
-			failed = true
+			failures = append(failures, fmt.Sprintf("%s: %v", kind, err))
+			continue
+		}
+		cleared = true
+	}
+	// A store that fails to delete is a warning once another store has
+	// cleared the entry: the failing one (a keychain with no Secret Service)
+	// cannot be told apart from one that never held it.
+	for _, f := range failures {
+		if cleared {
+			fmt.Fprintf(a.stderr, "rig logout: skipped the %s\n", f)
+		} else {
+			fmt.Fprintf(a.stderr, "rig logout: %s\n", f)
 		}
 	}
-	if failed {
+	if len(failures) > 0 && !cleared {
 		return 2
 	}
 	fmt.Fprintf(a.stdout, "Logged out of %s\n", strings.TrimPrefix(account, "jira:"))
