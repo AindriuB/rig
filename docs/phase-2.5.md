@@ -26,15 +26,36 @@ keychain unless the user explicitly chooses a file.* See Q9.
 
 ## Config
 
-### Files and precedence
+### Files, scopes and precedence
 
-| Scope | File |
-|---|---|
-| global | `~/.rig/config.json` (`%USERPROFILE%\.rig\config.json` on Windows) |
-| local | `<repo>/.rig/config.json`, `<repo>` being the main checkout's root, so worktrees share it |
+An organisation's choices, such as Jira as the tracker, are the same across
+its projects, so **the global file is the main place for settings**. What
+differs between projects, such as the Jira project key, goes in a section of
+the global file keyed by the repository. A file in the project is only a
+private override for one clone, and is never committed.
 
-A key is looked up local, then global, then the built-in default. JSON
-matches `.claude/rig.json` and needs only the standard library.
+| Scope | Where | For |
+|---|---|---|
+| `--global` | `~/.rig/config.json` (`%USERPROFILE%\.rig\config.json` on Windows), top level | the organisation's forge and tracker |
+| `--repo` | the same file, under `repos."<repo key>"` | values that differ per project: the tracker project key |
+| `--local` | `<repo>/.rig/config.json`, `<repo>` being the main checkout's root, so worktrees share it | a private override for this clone only |
+
+The **repo key** is the `origin` remote normalised to `host/path` without
+`.git` or a user: `git@github.com:acme/rig.git` and
+`https://github.com/acme/rig` are both `github.com/acme/rig`. So every clone
+and worktree of a repository finds the same `--repo` section, a fresh clone
+needs no setup, and backing up one file keeps all of it (see Q20).
+A repository with no `origin` has no repo key; `--repo` is then exit 2.
+
+A key is looked up `--local`, then `--repo`, then `.claude/rig.json` for the
+two keys it holds (it is specific to the project, so it beats the global
+file), then `--global`, then the built-in default.
+JSON matches `.claude/rig.json` and needs only the standard library.
+
+**The project file is not committed.** The first time rig writes
+`<repo>/.rig/`, it adds `/.rig/` to `.git/info/exclude`, which git reads but
+never commits, rather than editing the tracked `.gitignore`. That is the
+repository's common directory, so it covers every worktree.
 
 Keys are dotted names on an allow-list, and values are checked when they are
 set and when they are read. `rig config set` refuses an unknown key or a bad
@@ -49,14 +70,13 @@ Two settings vary independently, so they are two sections:
 - **tracker**: where the human-facing record of a task lives. A GitHub
   repository can track its work in Jira.
 
-| Key | Values | Default | In the project file |
+| Key | Values | Default | Usual scope |
 |---|---|---|---|
-| `forge.kind` | `github`, `gitlab` | detected from the `origin` host | yes |
-| `forge.host` | a host name | the `origin` host | yes |
-| `tracker.kind` | `local`, `jira`, `github`, `gitlab` | `local` | yes |
-| `tracker.url` | `https://…`; required for `jira`, and for `github`/`gitlab` on a self-hosted host | none | yes |
-| `tracker.project` | Jira: a project key (`[A-Z][A-Z0-9]+`); GitHub: `owner/name`; GitLab: `group/…/name` | `local`: none; `github`/`gitlab`: the forge repository | yes |
-| `project.id` | a ULID, written by rig the first time a project-scoped login needs it | none | yes; never set by hand |
+| `forge.kind` | `github`, `gitlab` | detected from the `origin` host | `--global`, or `--repo` for an exception |
+| `forge.host` | a host name | the `origin` host | `--global` |
+| `tracker.kind` | `local`, `jira`, `github`, `gitlab` | `local` | `--global` |
+| `tracker.url` | `https://…`; required for `jira`, and for `github`/`gitlab` on a self-hosted host | none | `--global` |
+| `tracker.project` | Jira: a project key (`[A-Z][A-Z0-9]+`); GitHub: `owner/name`; GitLab: `group/…/name` | `local`: none; `github`/`gitlab`: the forge repository | `--repo` |
 
 `tracker.kind = local` means rig's own store from phase 2: tasks live in
 `refs/rig/` and nowhere else. It is what "plain files" becomes once rig
@@ -64,25 +84,27 @@ holds the state: no service, nothing to log in to. The kit's markdown
 `docs/plan/tasks` files are not a tracker kind; they are what the kit uses
 without rig, and phase 3's importer moves them into the store (see Q17).
 
-A project file that tracks in Jira:
+A global file for an organisation on GitHub that tracks in Jira:
 
 ```json
 {
   "forge":   { "kind": "github" },
-  "tracker": { "kind": "jira", "url": "https://acme.atlassian.net", "project": "RIG" },
-  "project": { "id": "01JDB3V6K9F2W8Q0Y4T7M1N5ZR" }
+  "tracker": { "kind": "jira", "url": "https://acme.atlassian.net" },
+  "repos": {
+    "github.com/acme/rig":     { "tracker": { "project": "RIG" } },
+    "github.com/acme/billing": { "tracker": { "project": "BILL" } }
+  }
 }
 ```
 
-Every key above is safe to commit. **No key holds an account or a secret.**
-Which account you use on a site, and its token, are stored together in the
-keychain entry a login creates (see Login), so neither config file can ever
-contain one. Any key may also be set in the global file, as your personal
-default for projects that do not set it.
+`rig config set tracker.project RIG --repo` in a clone of `acme/rig` writes
+the `repos` entry.
 
-**The project file is meant to be committed** (see Q18), so the whole team
-shares the forge and tracker choice. That is safe because no key in it can
-hold a secret, by construction rather than by a `.gitignore`.
+**No key holds an account or a secret, in any scope.** With the project file
+no longer committed, the risk that rule guarded against is smaller, but a
+`.rig/` file is still one `git add -f` away from a commit and is copied by
+every backup and sync tool. Tokens and the accounts they belong to stay in
+the keychain entry a login creates (see Login and Q18).
 
 **With no config at all**, rig behaves as today: the forge is detected from
 `origin`, and the tracker is `local`.
@@ -99,7 +121,7 @@ for it, `.claude/rig.json`. If `rig config set` could write it, or a new file
 could hold it, an agent could widen pushes with one allowed command. So it
 stays only in `.claude/rig.json`, rig never writes that file, and `.rig/`
 cannot set it. `forge` and `host` in `.claude/rig.json` keep working, read as
-`forge.kind` and `forge.host`, and win over `.rig/config.json` (see Q10).
+`forge.kind` and `forge.host`, above `--global` and below `--repo` (see Q10).
 
 ### How the tracker relates to the store
 
@@ -130,14 +152,14 @@ kind until phase 4. Nothing in phase 2's formats has to change for this.
 
 | Command | What it does | Exit codes |
 |---|---|---|
-| `rig config get <key> [--global\|--local] [--json]` | Prints the value in effect, or in one scope. | 0; 1 not set; 2 error or unknown key |
-| `rig config set <key> <value> [--global\|--local]` | Sets it. Default `--local`; outside a repository, `--global` is required. | 0; 2 |
-| `rig config unset <key> [--global\|--local]` | Removes it. Removing a key that is not set is exit 0. | 0; 2 |
-| `rig config list [--global\|--local] [--show-origin] [--json]` | Every key in effect. | 0; 2 |
+| `rig config get <key> [--global\|--repo\|--local] [--json]` | Prints the value in effect, or in one scope. | 0; 1 not set; 2 error or unknown key |
+| `rig config set <key> <value> --global\|--repo\|--local` | Sets it. The scope is required (see Q12). | 0; 2 |
+| `rig config unset <key> --global\|--repo\|--local` | Removes it. Removing a key that is not set is exit 0. | 0; 2 |
+| `rig config list [--global\|--repo\|--local] [--show-origin] [--json]` | Every key in effect. | 0; 2 |
 
 `--json`: `get` gives `{key, value, scope}`; `list` gives an array of
-`{key, value, scope}`, where `scope` is `global`, `local`, `rig.json` or
-`default`. Writes go to a temporary file and are renamed into place, so a
+`{key, value, scope}`, where `scope` is `local`, `repo`, `global`,
+`rig.json` or `default`. Writes go to a temporary file and are renamed into place, so a
 crash never leaves half a file.
 
 ## Login
@@ -153,12 +175,11 @@ crash never leaves half a file.
 | Linux | Secret Service | `secret-tool store`, which reads the secret from stdin |
 
 Entries use service `rig` and account `<service>:<host>` for a global login,
-or `<service>:<host>:<project.id>` for a project login. The entry's secret is
+or `<service>:<host>:<repo key>` for a login used by one repository only. The entry's secret is
 `{"user": …, "token": …}`: the account and its token are kept together, which
 is why no config key names an account. Project scope is a
 key in the keychain, never a file in the repository, so `git add .` cannot
-pick up a token. The project id lives in `.rig/config.json` and survives the
-repository moving.
+pick up a token.
 
 **A file, only when asked:** `--store file` writes
 `~/.rig/credentials.json` with mode 0600, and refuses if the file or
@@ -188,8 +209,8 @@ Since nothing secret is ever written under the repository, rig has no
 |---|---|---|
 | `rig login` | Logs in to this project's forge and, unless `tracker.kind` is `local`, its tracker, each as below. | 0; 1 if either login failed; 2 |
 | `rig login github\|gitlab` | If `gh auth status` (or `glab`) says logged in for the host, prints that and stops. Otherwise runs `gh auth login` (`glab auth login`) on the terminal. rig stores nothing. | 0; 1 the tool's login failed; 2 |
-| `rig login jira [--url <site>] [--user <email>] [--global\|--local] [--store keychain\|file]` | The site is `--url`, else `tracker.url`. Prompts for the user if `--user` is absent, then reads the token, checks both with `GET <site>/rest/api/3/myself`, and stores them in one keychain entry. Writes no config, except `project.id` the first time a `--local` login needs it. Default `--global`. | 0; 1 Jira rejected the token, nothing stored; 2 |
-| `rig logout jira [--url <site>] [--global\|--local]` | Deletes the keychain entry or file entry for the site. | 0, also when already logged out; 2 |
+| `rig login jira [--url <site>] [--user <email>] [--repo] [--store keychain\|file]` | The site is `--url`, else `tracker.url`. Prompts for the user if `--user` is absent, then reads the token, checks both with `GET <site>/rest/api/3/myself`, and stores them in one keychain entry. Writes no config. `--repo` makes the login apply to this repository only; the default is every repository. | 0; 1 Jira rejected the token, nothing stored; 2 |
+| `rig logout jira [--url <site>] [--repo]` | Deletes the keychain entry or file entry for the site. | 0, also when already logged out; 2 |
 | `rig logout github\|gitlab` | Does nothing and prints the `gh auth logout` (`glab`) command, because that login belongs to `gh` and every other tool that uses it. | 2 |
 | `rig login status [--json]` | Each known service: logged in or not, as whom, which scope and store. Never the token. Checks each with one API or `gh`/`glab` call. | 0; 2 |
 
@@ -221,9 +242,14 @@ nothing at P2 or above, a `task/` branch and a pull request, not merged.
 ### Wave 1 (can run alongside phase 2)
 
 **10 config-layers** — owns `internal/config/**`. Depends on: none.
-- AC1 Lookup order local → global → default, with `.claude/rig.json`'s
-  `forge` and `host` read as `forge.kind` and `forge.host` and winning; table
-  test over every combination.
+- AC1 Lookup order local → repo → `.claude/rig.json` (its `forge` and `host`
+  read as `forge.kind` and `forge.host`) → global → default; table test
+  over every combination.
+- AC8 The repo key normalises ssh, https and `.git` forms of one remote to
+  the same string; no `origin` makes `--repo` an error.
+- AC9 The first write to `<repo>/.rig/` adds `/.rig/` to
+  `.git/info/exclude` once, in the common directory, and never touches
+  `.gitignore`; `git status --porcelain` is unchanged after it.
 - AC6 Each key's values are checked on `Set` and on load: `forge.kind`,
   `tracker.kind` enums; `tracker.url` https only; `tracker.project` by kind.
   With no files, `tracker.kind` is `local`.
@@ -267,7 +293,7 @@ Depends on: none.
   and the references; a 401 is exit 1 and stores nothing.
 - AC3 No token in stdout, stderr, config files or any argument list a stub
   sees (a test greps for a marker token).
-- AC4 `--local` writes `project.id` once and keys the secret by it.
+- AC4 `--repo` keys the secret by the repo key and writes no config file.
 - AC6 `rig login` with no service logs in to the forge, then the tracker
   unless it is `local`; `rig login jira` takes the site from `tracker.url`.
 - AC5 `rig logout github` is exit 2 and prints the `gh auth logout` command.
@@ -300,17 +326,19 @@ no CLI, in the keychain by default; GitHub and GitLab stay with `gh` and
 `glab`.*
 
 **Q10. `.claude/rig.json`.** *Recommend: keep it; it alone holds
-`pushPrefixes`, rig never writes it, and it wins over `.rig/` for `forge` and
-`host`. Retiring it would mean moving the kit's guard to `.rig/` first.*
+`pushPrefixes`, rig never writes it, and for `forge` and `host` it sits
+between `--repo` and `--global`. Retiring it would mean moving the kit's guard to `.rig/` first.*
 
 **Q11. Format.** JSON objects give the `forge` and `tracker` sections an
 INI or TOML file would, with only the standard library, and match
 `.claude/rig.json`. *Recommend: JSON, `config.json`, dotted keys on an
 allow-list.*
 
-**Q12. Default scope.** `rig config set` defaults to `--local`, like git;
-`rig login jira` defaults to `--global`, since one Jira account usually
-serves many projects. *Recommend: as stated.*
+**Q12. Default scope.** With three scopes, any default is wrong for some
+keys: `tracker.kind` belongs in `--global`, `tracker.project` in `--repo`.
+*Recommend: `rig config set` and `unset` require a scope; `get` and `list`
+show the value in effect. A login applies to every repository unless
+`--repo` is given.*
 
 **Q13. First dependency.** Reading without echo needs `golang.org/x/term`
 (the Go team's module), or about 60 lines of `stty` and `SetConsoleMode`
@@ -335,12 +363,21 @@ state is in git, needs no service, and does not conflict on merge. The
 kit's markdown task files are not a kind rig reads; phase 3 imports them.
 *Recommend: these four, default `local`.*
 
-**Q18. Commit the project file.** *Recommend: yes. `.rig/config.json` holds
-the forge, the tracker and `project.id`, all safe to share; no key can hold
-an account or secret, so committing it is safe by construction.*
+**Q18. Secrets in config, now that nothing is committed.** *Recommend:
+keep the rule that no config key holds an account or a token in any scope;
+tokens stay in the keychain. An uncommitted file is still one `git add -f`
+from a commit and is copied by backups.*
 
 **Q19. The store and the tracker.** *Recommend: the store holds the loop's
 state under every tracker kind, and `rig task`/`rig next` never go through
 the tracker. Phase 4 adds the `Tracker` port above, an `issue` field on a
 task and `rig task new --issue <key>`; phase 2 and 2.5 only validate
 `tracker.kind`.*
+
+**Q20. Where per-project values go.** Three options: a `.rig/` file in each
+clone, which a fresh clone or a deleted one loses; a section of the global
+file keyed by the repository's remote, which every clone and worktree finds;
+or deriving the value from the repository or branch name, which breaks as
+soon as the names do not match the Jira key. *Recommend: the global file,
+keyed by the repo key (`--repo`), with `.rig/` as a private per-clone
+override above it.*
