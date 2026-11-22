@@ -250,8 +250,8 @@ Jira call in phase 2.5; reading issues is phase 4's tracker adapter.
 
 ```
 internal/config/          layered config: rig.json, global, local; key allow-list; atomic writes
-internal/secret/          port: Get, Set, Delete by (service, account)
-internal/secret/keychain_darwin.go, wincred_windows.go, secretservice_linux.go, file.go
+internal/secret/          port: Get, Set, Delete by account, under the fixed service "rig"
+internal/secret/keychain_darwin.go, keychain_windows.go, keychain_linux.go, file.go
 internal/tty/             ReadSecret: no echo on a terminal, one line otherwise
 internal/proc/            gains an interactive mode with the terminal attached, for `gh auth login`
 internal/auth/jira/       the /myself check

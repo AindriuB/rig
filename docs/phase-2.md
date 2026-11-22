@@ -497,7 +497,8 @@ nothing at P2 or above, and a pull request from `task/<name>`, not merged.
 **01 store-core** — owns `internal/store/*.go`, `internal/store/memstore/**`,
 `internal/store/storetest/**`. Depends on: none.
 - AC1 `Fold` turns events into a Task with state, shas, counters, fields and
-  findings; `$previous` resolves to the state before the last `*` move.
+  findings; `Previous` is the from-state of the latest transition, which is
+  what `$previous` resolves to.
 - AC2 Unknown `v` and `kind` are skipped and counted.
 - AC3 Short ids grow on collision; resolving id, short id or slug works; two
   matches is `ErrAmbiguous`.
@@ -508,7 +509,7 @@ nothing at P2 or above, and a pull request from `task/<name>`, not merged.
 
 **02 git-plumbing** — owns `internal/git/plumbing.go`, `internal/git/plumbing_test.go`.
 Depends on: none.
-- AC1 `WriteBlob`, `MakeTree`, `CommitTree`, `ReadRefs`, `CatFileBatch`,
+- AC1 `WriteBlob`, `MakeTree`, `CommitTree`, `ReadRefs`, `ReadBlobs`,
   `UpdateRef(ref, new, old)` work in a throwaway repo, as argument vectors.
 - AC2 A stale or present-when-expected-absent `old` gives `ErrRefMoved`.
 - AC3 None touches the index, `HEAD` or the working tree.
