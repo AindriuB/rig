@@ -288,6 +288,18 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 		return a.fail("login", "%v", err)
 	}
 	account := accounts[0]
+	if *o.url == "" {
+		if v, _ := layers.Get(config.KeyTrackerURL); v.Scope == config.ScopeLocal {
+			tracked, err := git.Repo{Dir: root}.LsFiles(ctx, []string{":(top,literal).rig/config.json"})
+			if err != nil {
+				return a.fail("login", "cannot tell whether .rig/config.json is committed: %v", err)
+			}
+			if len(tracked) > 0 {
+				fmt.Fprintln(a.stderr, "rig login: tracker.url comes from .rig/config.json, which is committed to this repository; pass --url or set it with rig config set tracker.url <url> --global (or --repo)")
+				return 2
+			}
+		}
+	}
 	// Name the site before any prompt: it may come from a committed project
 	// file, and the user should see where the token is about to go.
 	host, _ := jira.Host(site)
@@ -367,9 +379,17 @@ type forgeTarget struct {
 
 // forgeTargetFor picks the forge and host. service "" detects them from
 // config and the origin remote, as the adapters do; "github" or "gitlab"
-// forces the kind and takes the host from config or the remote only when
-// they belong to that kind, else the public host.
+// forces the kind. A forced kind takes forge.host or the remote's host only
+// when forge.kind names that kind, or, with forge.kind unset, when the host is
+// recognised as that kind or cannot be placed; else the kind's public host.
 func forgeTargetFor(layers *config.Layers, remote, service string) forgeTarget {
+	t, _ := forgeTargetSource(layers, remote, service)
+	return t
+}
+
+// forgeTargetSource is forgeTargetFor plus where the host came from:
+// "forge.host in <scope> config", "the origin remote" or "default".
+func forgeTargetSource(layers *config.Layers, remote, service string) (forgeTarget, string) {
 	str := func(key string) string {
 		v, _ := layers.Get(key)
 		s, _ := v.Value.(string)
@@ -394,15 +414,18 @@ func forgeTargetFor(layers *config.Layers, remote, service string) forgeTarget {
 			}
 		}
 	}
-	host := ""
+	host, source := "", "default"
 	remoteKind, remotePlaced := forge.KindForHost(remoteHost)
+	cfgHostKind, cfgHostPlaced := forge.KindForHost(cfgHost)
 	switch {
-	case cfgHost != "" && (cfgKind == "" || cfgKind == string(kind)):
+	case cfgHost != "" && (cfgKind == "" || cfgKind == string(kind)) && (service == "" || cfgKind != "" || !cfgHostPlaced || cfgHostKind == kind):
 		host = cfgHost
+		v, _ := layers.Get(config.KeyForgeHost)
+		source = "forge.host in " + v.Scope + " config"
 	case remoteHost != "" && (cfgKind == "" || cfgKind == string(kind)) && (remoteKind == kind || (!remotePlaced && (service == "" || cfgKind != ""))):
-		host = remoteHost
+		host, source = remoteHost, "the origin remote"
 	case remoteHost != "" && remotePlaced && remoteKind == kind:
-		host = remoteHost
+		host, source = remoteHost, "the origin remote"
 	case kind == forge.GitLab:
 		host = "gitlab.com"
 	default:
@@ -412,7 +435,7 @@ func forgeTargetFor(layers *config.Layers, remote, service string) forgeTarget {
 	if kind == forge.GitLab {
 		tool = "glab"
 	}
-	return forgeTarget{tool: tool, kind: kind, host: host}
+	return forgeTarget{tool: tool, kind: kind, host: host}, source
 }
 
 // checkForge runs `<tool> auth status --hostname <host>`. It reports whether the
@@ -448,7 +471,7 @@ func validHost(h string) error {
 
 // loginForge implements `rig login github|gitlab` and the forge half of `rig login`.
 func (a *app) loginForge(ctx context.Context, layers *config.Layers, remote, service string) int {
-	t := forgeTargetFor(layers, remote, service)
+	t, source := forgeTargetSource(layers, remote, service)
 	ok, user, err := a.checkForge(ctx, t)
 	if err != nil {
 		fmt.Fprintf(a.stderr, "rig login: %s: %v\n", t.tool, err)
@@ -462,6 +485,9 @@ func (a *app) loginForge(ctx context.Context, layers *config.Layers, remote, ser
 		}
 		return 0
 	}
+	// Name the host before the tool runs: the origin remote of a cloned
+	// repository can steer it.
+	fmt.Fprintf(a.stderr, "%s login for %s (from %s)\n", t.tool, t.host, source)
 	code, err := a.interactive(ctx, proc.Options{Dir: a.cwd}, t.tool, "auth", "login", "--hostname", t.host)
 	if err != nil {
 		fmt.Fprintf(a.stderr, "rig login: %s: %v\n", t.tool, err)
