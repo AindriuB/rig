@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -55,6 +56,35 @@ func PrepareCreate(n *NewTask, tasks []Task) (Task, error) {
 		n.Parent = p.ID
 	}
 	return Task{}, nil
+}
+
+// CheckRelink checks the stamped events of task id against the other tasks,
+// as a backend's Update must before it writes. An external event that links
+// an issue another task already links is an error satisfying
+// errors.Is(err, ErrLinked); linking the task to its own current issue is not
+// a conflict, and tasks may include the task itself.
+func CheckRelink(id string, events []Event, tasks []Task) error {
+	var others []Task
+	for _, e := range events {
+		if e.Kind != KindExternal {
+			continue
+		}
+		var d ExternalData
+		if json.Unmarshal(e.Data, &d) != nil || d.Kind == "" {
+			continue
+		}
+		if others == nil {
+			for _, t := range tasks {
+				if t.ID != id {
+					others = append(others, t)
+				}
+			}
+		}
+		if t, ok := Linked(&External{Kind: d.Kind, Host: d.Host, Key: d.Key}, others); ok {
+			return fmt.Errorf("%s %s is task %s: %w", d.Kind, d.Key, t.Short, ErrLinked)
+		}
+	}
+	return nil
 }
 
 // CheckParent reports whether task id may have parent as its parent, given

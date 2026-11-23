@@ -297,3 +297,41 @@ func testTrackerSyncNeedsLink(t *testing.T, s store.Store) {
 		t.Fatalf("after link and sync: %+v", got.External)
 	}
 }
+
+// An external event that links an issue another task already links is refused
+// with ErrLinked and writes nothing. Re-linking a task to its own issue is not
+// a conflict.
+func testRelinkRefusedWhenHeld(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	holder, err := s.CreateTask(ctx, linkedTask("holder", "AB-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := create(t, s, "other")
+	before := len(events(t, s, other.ID))
+	for _, d := range []store.ExternalData{
+		{Kind: "jira", Host: "j.example", Key: "AB-7"},
+		{Kind: "jira", Host: "J.EXAMPLE", Key: "ab-7"},
+	} {
+		_, err := s.Update(ctx, other.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+			e, err := store.NewEvent(store.KindExternal, d)
+			return []store.Event{e}, err
+		})
+		if !errors.Is(err, store.ErrLinked) {
+			t.Fatalf("link to a held issue %+v: err = %v, want ErrLinked", d, err)
+		}
+	}
+	if n := len(events(t, s, other.ID)); n != before {
+		t.Fatalf("a refused link wrote %d events", n-before)
+	}
+	if got, err := s.Task(ctx, "AB-7"); err != nil || got.ID != holder.ID {
+		t.Fatalf("Task(AB-7) = %+v, %v", got, err)
+	}
+	// The holder may write its own link again.
+	update(t, s, holder.ID, []string{store.KindExternal}, store.ExternalData{Kind: "jira", Host: "j.example", Key: "AB-7"})
+	// A free issue links.
+	got := update(t, s, other.ID, []string{store.KindExternal}, store.ExternalData{Kind: "jira", Host: "j.example", Key: "AB-8"})
+	if got.External == nil || got.External.Key != "AB-8" {
+		t.Fatalf("link to a free issue: %+v", got.External)
+	}
+}

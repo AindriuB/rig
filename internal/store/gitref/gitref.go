@@ -394,7 +394,10 @@ func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, er
 // Update appends the events next returns, given the task as it is now. If
 // the ref moves before the append lands, it reads the task again and calls
 // next again, up to 8 tries; then it returns a wrapped ErrConflict. Nothing
-// is written if next, or stamping its events, fails.
+// is written if next, or stamping its events, fails. An external event that
+// would link an issue another task links is refused (ErrLinked) under the
+// store lock, so that check is best-effort across a stale-lock break, as in
+// CreateTask; see lock.
 func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
@@ -420,6 +423,16 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		stamped, err := s.opts.Stamp(cur, events)
 		if err != nil {
 			return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+		}
+		if slices.ContainsFunc(stamped, func(e store.Event) bool { return e.Kind == store.KindExternal }) {
+			logs, err := s.readAll(ctx, TasksPrefix, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			tasks, _ := fold(logs)
+			if err := store.CheckRelink(task.ID, stamped, tasks); err != nil {
+				return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+			}
 		}
 		if len(stamped) == 0 {
 			return nil, "", nil

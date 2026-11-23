@@ -124,6 +124,9 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 	if err != nil {
 		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
 	}
+	if err := store.CheckRelink(id, stamped, s.tasks()); err != nil {
+		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+	}
 	s.logs[id] = append(slices.Clip(log), stamped...)
 	task, _, _, _ = store.Fold(s.logs[id])
 	return task, nil
