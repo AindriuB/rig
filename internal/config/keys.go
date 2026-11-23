@@ -18,6 +18,10 @@ const (
 	KeyTrackerProject = "tracker.project"
 	KeyWorkflow       = "workflow"
 	KeyPushPrefixes   = "push.prefixes"
+
+	KeyTrackerCommand       = "tracker.command"
+	KeyTrackerJiraAPI       = "tracker.jira.api"
+	KeyTrackerJiraEpicField = "tracker.jira.epicField"
 )
 
 // Tracker kinds.
@@ -26,7 +30,11 @@ const (
 	TrackerJira   = "jira"
 	TrackerGitHub = "github"
 	TrackerGitLab = "gitlab"
+	TrackerExec   = "exec"
 )
+
+// DefaultJiraAPI is the Jira REST dialect used when none is configured.
+const DefaultJiraAPI = "auto"
 
 // DefaultWorkflow is the workflow preset used when none is configured.
 const DefaultWorkflow = "basic"
@@ -34,6 +42,7 @@ const DefaultWorkflow = "basic"
 // keys is the allow-list, sorted.
 var keys = []string{
 	KeyForgeHost, KeyForgeKind, KeyPushPrefixes,
+	KeyTrackerCommand, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
 	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow,
 }
 
@@ -42,11 +51,12 @@ func Keys() []string { return slices.Clone(keys) }
 
 // globalOnly are the keys that widen what rig does without asking: read only
 // from the global file and never written by Set or Unset.
-var globalOnly = []string{KeyPushPrefixes, KeyWorkflow}
+var globalOnly = []string{KeyPushPrefixes, KeyTrackerCommand, KeyWorkflow}
 
 var (
 	credentialRE = regexp.MustCompile(`(?i)token|secret|password|apikey|key|auth|credential`)
 	hostRE       = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+	fieldRE      = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 	presetRE     = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	jiraRE       = regexp.MustCompile(`^[A-Z][A-Z0-9]+$`)
 	segmentRE    = `[A-Za-z0-9_.][A-Za-z0-9_.-]*`
@@ -89,8 +99,39 @@ func checkSettable(key string) error {
 	return checkKey(key)
 }
 
+// checkScope refuses tracker.command in every scope but the global file: it
+// is a program rig runs, and only the user's own global file may name one.
+func checkScope(scope, key string) error {
+	norm := strings.ToLower(strings.ReplaceAll(key, ".", ""))
+	if norm == "trackercommand" && scope != ScopeGlobal {
+		return fmt.Errorf("%q is a program rig runs: set it only with --global (~/.rig/config.json)", key)
+	}
+	return nil
+}
+
+// parseCommand checks tracker.command's value: a non-empty list of strings,
+// the first one the program.
+func parseCommand(v any) ([]string, error) {
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 {
+		return nil, fmt.Errorf("%s must be a non-empty list: the program, then its arguments", KeyTrackerCommand)
+	}
+	out := make([]string, 0, len(list))
+	for _, e := range list {
+		s, ok := e.(string)
+		if !ok || s == "" && len(out) == 0 {
+			return nil, fmt.Errorf("%s must be a list of strings starting with the program", KeyTrackerCommand)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // parseValue turns a decoded JSON value into the key's type and checks it.
 func parseValue(key string, v any) (any, error) {
+	if key == KeyTrackerCommand {
+		return parseCommand(v)
+	}
 	if key == KeyPushPrefixes {
 		list, ok := v.([]any)
 		if !ok || len(list) == 0 {
@@ -132,9 +173,17 @@ func checkValue(key, v string) error {
 		}
 	case KeyTrackerKind:
 		switch v {
-		case TrackerLocal, TrackerJira, TrackerGitHub, TrackerGitLab:
+		case TrackerLocal, TrackerJira, TrackerGitHub, TrackerGitLab, TrackerExec:
 		default:
-			return bad(`"local", "jira", "github" or "gitlab"`)
+			return bad(`"local", "jira", "github", "gitlab" or "exec"`)
+		}
+	case KeyTrackerJiraAPI:
+		if v != "auto" && v != "v2" && v != "v3" {
+			return bad(`"auto", "v2" or "v3"`)
+		}
+	case KeyTrackerJiraEpicField:
+		if !fieldRE.MatchString(v) {
+			return bad("a Jira field id such as customfield_10014")
 		}
 	case KeyTrackerURL:
 		u, err := url.Parse(v)

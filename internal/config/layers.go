@@ -64,6 +64,7 @@ type Layers struct {
 
 	local, repo, rigJSON, global map[string]any
 	warnings                     []string
+	urlBlocked                   error // why the local tracker.url was dropped, if it was
 }
 
 // Open reads ~/.rig/config.json (its top level and the repos section for
@@ -124,6 +125,7 @@ func Open(o Options) (*Layers, error) {
 			l.warnings = append(l.warnings, fmt.Sprintf(
 				"%s: %s is read only from the global file; ignored here", l.localPath, k))
 		}
+		l.vetLocalURL()
 		c, err := read(o.Root)
 		if err != nil {
 			return nil, err
@@ -154,7 +156,7 @@ func order(key string) []string {
 		// rig.json's pushPrefixes wins when present; a project .rig file
 		// never sets it.
 		return []string{ScopeRigJSON, ScopeRepo, ScopeGlobal, ScopeDefault}
-	case KeyWorkflow:
+	case KeyWorkflow, KeyTrackerCommand:
 		return []string{ScopeRepo, ScopeGlobal, ScopeDefault}
 	}
 	return []string{ScopeLocal, ScopeRepo, ScopeRigJSON, ScopeGlobal, ScopeDefault}
