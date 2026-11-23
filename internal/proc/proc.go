@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -32,10 +34,14 @@ const waitDelay = 2 * time.Second
 // Options configure one run. The zero value runs in the current directory
 // with the parent's environment, no stdin and no deadline of its own.
 type Options struct {
-	Dir     string
-	Env     []string      // added to the parent's environment
-	Timeout time.Duration // 0: only ctx limits the run
-	Stdin   io.Reader
+	Dir string
+	Env []string // added to the parent's environment
+	// ScrubTokens removes every RIG_*_TOKEN variable from the inherited
+	// environment before Env is applied. Names match case-insensitively on
+	// Windows and exactly elsewhere. A variable named in Env is still set.
+	ScrubTokens bool
+	Timeout     time.Duration // 0: only ctx limits the run
+	Stdin       io.Reader
 	// Stdout and Stderr redirect Interactive's output; Run ignores them.
 	Stdout io.Writer
 	Stderr io.Writer
@@ -73,9 +79,7 @@ func Run(ctx context.Context, o Options, name string, args ...string) (Result, e
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = o.Dir
-	if len(o.Env) > 0 {
-		cmd.Env = append(os.Environ(), o.Env...)
-	}
+	cmd.Env = buildEnv(o, os.Environ())
 	cmd.Stdin = o.Stdin
 	stdout, stderr := &capped{}, &capped{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -127,9 +131,7 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = o.Dir
-	if len(o.Env) > 0 {
-		cmd.Env = append(os.Environ(), o.Env...)
-	}
+	cmd.Env = buildEnv(o, os.Environ())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if o.Stdin != nil {
 		cmd.Stdin = o.Stdin
@@ -163,6 +165,31 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 		return code, nil
 	}
 	return code, fmt.Errorf("%s: %w", name, err)
+}
+
+// buildEnv returns the child's environment, or nil to inherit the parent's
+// unchanged (no Env and no scrub).
+func buildEnv(o Options, parent []string) []string {
+	if len(o.Env) == 0 && !o.ScrubTokens {
+		return nil
+	}
+	env := make([]string, 0, len(parent)+len(o.Env))
+	for _, kv := range parent {
+		if o.ScrubTokens && isTokenVar(kv) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, o.Env...)
+}
+
+// isTokenVar reports whether the "NAME=value" entry names a RIG_<X>_TOKEN.
+func isTokenVar(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	if runtime.GOOS == "windows" {
+		name = strings.ToUpper(name)
+	}
+	return len(name) > len("RIG__TOKEN") && strings.HasPrefix(name, "RIG_") && strings.HasSuffix(name, "_TOKEN")
 }
 
 type capped struct{ buf bytes.Buffer }
