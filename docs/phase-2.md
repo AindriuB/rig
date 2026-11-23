@@ -34,8 +34,9 @@ nothing in the phase-1 contract changes.
   `.gitignore`), never makes a commit on a branch, and never pushes its own
   refs unless asked (see "What rig leaves in a repository").
 - **Not in phase 2:** sharing the store between clones (`rig sync`, phase 4),
-  claims (phase 4), tracker adapters (phase 4), views and exports
-  (phase 3), and `rig config` and `rig login`, planned in
+  claims (phase 4), tracker adapters and Markdown views (phase 3, see
+  [phase-3.md](phase-3.md)), HTML views and a plan importer (later,
+  unscheduled), and `rig config` and `rig login`, planned in
   [phase-2.5.md](phase-2.5.md). `rig push`, `rig pr` and `rig status` do not
   change.
 
@@ -306,7 +307,7 @@ How a team fits rig to its own way of working:
 | Something to happen after a step | hooks |
 | Extra data on tasks and findings | typed `fields` |
 | Their own severities | `findings.severities` |
-| Their own tracker | phase 4's tracker port: `local`, `jira`, `github`, `gitlab`, and an `exec` tracker that speaks JSON over stdin/stdout to any program |
+| Their own tracker | phase 3's tracker port ([phase-3.md](phase-3.md)): `local`, `jira`, `github`, `gitlab`, and an `exec` tracker that speaks JSON over stdin/stdout to any program |
 | Their own harness | the CLI with `--json` and exit codes, phase 6's MCP server |
 
 ## Data model
@@ -480,9 +481,12 @@ promise (only `refs/rig/` and `<git common dir>/rig/`, append-only, unknown
 events skipped); `RIG_ACTOR` and `RIG_WORKFLOW`. `rig version` prints
 `0.3.0`, the two phases having shipped together.
 
-A workflow file's format is versioned on its own: a new optional key is
-compatible, and anything else raises the workflow format version, which rig
-reads alongside the old one.
+A workflow file's format is versioned on its own. A new optional key is
+compatible for the new rig, but 0.3.0 reads a workflow file strictly and
+rejects a key it does not know, so a file that uses a new key cannot be
+loaded by 0.3.0. Phase 3's `tracker` key is the first case (see
+[phase-3.md](phase-3.md)). Anything that changes the meaning of an existing key
+raises the workflow format version, which rig reads alongside the old one.
 
 ## Package layout
 
@@ -578,7 +582,7 @@ an outcome. Merging them would give every note a status nobody uses.*
 default push prefixes are `task` and `record`. Changing any of them is a
 major change. *Recommend: keep them through 0.x. Phase 2.5 adds the generic
 homes (`~/.rig/config.json`, `push.prefixes`); phase 3 gives `rig status`
-a store-based view; 1.0 drops the compatibility reads.*
+a store-based view (its last 0.4.0 task); 1.0 drops the compatibility reads.*
 
 **Q29. `rig verify` and a review loop's names.** *Recommend: no `rig verify`, no
 "round" or "review" in rig. Verifying is a transition with a `shaIsHead`
@@ -587,5 +591,6 @@ gate, a round is a counter, and the check is `rig task is <t> verified`.*
 **Q30. Reading and editing a task by hand.** *Recommend: `rig task show`
 prints Markdown for people, with `--findings`, `--notes` and `--history`;
 `rig task edit` opens title, body and fields in the user's editor. A
-Markdown export of the whole plan, for reading in an editor or a browser,
-is phase 3's views.*
+Markdown rendering of one task or the task list is phase 3's `--format
+markdown`; an export of the whole plan and HTML views are later,
+unscheduled.*

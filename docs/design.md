@@ -3,8 +3,9 @@
 Status: phase 1 was released as 0.1.0. Phases 2 and 2.5 ship together as
 0.3.0 and are described in [phase-2.md](phase-2.md) and
 [phase-2.5.md](phase-2.5.md); [workflows.md](workflows.md) documents the
-workflow file. Later phases are outlines, each planned separately before it is
-built.
+workflow file. Phase 3 (views and trackers, planned for 0.4.0 and 0.5.0) is
+planned in [phase-3.md](phase-3.md). Later phases are outlines, each planned
+separately before it is built.
 
 **Direction.** rig provides generic actions (tasks, findings, notes,
 workflow transitions, push, pull requests, CI waits, context briefs, config,
@@ -325,10 +326,11 @@ an example workflow file, shown in phase-2.md as the worked example.
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history |
 | 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
-| 3 | Views and exports: Markdown and HTML renderings of tasks, notes and history from the store, by template, for any workflow. Importers for existing plans (markdown `docs/plan` task files first) as programs the user runs |
-| 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs, and tracker adapters (`jira`, `github`, `gitlab`, and `exec` for any program) |
+| 3 | Planned, see [phase-3.md](phase-3.md). Views and trackers: `--format markdown` for `task show`, `task list` and `context`; task parent and external links; a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh` and (0.5.0) `report`; a store-based `rig status`. 0.4.0 then 0.5.0 |
+| 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
+| Later, unscheduled | HTML views and templates; an importer for `docs/plan` task files as a program the user runs. Tracker intake in phase 3 covers most of the importer's use |
 | 1.0 | Phase 1's compatibility parts (`.claude/rig.json`, `claude-handoff.md` and `docs/plan/tasks` reads, default push prefixes) move behind config or are dropped, as a major change |
 
 README, architecture, conventions, release notes and ADRs stay in the tree
