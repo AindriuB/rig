@@ -20,7 +20,7 @@ type Tracker struct {
 	statuses map[string]bool
 	rev      int
 
-	// Err, when set, is returned by Capabilities. Set it to ErrAuth or a
+	// Err, when set, is returned by every method. Set it to ErrAuth or a
 	// transient error to test how a caller handles a failing tracker.
 	Err error
 
@@ -62,7 +62,7 @@ func New(caps tracker.Caps, issues []tracker.Issue, statuses []string) *Tracker 
 	return t
 }
 
-// Capabilities returns the configured capabilities, or Err.
+// Capabilities returns the configured capabilities.
 func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
 	if t.Err != nil {
 		return tracker.Caps{}, t.Err
@@ -87,6 +87,9 @@ func (t *Tracker) get(key string) (*tracker.Issue, error) {
 
 // Issue returns a copy of the issue.
 func (t *Tracker) Issue(ctx context.Context, key string) (tracker.Issue, error) {
+	if t.Err != nil {
+		return tracker.Issue{}, t.Err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	is, err := t.get(key)
@@ -99,6 +102,9 @@ func (t *Tracker) Issue(ctx context.Context, key string) (tracker.Issue, error) 
 // Search returns issues carrying every label in q.Labels, up to q.Limit. The
 // fake ignores q.Text.
 func (t *Tracker) Search(ctx context.Context, q tracker.Query) ([]tracker.IssueRef, error) {
+	if t.Err != nil {
+		return nil, t.Err
+	}
 	if !t.caps.Search {
 		return nil, fmt.Errorf("search: %w", tracker.ErrUnsupported)
 	}
@@ -136,6 +142,9 @@ func hasAll(have, want []string) bool {
 
 // Children returns the issues whose Parent is key.
 func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef, error) {
+	if t.Err != nil {
+		return nil, t.Err
+	}
 	if !t.caps.Children {
 		return nil, fmt.Errorf("children: %w", tracker.ErrUnsupported)
 	}
@@ -156,6 +165,9 @@ func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef,
 
 // Comment records the comment and returns a generated id.
 func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (tracker.CommentResult, error) {
+	if t.Err != nil {
+		return tracker.CommentResult{}, t.Err
+	}
 	if !t.caps.Comment {
 		return tracker.CommentResult{}, fmt.Errorf("comment: %w", tracker.ErrUnsupported)
 	}
@@ -172,6 +184,9 @@ func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (t
 // SetStatus moves the issue to status and bumps its Rev when the status
 // changes. A status the fake was not given returns ErrNoTransition.
 func (t *Tracker) SetStatus(ctx context.Context, key, status string) (tracker.StatusResult, error) {
+	if t.Err != nil {
+		return tracker.StatusResult{}, t.Err
+	}
 	if !t.caps.SetStatus {
 		return tracker.StatusResult{}, fmt.Errorf("set status: %w", tracker.ErrUnsupported)
 	}

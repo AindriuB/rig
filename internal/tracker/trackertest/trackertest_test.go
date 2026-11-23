@@ -95,3 +95,31 @@ func TestFakeCapabilitiesErr(t *testing.T) {
 		t.Errorf("Capabilities = %v, want ErrAuth", err)
 	}
 }
+
+// A fake with Err set fails every method with that error, ahead of the
+// capability and key checks.
+func TestFakeErr(t *testing.T) {
+	caps := tracker.Caps{Children: true, Search: true, Comment: true, SetStatus: true}
+	transient := errors.New("connection reset")
+	for _, want := range []error{tracker.ErrAuth, transient} {
+		f := fake.New(caps, []tracker.Issue{{Key: "A-1", Status: "todo"}}, []string{"todo", "done"})
+		f.Err = want
+		ctx := t.Context()
+		calls := map[string]func() error{
+			"Capabilities": func() error { _, err := f.Capabilities(ctx); return err },
+			"Issue":        func() error { _, err := f.Issue(ctx, "A-1"); return err },
+			"Search":       func() error { _, err := f.Search(ctx, tracker.Query{}); return err },
+			"Children":     func() error { _, err := f.Children(ctx, "A-1"); return err },
+			"Comment":      func() error { _, err := f.Comment(ctx, "A-1", tracker.Comment{Body: "x"}); return err },
+			"SetStatus":    func() error { _, err := f.SetStatus(ctx, "A-1", "done"); return err },
+		}
+		for name, call := range calls {
+			if err := call(); !errors.Is(err, want) {
+				t.Errorf("%s with Err %v = %v", name, want, err)
+			}
+		}
+		if len(f.Comments) != 0 || len(f.StatusCalls) != 0 {
+			t.Errorf("a failing fake recorded calls: %v %v", f.Comments, f.StatusCalls)
+		}
+	}
+}
