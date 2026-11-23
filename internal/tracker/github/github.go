@@ -89,10 +89,10 @@ const features = "GraphQL-Features: sub_issues,issue_types"
 
 const issueQuery = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){` +
 	`number url title body state updatedAt labels(first:100){nodes{name}} assignees(first:1){nodes{login}} ` +
-	`issueType{name} parent{number url title issueType{name}}}}}`
+	`issueType{name} parent{number url title issueType{name} repository{nameWithOwner}}}}}`
 
 const childrenQuery = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){` +
-	`subIssues(first:100){nodes{number url title issueType{name}}}}}}`
+	`subIssues(first:100){nodes{number url title issueType{name} repository{nameWithOwner}}}}}}`
 
 // api runs `gh api [--hostname H] flags... endpoint`, with body as stdin.
 func (t *Tracker) api(ctx context.Context, body []byte, endpoint string, flags ...string) (proc.Result, error) {
@@ -193,10 +193,19 @@ type nameJSON struct {
 }
 
 type refJSON struct {
-	Number    int64     `json:"number"`
-	URL       string    `json:"url"`
-	Title     string    `json:"title"`
-	IssueType *nameJSON `json:"issueType"`
+	Number     int64     `json:"number"`
+	URL        string    `json:"url"`
+	Title      string    `json:"title"`
+	IssueType  *nameJSON `json:"issueType"`
+	Repository *struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"repository"`
+}
+
+// inRepo reports whether r belongs to this repository. A ref with no
+// repository is refused: a bare number would point at the wrong issue.
+func (t *Tracker) inRepo(r refJSON) bool {
+	return r.Repository != nil && strings.EqualFold(r.Repository.NameWithOwner, t.owner+"/"+t.name)
 }
 
 func (r refJSON) ref() tracker.IssueRef {
@@ -276,7 +285,7 @@ func (t *Tracker) Issue(ctx context.Context, key string) (tracker.Issue, error) 
 	if len(g.Assignees.Nodes) > 0 {
 		is.Assignee = g.Assignees.Nodes[0].Login
 	}
-	if g.Parent != nil {
+	if g.Parent != nil && t.inRepo(*g.Parent) {
 		p := g.Parent.ref()
 		is.Parent = &p
 	}
@@ -359,6 +368,9 @@ func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef,
 	}
 	refs := []tracker.IssueRef{}
 	for _, c := range g.SubIssues.Nodes {
+		if !t.inRepo(c) {
+			continue
+		}
 		refs = append(refs, c.ref())
 	}
 	return refs, nil
