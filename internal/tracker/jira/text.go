@@ -620,7 +620,7 @@ var (
 	wikiListRE    = regexp.MustCompile(`^([*#-]+)\s+(.*)$`)
 	wikiCodeRE    = regexp.MustCompile(`^\{(code|noformat)(?::([^}]*))?\}\s*(.*)$`)
 	wikiRuleRE    = regexp.MustCompile(`^-{4,}$`)
-	wikiMacroRE   =regexp.MustCompile(`^\{(color|anchor|panel|quote)(:[^}]*)?\}`)
+	wikiMacroRE   = regexp.MustCompile(`^\{(color|anchor|panel|quote)(:[^}]*)?\}`)
 )
 
 // wikiToMarkdown converts Jira wiki markup (a Server/Data Center description

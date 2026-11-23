@@ -1,0 +1,5 @@
+[
+  {"id": "summary", "name": "Summary", "custom": false, "orderable": true, "navigable": true, "searchable": true, "clauseNames": ["summary"], "schema": {"type": "string", "system": "summary"}},
+  {"id": "customfield_10014", "name": "Epic Link", "custom": true, "orderable": true, "navigable": true, "searchable": true, "clauseNames": ["cf[10014]", "Epic Link"], "schema": {"type": "any", "custom": "com.pyxis.greenhopper.jira:gh-epic-link", "customId": 10014}},
+  {"id": "customfield_10100", "name": "Acceptance Criteria", "custom": true, "schema": {"type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea", "customId": 10100}}
+]

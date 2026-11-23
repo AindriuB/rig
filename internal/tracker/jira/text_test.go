@@ -51,7 +51,7 @@ func TestADFToMarkdown(t *testing.T) {
 func TestADFToMarkdownEdges(t *testing.T) {
 	for in, want := range map[string]string{
 		`null`: "", ``: "", `"plain"`: "plain",
-		`{"type":"doc","content":[{"type":"mystery","content":[{"type":"text","text":"kept"}]}]}`: "kept",
+		`{"type":"doc","content":[{"type":"mystery","content":[{"type":"text","text":"kept"}]}]}`:                                                         "kept",
 		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":" b ","marks":[{"type":"strong"}]},{"type":"text","text":"x"}]}]}`: " **b** x",
 	} {
 		got, err := adfToMarkdown(json.RawMessage(in))
