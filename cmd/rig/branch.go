@@ -62,7 +62,7 @@ func prefixList(prefixes []string) string {
 
 // taskBranch resolves a task id to its branch, task/<id>-<slug>. The slug
 // comes from the task file docs/plan/tasks/<id>-<slug>.md in the main
-// checkout, the same lookup claude-kit's worktree scripts use; when the file is gone, as
+// checkout, the same lookup a worktree script would use; when the file is gone, as
 // after /record, the one local branch task/<id>-* is used instead.
 func taskBranch(ctx context.Context, repo git.Repo, id string) (string, error) {
 	if !taskIDRE.MatchString(id) || strings.Contains(id, "..") {

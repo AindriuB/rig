@@ -8,13 +8,12 @@ Phase 2 gives rig a store for work in progress and a small set of
 **generic actions** on it: tasks, findings, notes, transitions, "what next"
 and a context brief. rig does not know any particular loop. A **workflow
 file** says what states a task moves through, which transitions exist, and
-which gates guard them. claude-kit's plan → fanout → review → verify →
-record loop becomes one workflow file among others, owned by the kit.
+which gates guard them. A plan → fanout → review → verify → record loop
+is one workflow file among others, owned by the project that runs it.
 
 It shipped in **0.3.0** with phase 2.5 (the two phases were released together,
 so there was no 0.2.0): every change is a new command, flag or JSON field, and
-nothing in the phase-1 contract changes. Switching the kit over is a
-follow-up in the kit repository.
+nothing in the phase-1 contract changes.
 
 ## Goals and limits
 
@@ -25,8 +24,8 @@ follow-up in the kit repository.
   drive rig the same way: a CLI with `--json` and exit codes, and later the
   MCP server (phase 6). Nothing assumes a harness, its hooks or its agent
   roles. Who acted comes from `RIG_ACTOR`.
-- **Bring your own workflow.** A team with its own kit and repository
-  layout can adopt rig's actions without adopting claude-kit (see
+- **Bring your own workflow.** A team with its own tooling and repository
+  layout can adopt rig's actions without adopting anyone else's loop (see
   "Extension points").
 - **Rules become refusals.** A gate the workflow declares is checked by rig on
   every transition, so a caller cannot skip it by forgetting a step.
@@ -181,17 +180,17 @@ open → active → done         any → stopped,  stopped → (the state before
 No gates, no finding severities beyond `blocking` and `info`. Moving to
 `stopped` takes a reason. It exists so
 rig is useful with no setup, and so the tests have a workflow that is not
-claude-kit's.
+the review loop.
 
 ### Shape of a workflow file
 
-The kit's loop, written as a workflow, shows every feature. This file lives
-in the kit's repository, not rig's; rig's tests keep a copy as a fixture to
-prove the format can express it.
+An example review loop, written as a workflow, shows every feature. rig does
+not ship it; rig's tests keep it as a fixture to prove the format can express
+it.
 
 ```json
 {
-  "name": "claude-kit-loop",
+  "name": "review-loop",
   "version": 1,
   "initial": "planned",
   "branch": "task/{short}-{slug}",
@@ -298,7 +297,7 @@ longer has is reported by `rig workflow validate` and by `rig next` as
 
 ## Extension points
 
-How a team that does not use claude-kit fits rig to its own way of working:
+How a team fits rig to its own way of working:
 
 | Need | How |
 |---|---|
@@ -393,7 +392,7 @@ moved while the editor was open, rig exits 1 and writes nothing.
 State is not editable there: it changes only through `rig task move`, so
 gates still apply.
 
-`rig task is <t> verified` is what the kit's "was this verified at the
+`rig task is <t> verified` is what a review loop's "was this verified at the
 current head?" becomes: sha-bound states fall back on a new commit, so one
 exit code answers it.
 
@@ -517,124 +516,9 @@ asks the workflow whether the step is allowed on the state as it is now, so
 a gate is re-checked on every retry. The store knows no workflow; the
 workflow package knows no git.
 
-## Tasks
-
-Four waves. Tasks in a wave own disjoint files and run in parallel. Each ends
-with `go vet ./...` and `go test ./...` passing, one code-reviewer pass with
-nothing at P2 or above, and a pull request from `task/<name>`, not merged.
-
-### Wave 1
-
-**01 store-core** — owns `internal/store/*.go`, `internal/store/memstore/**`,
-`internal/store/storetest/**`. Depends on: none.
-- AC1 `Fold` turns events into a Task with state, shas, counters, fields and
-  findings; `Previous` is the from-state of the latest transition, which is
-  what `$previous` resolves to.
-- AC2 Unknown `v` and `kind` are skipped and counted.
-- AC3 Short ids grow on collision; resolving id, short id or slug works; two
-  matches is `ErrAmbiguous`.
-- AC4 Finding dedupe by default key.
-- AC5 ULIDs from one process sort in creation order (10 000 in one ms).
-- AC6 `Merge` of two logs is a commutative union ordered by `(seq, id)`.
-- AC7 memstore passes `storetest`, including notes with and without a task.
-
-**02 git-plumbing** — owns `internal/git/plumbing.go`, `internal/git/plumbing_test.go`.
-Depends on: none.
-- AC1 `WriteBlob`, `MakeTree`, `CommitTree`, `ReadRefs`, `ReadBlobs`,
-  `UpdateRef(ref, new, old)` work in a throwaway repo, as argument vectors.
-- AC2 A stale or present-when-expected-absent `old` gives `ErrRefMoved`.
-- AC3 None touches the index, `HEAD` or the working tree.
-- AC4 Works in a sha256 repository.
-
-### Wave 2
-
-**03 gitref-backend and wiring** — owns `internal/store/gitref/**`,
-`cmd/rig/store.go`, `cmd/rig/main.go`, and stubs
-`cmd/rig/{task,finding,note,workflow,next,context}.go`. Depends on: 01, 02.
-- AC1 gitref passes `storetest`.
-- AC2 Layout `refs/rig/tasks/<ULID>` and `refs/rig/notes` → commit →
-  `log.jsonl`; a test reads it back with plain `git cat-file`.
-- AC3 8 goroutines × 25 appends to one task give 200 events with contiguous
-  `seq`; a step made illegal by a racing writer is refused, not written.
-- AC4 Reading 200 tasks starts at most three git processes.
-- AC5 `main.go` dispatches the six commands; stubs exit 2 "not built yet".
-
-**04 workflow-engine** — owns `internal/workflow/**`. Depends on: 01.
-- AC1 Parses and validates the format above; `validate` reports each rule
-  broken with its JSON path.
-- AC2 Every built-in gate, passing and failing, in a table test.
-- AC3 `shaBound`/`onNewCommit` gives the effective state from a head sha.
-- AC4 `command` gates and hooks run as argument vectors with placeholders
-  substituted whole; a placeholder value with spaces or `;` stays one
-  argument; a hook failure is returned, not fatal; 30 s limit.
-- AC5 The `basic` preset is built in; `testdata/claude-kit-loop.json` (the
-  example above) validates and a test walks a task through it end to end.
-- AC6 No import of `internal/git` or any store backend.
-
-### Wave 3
-
-Each owns its file and `_test.go`, uses memstore and `basic` for logic, and
-the kit-loop fixture and gitref in one end-to-end test.
-
-**05 task-command** — owns `cmd/rig/task.go`, `cmd/rig/task_test.go`. Depends on: 03, 04.
-- AC1 Every subcommand and flag; unknown flag exit 2.
-- AC2 A gate refusal is exit 1 and writes no event.
-- AC3 After a new commit, a sha-bound task shows `state` = `onNewCommit` and
-  `rig task is` flips from 0 to 1.
-- AC4 `--json` field names match this document (golden test).
-- AC5 `rig task edit` with `EDITOR` set to a test program that rewrites the
-  file: changed fields become `field` events, unchanged ones write nothing,
-  a file that does not parse writes nothing and keeps the copy; without a
-  terminal and without `EDITOR` it is exit 2.
-
-**06 finding-and-note** — owns `cmd/rig/finding.go`, `cmd/rig/note.go` and
-their tests. Depends on: 03, 04.
-- AC1 `finding add/list/set` and `note add/list` with their flags; a
-  severity or field the workflow lacks is exit 2.
-- AC2 Duplicate finding is exit 0, `"duplicate": true`, no new event.
-- AC3 `--blocking` lists exactly what a `noOpenFindings` gate would count.
-
-**07 workflow-command** — owns `cmd/rig/workflow.go` and its test. Depends on: 03, 04.
-- AC1 `show` names the source (`preset`, file path, or `RIG_WORKFLOW`).
-- AC2 `validate` exit codes 0, 1, 2, and a task in an unknown state reported.
-
-**08 next-command** — owns `cmd/rig/next.go` and its test. Depends on: 03, 04.
-- AC1 Each task's transitions with gate results, from a store built in the test.
-- AC2 The ordering rule, six tasks in mixed states.
-- AC3 No forge call: the test's forge fails any call.
-
-**09 context-command** — owns `cmd/rig/context.go` and its test. Depends on: 03, 04.
-- AC1 The seven sections in order; three when the workflow has no `owns` field.
-- AC2 Never over budget unless `overBudget`; tested at 200, 1500, 20000.
-- AC3 `… <n> more` with the right `n`; two runs give identical bytes.
-- AC4 A marker string in an owned file is absent from the output.
-
-### Wave 4
-
-**10 docs-and-version** — owns `docs/design.md`, `README.md`,
-`cmd/rig/version.go`, `docs/phase-2.md`, `docs/workflows.md`. Depends on: 05 to 09.
-- AC1 `version` is `0.3.0` (phases 2 and 2.5 ship together).
-- AC2 The contract gains the additions above; no existing row changes.
-- AC3 `docs/workflows.md` documents the file format, every gate and hook,
-  `basic`, and the kit loop as a worked example.
-
-## What the kit changes to become one consumer
-
-A follow-up in the kit repository, not here:
-
-- Ship its loop as a workflow file (the example above, refined) and point
-  rig at it.
-- Replace parsing of `## Review round N` and `## Wave verified` headings with
-  `rig finding`, `rig task count` and `rig task is`; let rig's gates enforce
-  the round cap and the blocking-finding rule.
-- Write findings with `route` as a workflow field; read `rig next` for what
-  to run; build agent briefs from `rig context`.
-- Keep everything Claude-specific (agent roles, hooks, permission templates)
-  in the kit.
-
 ## Open questions
 
-Each has a recommendation; the plan above assumes it.
+Each has a recommendation; the design above assumes it.
 
 **Q1. Task short ids.** *Recommend: `t-` plus four or more ULID characters,
 growing on collision.*
@@ -662,10 +546,10 @@ so in the README.*
 **Q21. Sharing the store.** *Recommend: opt-in only, via an explicit
 `rig sync` or a config key, in phase 4.*
 
-**Q22. Where the kit's loop lives.** *Recommend: in the kit's repository as
-a workflow file. rig ships only `basic`, plus the loop as a test fixture
-proving the format can express it. rig carries no kit preset to keep in
-step.*
+**Q22. Where a review loop lives.** *Recommend: in the repository of the
+project that runs it, as a workflow file. rig ships only `basic`, plus an
+example loop as a test fixture proving the format can express it. rig
+carries no loop preset to keep in step.*
 
 **Q23. Gates: a fixed set plus `command`.** A fixed set keeps common rules
 fast and checkable by `rig next` without running programs; `command` covers
@@ -688,15 +572,15 @@ file is the escape, and it is the user's file.*
 has a status and can block; a note is an append-only record of a decision or
 an outcome. Merging them would give every note a status nobody uses.*
 
-**Q28. Phase 1's kit-specific parts.** `rig status` reads
+**Q28. Phase 1's compatibility parts.** `rig status` reads
 `claude-handoff.md` and `docs/plan/tasks`; `rig push` resolves a task id from
 `docs/plan/tasks`; `.claude/rig.json` sits under a Claude directory; the
 default push prefixes are `task` and `record`. Changing any of them is a
 major change. *Recommend: keep them through 0.x. Phase 2.5 adds the generic
 homes (`~/.rig/config.json`, `push.prefixes`); phase 3 gives `rig status`
-a store-based view; 1.0 drops the kit-specific reads.*
+a store-based view; 1.0 drops the compatibility reads.*
 
-**Q29. `rig verify` and the kit's names.** *Recommend: no `rig verify`, no
+**Q29. `rig verify` and a review loop's names.** *Recommend: no `rig verify`, no
 "round" or "review" in rig. Verifying is a transition with a `shaIsHead`
 gate, a round is a counter, and the check is `rig task is <t> verified`.*
 

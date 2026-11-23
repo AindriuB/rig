@@ -22,7 +22,7 @@ import (
 
 func loopWorkflow(t *testing.T) string {
 	t.Helper()
-	p, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "claude-kit-loop.json"))
+	p, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func ctxRepo(t *testing.T) string {
 	return repo
 }
 
-// ctxApp runs against the claude-kit-loop workflow, with out and err captured.
+// ctxApp runs against the review-loop workflow, with out and err captured.
 func ctxApp(t *testing.T, repo string, st store.Store) (*app, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -83,7 +83,7 @@ func ctxTask(t *testing.T, st store.Store, slug, body string, owns ...string) st
 	}
 	task, err := st.CreateTask(ctx, store.NewTask{
 		Slug: slug, Title: "Title of " + slug, Body: body, Fields: fields,
-		Initial: "planned", Workflow: store.WorkflowRef{Name: "claude-kit-loop", Version: 1},
+		Initial: "planned", Workflow: store.WorkflowRef{Name: "review-loop", Version: 1},
 	})
 	if err != nil {
 		t.Fatal(err)

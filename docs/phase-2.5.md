@@ -102,9 +102,9 @@ Two settings vary independently, so they are two sections:
 
 `tracker.kind = local` means rig's own store from phase 2: tasks live in
 `refs/rig/` and nowhere else. It is what "plain files" becomes once rig
-holds the state: no service, nothing to log in to. The kit's markdown
-`docs/plan/tasks` files are not a tracker kind; they are what the kit uses
-without rig, and phase 3's importer moves them into the store (see Q17).
+holds the state: no service, nothing to log in to. Markdown
+`docs/plan/tasks` files are not a tracker kind; they are how a project tracks
+tasks without rig, and phase 3's importer moves them into the store (see Q17).
 
 A global file for an organisation on GitHub that tracks in Jira:
 
@@ -268,102 +268,10 @@ internal/auth/jira/       the /myself check
 cmd/rig/config.go, login.go
 ```
 
-## Tasks
-
-Three waves. Same rules as phase 2: tests, one code-reviewer pass with
-nothing at P2 or above, a `task/` branch and a pull request, not merged.
-
-### Wave 1 (can run alongside phase 2)
-
-**11 config-layers** — owns `internal/config/**`. Depends on: none.
-- AC1 Lookup order local → repo → `.claude/rig.json` (its `forge` and `host`
-  read as `forge.kind` and `forge.host`) → global → default; table test
-  over every combination.
-- AC8 The repo key normalises ssh, https and `.git` forms of one remote to
-  the same string; no `origin` makes `--repo` an error.
-- AC9 Creating `<repo>/.rig/` appends `/.rig/` to `.gitignore` once
-  (creating the file if absent) and changes nothing else: a test compares
-  `git status --porcelain` before and after, and the only change is
-  `.gitignore`. A second `--local` set, a `.gitignore` that already ignores
-  `.rig/`, an existing `.rig/` with the line removed, and a tracked
-  `.rig/config.json` each leave `.gitignore` untouched.
-- AC10 `Set` refuses credential-like keys (`*.token`, `*.password`,
-  `*.secret`, `*.apikey`, `*.key`, `*.auth`, `*.credential`, any case) in
-  every scope, with a message naming `rig login`.
-- AC6 Each key's values are checked on `Set` and on load: `forge.kind`,
-  `tracker.kind` enums; `tracker.url` https only; `tracker.project` by kind.
-  With no files, `tracker.kind` is `local`.
-- AC7 `Tracker()` returns the effective tracker or an error naming the
-  missing key (`jira` without `tracker.url` or `tracker.project`).
-- AC2 `Set` and `Unset` refuse unknown keys, `pushPrefixes` in any spelling,
-  and `push.prefixes` and `workflow` in every scope; both are read only from
-  the global file, and a project `.rig/` that sets them is ignored with a
-  warning.
-- AC3 Writes are atomic (temp file and rename) and leave no temp file behind.
-- AC4 `HOME`/`USERPROFILE` come from an injected function so tests never touch
-  the real home.
-- AC5 Existing `Load` callers and tests pass unchanged.
-
-**12 secret-store** — owns `internal/secret/**`. Depends on: none.
-- AC1 The file store writes mode 0600, refuses a file or directory readable
-  by others, and round-trips set, get and delete.
-- AC2 The macOS adapter passes the token only on stdin: a test with a stub
-  `security` on `PATH` checks the argument list holds no token.
-- AC3 Same for `secret-tool` on Linux.
-- AC4 Real keychain tests run only when `RIG_TEST_KEYCHAIN=1`; CI skips them.
-- AC5 The Windows adapter builds on `windows` (CI runs `go vet` there).
-
-**13 tty-and-proc** — owns `internal/tty/**`, `internal/proc/**`, `go.mod`, `go.sum`.
-Depends on: none.
-- AC1 `ReadSecret` on a non-terminal reads one line and strips `\r\n`.
-- AC2 `proc.Interactive` runs a program with the terminal's stdin, stdout and
-  stderr, still from an argument vector.
-- AC3 The only new module dependency is `golang.org/x/term` (see Q13).
-
-### Wave 2 (after phase 2's task 03, which owns `main.go`)
-
-**14 config-command** — owns `cmd/rig/config.go`, `cmd/rig/config_test.go`,
-`cmd/rig/main.go`, and a stub `cmd/rig/login.go`. Depends on: 11, phase 2's 03.
-- AC1 Every `rig config` form and exit code above.
-- AC2 `rig config set pushPrefixes …`, `push.prefixes` and `workflow` are
-  exit 2 and write nothing.
-- AC3 `main.go` dispatches `config`, `login` and `logout`.
-
-**15 login-command** — owns `cmd/rig/login.go`, `cmd/rig/login_test.go`,
-`internal/auth/**`. Depends on: 12, 13, 14.
-- AC1 `rig login github` with a stub `gh` that reports logged in runs no
-  `gh auth login`; with one that reports logged out, it runs it.
-- AC2 `rig login jira` against an `httptest` server: a 200 stores the token
-  and the references; a 401 is exit 1 and stores nothing.
-- AC3 No token in stdout, stderr, config files or any argument list a stub
-  sees (a test greps for a marker token).
-- AC4 `--repo` keys the secret by the repo key and writes no config file.
-- AC6 `rig login` with no service logs in to the forge, then to Jira when
-  `tracker.kind` is `jira`; `rig login jira` takes the site from `tracker.url`.
-- AC5 `rig logout github` is exit 2 and prints the `gh auth logout` command.
-
-### Wave 3
-
-**16 docs-and-version** — owns `docs/design.md`, `README.md`,
-`cmd/rig/version.go`, `docs/phase-2.5.md`. Depends on: 14, 15.
-- AC1 `version` is `0.3.0`.
-- AC2 The design's "rig never holds a token" decision is replaced by the one
-  above, and the phase table gains 2.5.
-- AC3 The contract gains `rig config`, `rig login`, `rig logout` and
-  `rig login status`, as additions only.
-
-## The kit's side
-
-For the kit's follow-up, not this phase: its project settings template
-should make `rig config set`, `rig config unset`, `rig login` and
-`rig logout` ask first, as it does for `.claude/rig.json`. Nothing an agent
-runs unprompted should change where rig sends data or which credentials it
-uses.
-
 ## Open questions
 
 **Q8. Its own phase.** `rig config` and `rig login` share nothing with the
-store. *Recommend: phase 2.5, 0.3.0, wave 1 alongside phase 2.*
+store. *Recommend: phase 2.5, 0.3.0, built alongside phase 2.*
 
 **Q9. Holding tokens.** *Recommend: rig holds a token only for a service with
 no CLI, in the keychain by default; GitHub and GitLab stay with `gh` and
@@ -405,8 +313,8 @@ token.*
 
 **Q17. Tracker kinds.** `local` (rig's store, no service), `jira`, `github`
 (GitHub Issues), `gitlab` (GitLab issues). "Plain files" is `local`: the
-state is in git, needs no service, and does not conflict on merge. The
-kit's markdown task files are not a kind rig reads; phase 3 imports them.
+state is in git, needs no service, and does not conflict on merge. Markdown
+`docs/plan/tasks` files are not a kind rig reads; phase 3 imports them.
 *Recommend: these four, default `local`.*
 
 **Q18. Secrets in config.** A developer may commit `.rig/config.json`.
