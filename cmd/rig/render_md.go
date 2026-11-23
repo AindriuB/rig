@@ -116,9 +116,9 @@ func renderShowMD(s mdShow) string {
 		bullet("updated", mdTime(v.Updated))
 	}
 	section := func(name string) { b.WriteString("\n## " + name + "\n\n") }
-	if body := strings.Trim(strings.ReplaceAll(v.Body, "\r\n", "\n"), "\n"); body != "" {
+	if body := strings.Trim(strings.ReplaceAll(strings.ReplaceAll(v.Body, "\r\n", "\n"), "\r", "\n"), "\n"); body != "" {
 		section("Body")
-		b.WriteString(demoteHeadings(body) + "\n")
+		b.WriteString(quoteBody(body) + "\n")
 	}
 	if len(v.Fields) > 0 {
 		section("Fields")
@@ -219,13 +219,13 @@ var markdownLayout = mdLayout{
 }
 
 // markdownSections turns the gathered sections into Markdown items: Body
-// verbatim with its headings demoted, every other section as `- ` bullets.
+// as a blockquote, every other section as `- ` bullets.
 func markdownSections(secs []ctxSection) []ctxSection {
 	out := make([]ctxSection, len(secs))
 	for i, s := range secs {
 		items := make([]string, len(s.Items))
 		if s.Name == "Body" {
-			items = strings.Split(demoteHeadings(strings.Join(s.Items, "\n")), "\n")
+			items = strings.Split(quoteBody(strings.Join(s.Items, "\n")), "\n")
 			if len(s.Items) == 0 {
 				items = []string{}
 			}
@@ -261,78 +261,18 @@ func renderContextMD(o ctxOut) string {
 	return strings.Join(parts, "\n")
 }
 
-// demoteHeadings returns body with every ATX heading outside a code fence
-// moved to level 4 or deeper, so a body cannot add sections of its own.
-// Everything else is verbatim.
-func demoteHeadings(body string) string {
+// quoteBody returns body as a Markdown blockquote: line endings normalised to
+// LF, every line prefixed "> " (an empty one ">"). Nothing in it can then
+// open a section, a fence or an HTML block outside the quote.
+func quoteBody(body string) string {
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
 	lines := strings.Split(body, "\n")
-	var fence string // the opening fence while inside one
 	for i, l := range lines {
-		if fence != "" {
-			if closesFence(l, fence) {
-				fence = ""
-			}
-			continue
-		}
-		if f := opensFence(l); f != "" {
-			fence = f
-			continue
-		}
-		if n := atxLevel(l); n > 0 && n < 4 {
-			lines[i] = "####" + strings.TrimLeft(l, " ")[n:]
+		if l == "" {
+			lines[i] = ">"
+		} else {
+			lines[i] = "> " + l
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-// indentOK reports whether l starts with at most three spaces, and returns the
-// rest.
-func indentOK(l string) (string, bool) {
-	rest := strings.TrimLeft(l, " ")
-	return rest, len(l)-len(rest) <= 3
-}
-
-// opensFence returns the fence run (``` or ~~~, any length from 3) l opens, or
-// "".
-func opensFence(l string) string {
-	rest, ok := indentOK(l)
-	if !ok || rest == "" || (rest[0] != '`' && rest[0] != '~') {
-		return ""
-	}
-	n := len(rest) - len(strings.TrimLeft(rest, rest[:1]))
-	if n < 3 {
-		return ""
-	}
-	if rest[0] == '`' && strings.Contains(rest[n:], "`") {
-		return "" // a backtick fence's info string has no backtick
-	}
-	return rest[:n]
-}
-
-// closesFence reports whether l closes the fence opened by open: the same
-// character, at least as long, and nothing after it.
-func closesFence(l, open string) bool {
-	rest, ok := indentOK(l)
-	if !ok {
-		return false
-	}
-	run := strings.TrimLeft(rest, open[:1])
-	n := len(rest) - len(run)
-	return n >= len(open) && strings.TrimSpace(run) == ""
-}
-
-// atxLevel is the level of the ATX heading l is, or 0.
-func atxLevel(l string) int {
-	rest, ok := indentOK(l)
-	if !ok {
-		return 0
-	}
-	n := len(rest) - len(strings.TrimLeft(rest, "#"))
-	if n < 1 || n > 6 {
-		return 0
-	}
-	if n == len(rest) || rest[n] == ' ' || rest[n] == '\t' {
-		return n
-	}
-	return 0
 }

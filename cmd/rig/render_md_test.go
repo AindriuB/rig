@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,27 +81,52 @@ func TestFormatFlagExitCodes(t *testing.T) {
 	}
 }
 
-// AC3: headings are demoted outside fences only.
-func TestDemoteHeadings(t *testing.T) {
-	body := strings.Join([]string{
-		"# One", "## Two", "### Three", "#### Four", "###### Six", "#", "#hashtag", "####### seven",
-		"   ## indented ok", "    ## code block", "text # not heading",
-		"```go", "# in backtick fence", "## still", "```",
-		"~~~", "# in tilde fence", "```", "# a backtick line does not close a tilde fence", "~~~",
-		"````", "# inside long fence", "```", "# three do not close four", "````",
-		"``` not `closing", "# after a non-fence",
-		"## after",
-	}, "\n")
-	want := strings.Join([]string{
-		"#### One", "#### Two", "#### Three", "#### Four", "###### Six", "####", "#hashtag", "####### seven",
-		"#### indented ok", "    ## code block", "text # not heading",
-		"```go", "# in backtick fence", "## still", "```",
-		"~~~", "# in tilde fence", "```", "# a backtick line does not close a tilde fence", "~~~",
-		"````", "# inside long fence", "```", "# three do not close four", "````",
-		"``` not `closing", "#### after a non-fence",
-		"#### after",
-	}, "\n")
-	goldenEq(t, "demote", demoteHeadings(body), want)
+// AC3: a body is a blockquote, so nothing in it escapes into the document.
+func TestBodyContainment(t *testing.T) {
+	bodies := []string{
+		"# Evil",
+		"Evil\n===", "Also\n---",
+		"```\n# Evil\ntext",
+		"<!--\n# Evil", "<pre>\n# Evil",
+		"<div>\n```\n</div>\n\n# Evil",
+		"- ```\n  x\n  ```\n\n# Evil",
+		"intro\r# Evil\r",
+	}
+	// check asserts the lines from "## Body" up to next are all quoted and
+	// that next, and the heading after it, stand at column 0.
+	check := func(t *testing.T, md, next string) {
+		t.Helper()
+		lines := strings.Split(md, "\n")
+		at := slices.Index(lines, "## Body")
+		end := slices.Index(lines, next)
+		if at < 0 || end < at {
+			t.Fatalf("sections missing:\n%s", md)
+		}
+		for _, l := range lines[at+1 : end] {
+			if l != "" && !strings.HasPrefix(l, ">") {
+				t.Errorf("unquoted body line %q:\n%s", l, md)
+			}
+		}
+		if strings.Contains(md, "\r") {
+			t.Errorf("CR left in output: %q", md)
+		}
+	}
+	for _, body := range bodies {
+		v := fixedView()
+		v.Body = body
+		v.Fields = map[string]any{"owner": "ann"}
+		check(t, renderShowMD(mdShow{View: v}), "## Fields")
+
+		secs := []ctxSection{
+			{Name: "Header", Items: []string{"abc slug: T"}},
+			{Name: "Body", Items: strings.Split(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n"), "\n")},
+			{Name: "Findings", Items: []string{"f1 P1 x"}},
+		}
+		check(t, renderContextMD(fitBudgetIn(markdownLayout, "abc", 20000, markdownSections(secs))), "## Findings")
+	}
+	if got := quoteBody("a\n\nb\r\nc\rd"); got != "> a\n>\n> b\n> c\n> d" {
+		t.Errorf("quoteBody: %q", got)
+	}
 }
 
 func fixedView() workflow.TaskView {
@@ -153,12 +179,12 @@ func TestShowMarkdownGolden(t *testing.T) {
 
 ## Body
 
-intro
-
-#### Heading
-`+"```"+`
-# code
-`+"```"+`
+> intro
+>
+> # Heading
+> `+"```"+`
+> # code
+> `+"```"+`
 
 ## Fields
 
@@ -236,8 +262,8 @@ func TestContextMarkdownGolden(t *testing.T) {
 
 ## Body
 
-#### Big
-text
+> # Big
+> text
 
 ## Findings
 
@@ -265,8 +291,8 @@ text
 
 ## Body
 
-#### Big
-text
+> # Big
+> text
 
 ## Findings
 
@@ -296,7 +322,7 @@ func TestMarkdownLinkedTask(t *testing.T) {
 		t.Fatalf("show: %d", code)
 	}
 	show := out.String()
-	for _, want := range []string{"# Kid\n", "- parent: " + parent.Short + "\n", "- external: jira ENG-5 https://j.example/ENG-5 owned: title", "\n## Body\n\n#### Sneaky\nbody text\n"} {
+	for _, want := range []string{"# Kid\n", "- parent: " + parent.Short + "\n", "- external: jira ENG-5 https://j.example/ENG-5 owned: title", "\n## Body\n\n> # Sneaky\n> body text\n"} {
 		if !strings.Contains(show, want) {
 			t.Errorf("show lacks %q:\n%s", want, show)
 		}
@@ -316,7 +342,7 @@ func TestMarkdownLinkedTask(t *testing.T) {
 
 	code, md := ctxRun(t, a, out, child.Short, "--format", "markdown")
 	if code != 0 || !strings.Contains(md, "- parent: "+parent.Short+"\n") || !strings.Contains(md, "- external: jira ENG-5 https://j.example/ENG-5 owned: title") ||
-		!strings.Contains(md, "## Body\n\n#### Sneaky\nbody text\n") {
+		!strings.Contains(md, "## Body\n\n> # Sneaky\n> body text\n") {
 		t.Errorf("context:\n%s", md)
 	}
 }
