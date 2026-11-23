@@ -118,3 +118,23 @@ func TestWikiInlineLeavesSnakeCaseAndStars(t *testing.T) {
 		}
 	}
 }
+
+// 37-1: a list that switches kind keeps every item, one top-level list per run.
+func TestMarkdownToADFMixedListKinds(t *testing.T) {
+	b, _ := json.Marshal(markdownToADF("- a\n1. b"))
+	const want = `{"version":1,"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"a"}]}]}]},{"type":"orderedList","attrs":{"order":1},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"b"}]}]}]}]}`
+	if string(b) != want {
+		t.Errorf("got:  %s\nwant: %s", b, want)
+	}
+}
+
+// 37-2: a quote keeps the lists and headings inside it.
+func TestMarkdownToADFQuoteKeepsBlocks(t *testing.T) {
+	b, _ := json.Marshal(markdownToADF("> # Head\n> - item one"))
+	s := string(b)
+	for _, w := range []string{`"type":"blockquote"`, `"type":"heading"`, `"text":"Head"`, `"type":"bulletList"`, `"text":"item one"`} {
+		if !strings.Contains(s, w) {
+			t.Errorf("missing %s in %s", w, s)
+		}
+	}
+}

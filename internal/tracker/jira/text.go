@@ -531,7 +531,7 @@ func markdownToADF(md string) adfNode {
 			}
 			doc.Content = append(doc.Content, adfNode{Type: "blockquote", Content: inner})
 		case blockList:
-			doc.Content = append(doc.Content, adfListFrom(b.items))
+			doc.Content = append(doc.Content, adfListFrom(b.items)...)
 		}
 	}
 	if len(doc.Content) == 0 {
@@ -540,11 +540,16 @@ func markdownToADF(md string) adfNode {
 	return doc
 }
 
-// adfListFrom builds nested lists from flat items; items[0] sets the depth
-// the list starts at, which is 0 for a parsed block.
-func adfListFrom(items []listItem) adfNode {
-	list, _ := adfListAt(items, 0, items[0].depth)
-	return list
+// adfListFrom builds nested lists from flat items; each run of one list kind
+// becomes its own top-level list.
+func adfListFrom(items []listItem) []adfNode {
+	var lists []adfNode
+	for i := 0; i < len(items); {
+		var list adfNode
+		list, i = adfListAt(items, i, items[i].depth)
+		lists = append(lists, list)
+	}
+	return lists
 }
 
 func adfListAt(items []listItem, i, depth int) (adfNode, int) {
