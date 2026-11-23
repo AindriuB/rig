@@ -753,3 +753,13 @@ func TestTrackerJiraEnvTokenNeedsUserOnCloud(t *testing.T) {
 		t.Fatalf("v2: %+v, %v", spec, err)
 	}
 }
+
+// F5: an origin host that is an SSH alias falls back to the forge's default host.
+func TestTrackerRepoHostAlias(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "github"})
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@work-alias:acme/rig.git")
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
+		t.Fatalf("spec %+v, %v", spec, err)
+	}
+}

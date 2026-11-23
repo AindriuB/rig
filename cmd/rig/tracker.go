@@ -11,6 +11,7 @@ import (
 
 	authjira "github.com/AindriuB/rig/internal/auth/jira"
 	"github.com/AindriuB/rig/internal/config"
+	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/secret"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
@@ -164,7 +165,9 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		}
 		if key := layers.RepoKey(); key != "" {
 			h, path, _ := strings.Cut(key, "/")
-			if host == "" {
+			// As forgeKind does, a host that is not this forge's (an SSH
+			// alias, say) is not used: the forge's default host stands in.
+			if k, ok := forge.KindForHost(h); host == "" && ok && string(k) == spec.Kind {
 				host = h
 			}
 			if project == "" {
