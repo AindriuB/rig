@@ -44,6 +44,7 @@ type fakeIssue struct {
 	Type    string   `json:"type"`
 	Parent  int      `json:"parent"`
 	PR      bool     `json:"pr"`
+	Repo    string   `json:"repo"` // search only: the repository the item really belongs to; empty = this one
 }
 
 type fakeState struct {
@@ -231,7 +232,11 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 			if c.Type != "" {
 				typ = `{"name":` + jstr(c.Type) + `}`
 			}
-			items = append(items, fmt.Sprintf(`{"number":%s,"html_url":%s,"title":%s,"type":%s}`, k, jstr(issueURL(st, k)), jstr(c.Title), typ))
+			repoPath := st.Owner + "/" + st.Name
+			if c.Repo != "" {
+				repoPath = c.Repo
+			}
+			items = append(items, fmt.Sprintf(`{"number":%s,"html_url":%s,"repository_url":%s,"title":%s,"type":%s}`, k, jstr("https://github.com/"+repoPath+"/issues/"+k), jstr("https://api.github.com/repos/"+repoPath), jstr(c.Title), typ))
 		}
 		return reply(`{"total_count":` + strconv.Itoa(len(items)) + `,"items":[` + strings.Join(items, ",") + `]}`)
 	case strings.HasPrefix(endpoint, repo+"/issues/"):

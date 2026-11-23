@@ -310,6 +310,7 @@ func (t *Tracker) Search(ctx context.Context, q tracker.Query) ([]tracker.IssueR
 		Items []struct {
 			Number  int64     `json:"number"`
 			HTMLURL string    `json:"html_url"`
+			RepoURL string    `json:"repository_url"`
 			Title   string    `json:"title"`
 			Type    *nameJSON `json:"type"`
 			PR      *struct{} `json:"pull_request"`
@@ -318,9 +319,15 @@ func (t *Tracker) Search(ctx context.Context, q tracker.Query) ([]tracker.IssueR
 	if err := json.Unmarshal(res.Stdout, &out); err != nil {
 		return nil, fmt.Errorf("gh api search/issues: unreadable JSON: %w", err)
 	}
+	// A repo: qualifier in Q.Text is ORed with ours, so items of other
+	// repositories can come back; their numbers mean nothing here.
+	own := "/repos/" + t.owner + "/" + t.name
 	refs := []tracker.IssueRef{}
 	for _, it := range out.Items {
 		if it.PR != nil || len(refs) >= limit {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(strings.TrimRight(it.RepoURL, "/")), strings.ToLower(own)) {
 			continue
 		}
 		r := tracker.IssueRef{Key: strconv.FormatInt(it.Number, 10), URL: it.HTMLURL, Title: it.Title}

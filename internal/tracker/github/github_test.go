@@ -271,3 +271,23 @@ func TestSearchDefaultLimit(t *testing.T) {
 		t.Fatalf("len = %d, %v", len(got), err)
 	}
 }
+
+func TestSearchDropsOtherRepositories(t *testing.T) {
+	st := fakeState{Owner: "o", Name: "r", Issues: map[string]fakeIssue{
+		"1": {Title: "mine", State: "OPEN"},
+		"5": {Title: "theirs", State: "OPEN", Repo: "o/other"},
+		"7": {Title: "case", State: "OPEN", Repo: "O/R"},
+	}}
+	tr := newTracker(t, st)
+	got, err := tr.Search(ctx, tracker.Query{Text: "repo:o/other crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range got {
+		keys = append(keys, r.Key)
+	}
+	if strings.Join(keys, ",") != "1,7" {
+		t.Errorf("keys = %v, want [1 7]", keys)
+	}
+}
