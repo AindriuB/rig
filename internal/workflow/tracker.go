@@ -102,6 +102,9 @@ func (w *Workflow) validateTracker(add addFunc) {
 			add(path, "state %q is final; intake states cannot be", s)
 		}
 	}
+	if t.Map != nil && len(t.Map) == 0 {
+		add("tracker.map", "map is empty; leave it out for the default title and body")
+	}
 	seen := map[string]string{} // attribute -> first field
 	for _, f := range sortedKeys(t.Map) {
 		attr := t.Map[f]

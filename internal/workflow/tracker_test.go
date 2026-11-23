@@ -105,6 +105,29 @@ func TestTrackerMapTypeFit(t *testing.T) {
 	}
 }
 
+func TestTrackerEmptyMap(t *testing.T) {
+	empty := strings.Replace(trackerBase, `"map": {"title": "title", "body": "description", "acc": "acceptance", "tags": "labels", "prio": "priority"}`, `"map": {}`, 1)
+	w, err := Parse([]byte(empty))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range w.Validate() {
+		found = found || p.Path == "tracker.map"
+	}
+	if !found {
+		t.Errorf("empty map: no problem at tracker.map; got %v", w.Validate())
+	}
+	absent := strings.Replace(empty, `"map": {},`, ``, 1)
+	w, err = Parse([]byte(absent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := w.Validate(); len(ps) != 0 {
+		t.Errorf("absent map: problems %v", ps)
+	}
+}
+
 func TestTrackerUnknownKeyRefused(t *testing.T) {
 	for _, src := range []string{
 		`{"tracker": {"bogus": 1}}`,
