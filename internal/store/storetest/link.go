@@ -165,3 +165,44 @@ func testResolveByKey(t *testing.T, s store.Store) {
 		t.Fatalf("Task(ab-9) err = %v, want ErrAmbiguous", err)
 	}
 }
+
+// A link is unique by kind, host (any case) and key (any case); the host is
+// stored lower-cased and the key as the tracker gave it.
+func testLinkedCaseAndKind(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	first, err := s.CreateTask(ctx, linkedTask("one", "AB-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowKey := linkedTask("two", "ab-7")
+	if got, err := s.CreateTask(ctx, lowKey); !errors.Is(err, store.ErrLinked) || got.ID != first.ID {
+		t.Fatalf("key in another case = %+v, %v", got, err)
+	}
+	upHost := linkedTask("three", "AB-7")
+	upHost.External.Host = "J.EXAMPLE"
+	if got, err := s.CreateTask(ctx, upHost); !errors.Is(err, store.ErrLinked) || got.ID != first.ID {
+		t.Fatalf("host in another case = %+v, %v", got, err)
+	}
+	kind := linkedTask("four", "AB-7")
+	kind.External.Kind = "github"
+	k, err := s.CreateTask(ctx, kind)
+	if err != nil {
+		t.Fatalf("same host and key, other kind: %v", err)
+	}
+	if k.ID == first.ID {
+		t.Fatal("other kind returned the first task")
+	}
+	mixed := linkedTask("five", "CD-1")
+	mixed.External.Host = "Mixed.Example"
+	m, err := s.CreateTask(ctx, mixed)
+	if err != nil || m.External.Host != "mixed.example" || m.External.Key != "CD-1" {
+		t.Fatalf("created link = %+v, %v", m.External, err)
+	}
+	if got, _ := s.Task(ctx, m.ID); got.External.Host != "mixed.example" {
+		t.Fatalf("refolded host = %q", got.External.Host)
+	}
+	got := update(t, s, m.ID, []string{store.KindExternal}, store.ExternalData{Kind: "jira", Host: "UP.Example", Key: "CD-1"})
+	if got.External.Host != "up.example" {
+		t.Fatalf("external event host = %q", got.External.Host)
+	}
+}

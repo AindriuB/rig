@@ -25,13 +25,13 @@ func ExpandBranch(template, short, slug, id, key string) string {
 }
 
 // Linked returns the task among tasks linked to the same issue as ext: the
-// same kind, host and key.
+// same kind, host (any case) and key (any case, as Resolve matches it).
 func Linked(ext *External, tasks []Task) (Task, bool) {
 	if ext == nil {
 		return Task{}, false
 	}
 	for _, t := range tasks {
-		if x := t.External; x != nil && x.Kind == ext.Kind && x.Host == ext.Host && x.Key == ext.Key {
+		if x := t.External; x != nil && x.Kind == ext.Kind && strings.EqualFold(x.Host, ext.Host) && strings.EqualFold(x.Key, ext.Key) {
 			return t, true
 		}
 	}

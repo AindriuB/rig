@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Created returns the first event of a new task log, stamped with seq 1, a
@@ -30,7 +31,7 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 			return Event{}, errors.New("new task: external link has no kind or key")
 		}
 		d.External = &ExternalData{
-			Kind: x.Kind, Host: x.Host, Project: x.Project, Key: x.Key, URL: x.URL,
+			Kind: x.Kind, Host: strings.ToLower(x.Host), Project: x.Project, Key: x.Key, URL: x.URL,
 			Type: x.Type, Owned: x.Owned, ParentKey: x.ParentKey,
 		}
 		if n.Snapshot != nil {
@@ -111,10 +112,11 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 		case KindParent:
 			err = check(e, func(*ParentData) error { return nil })
 		case KindExternal:
-			err = check(e, func(d *ExternalData) error {
+			e.Data, err = rewrite(e, func(d *ExternalData) error {
 				if d.Kind == "" || d.Key == "" {
 					return errors.New("no kind or key")
 				}
+				d.Host = strings.ToLower(d.Host)
 				return nil
 			})
 		case KindTrackerSync:

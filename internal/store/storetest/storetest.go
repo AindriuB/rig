@@ -31,6 +31,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"TasksNewestFirst", testTasksNewestFirst},
 		{"LinkedTask", testLinkedTask},
 		{"LinkedRepeatWritesNothing", testLinkedRepeat},
+		{"LinkedCaseAndKind", testLinkedCaseAndKind},
 		{"ParentedTask", testParentedTask},
 		{"ParentUpdates", testParentUpdates},
 		{"BranchStamped", testBranchStamped},
