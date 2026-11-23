@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -270,6 +271,33 @@ func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo boo
 	return site, source, []string{global}, nil
 }
 
+// rigConfigCommitted reports whether the local config could have come from the
+// repository rather than the user: git tracks anything at or under .rig
+// (matched case-insensitively, gitlinks included), or .rig or .rig/config.json
+// is a symlink. Any error is returned so the caller fails closed.
+func rigConfigCommitted(ctx context.Context, root string) (bool, error) {
+	tracked, err := git.Repo{Dir: root}.LsFiles(ctx, []string{":(top,icase).rig", ":(top,icase).rig/**"})
+	if err != nil {
+		return false, err
+	}
+	if len(tracked) > 0 {
+		return true, nil
+	}
+	for _, p := range []string{filepath.Join(root, ".rig"), filepath.Join(root, ".rig", "config.json")} {
+		fi, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // loginJira implements `rig login jira`.
 func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string, o loginOpts) int {
 	store := *o.store
@@ -290,11 +318,11 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 	account := accounts[0]
 	if *o.url == "" {
 		if v, _ := layers.Get(config.KeyTrackerURL); v.Scope == config.ScopeLocal {
-			tracked, err := git.Repo{Dir: root}.LsFiles(ctx, []string{":(top,literal).rig/config.json"})
+			committed, err := rigConfigCommitted(ctx, root)
 			if err != nil {
 				return a.fail("login", "cannot tell whether .rig/config.json is committed: %v", err)
 			}
-			if len(tracked) > 0 {
+			if committed {
 				fmt.Fprintln(a.stderr, "rig login: tracker.url comes from .rig/config.json, which is committed to this repository; pass --url or set it with rig config set tracker.url <url> --global (or --repo)")
 				return 2
 			}
