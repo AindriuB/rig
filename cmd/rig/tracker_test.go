@@ -732,3 +732,24 @@ func TestTrackerRefreshMovedKeyTyped(t *testing.T) {
 		t.Fatalf("error %q", out.Tasks[0].Error)
 	}
 }
+
+// F3: RIG_JIRA_TOKEN alone is a PAT only on the v2 API.
+func TestTrackerJiraEnvTokenNeedsUserOnCloud(t *testing.T) {
+	cfg := map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG"}
+	e := newTrkEnv(t, cfg)
+	e.envVars[jiraTokenEnv] = "from-env"
+	_, err := e.a.trackerSpec(ctx, e.repo)
+	if err == nil || !strings.Contains(err.Error(), "RIG_JIRA_TOKEN is set but no user is stored; run rig login jira") {
+		t.Fatalf("v3: %v", err)
+	}
+	if code := e.run("tracker", "show", "RIG-1"); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	cfg["jira"] = map[string]any{"api": "v2"}
+	e = newTrkEnv(t, cfg)
+	e.envVars[jiraTokenEnv] = "from-env"
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.Jira.User != "" || spec.Jira.Token != "from-env" {
+		t.Fatalf("v2: %+v, %v", spec, err)
+	}
+}

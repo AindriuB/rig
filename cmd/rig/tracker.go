@@ -138,7 +138,7 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 			return spec, err
 		}
 		spec.Link.Host = host
-		user, token, err := a.jiraLogin(ctx, host, layers.RepoKey())
+		user, token, err := a.jiraLogin(ctx, host, layers.RepoKey(), layers.JiraAPI())
 		if err != nil {
 			return spec, err
 		}
@@ -204,8 +204,9 @@ func layerStr(l *config.Layers, key string) string {
 
 // jiraLogin finds the Jira login: RIG_JIRA_TOKEN if set, else the first
 // secret under the repository's account, then the global one. A secret with
-// no user is a personal access token, and gives the user "".
-func (a *app) jiraLogin(ctx context.Context, host, repoKey string) (user, token string, err error) {
+// no user is a personal access token, and gives the user "". An environment
+// token with no stored secret is a personal access token only on API v2.
+func (a *app) jiraLogin(ctx context.Context, host, repoKey, api string) (user, token string, err error) {
 	var found *secret.Secret
 	var lookupErr error
 search:
@@ -228,6 +229,9 @@ search:
 		user, token = found.User, found.Token
 	}
 	if env := a.getenv(jiraTokenEnv); env != "" {
+		if found == nil && api != "v2" {
+			return "", "", fmt.Errorf("%w: %s is set but no user is stored; run rig login jira", errNoLogin, jiraTokenEnv)
+		}
 		token = env
 	}
 	if token == "" {
