@@ -536,3 +536,30 @@ func TestNewValidates(t *testing.T) {
 		}
 	}
 }
+
+// F2: an issue the site answers under another key is a *MovedError.
+func TestIssueMovedKey(t *testing.T) {
+	s := newStub(t, 3)
+	front := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		s.serve(rec, r)
+		body := rec.Body.String()
+		if strings.Contains(r.URL.Path, "/issue/RIG-2") && r.Method == http.MethodGet {
+			body = strings.Replace(body, `"key":"RIG-2"`, `"key":"RIG-9"`, 1)
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(front.Close)
+	cfg := s.config()
+	cfg.Site, cfg.HTTPClient = front.URL, front.Client()
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Issue(ctx, "RIG-2")
+	var m *MovedError
+	if !errors.As(err, &m) || m.Asked != "RIG-2" || m.Got != "RIG-9" {
+		t.Fatalf("err = %v, want *MovedError RIG-2 -> RIG-9", err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
 	"github.com/AindriuB/rig/internal/tracker/fake"
+	jiratracker "github.com/AindriuB/rig/internal/tracker/jira"
 )
 
 // trkEnv is a loginEnv whose tracker adapter is a stand-in. It records the
@@ -703,5 +705,30 @@ func TestTrackerRefreshWrongProject(t *testing.T) {
 	}
 	if e.eventCount(sh) != n {
 		t.Fatal("a mismatched refresh wrote to the task")
+	}
+}
+
+// F2: a typed moved-key error names the new key in the way out.
+func TestTrackerRefreshMovedKeyTyped(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	s := &scripted{issues: map[string]tracker.Issue{"1": issue("1", "One")}, errs: map[string]error{}}
+	e.tr = s
+	var pull pulled
+	if code := e.json(&pull, "tracker", "pull", "1"); code != 0 {
+		t.Fatal(code)
+	}
+	sh := pull.Items[0].Task.Short
+	s.errs["1"] = fmt.Errorf("wrapped: %w", &jiratracker.MovedError{Asked: "1", Got: "RIG-9"})
+	var out refreshed
+	e.json(&out, "tracker", "refresh", "--all")
+	if want := "rig task link " + sh + " RIG-9"; !strings.Contains(out.Tasks[0].Error, want) {
+		t.Fatalf("error %q lacks %q", out.Tasks[0].Error, want)
+	}
+	// A message that merely says "moved" gets no advice.
+	s.errs["1"] = errors.New("the file moved")
+	e.out.Reset()
+	e.json(&out, "tracker", "refresh", "--all")
+	if strings.Contains(out.Tasks[0].Error, "re-link") {
+		t.Fatalf("error %q", out.Tasks[0].Error)
 	}
 }

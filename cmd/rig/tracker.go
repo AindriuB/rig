@@ -549,8 +549,9 @@ func (a *app) refreshOne(ctx context.Context, w *work, tr tracker.Tracker, spec 
 	}
 	if err != nil {
 		res.Error = err.Error()
-		if strings.Contains(err.Error(), "moved") {
-			res.Error += "; re-link with rig task link"
+		var moved *jiratracker.MovedError
+		if errors.As(err, &moved) {
+			res.Error += fmt.Sprintf("; re-link with rig task link %s %s", t.Short, moved.Got)
 		}
 		return res
 	}
@@ -559,7 +560,7 @@ func (a *app) refreshOne(ctx context.Context, w *work, tr tracker.Tracker, spec 
 		return res
 	}
 	if !strings.EqualFold(issue.Key, ext.Key) {
-		res.Error = fmt.Sprintf("the tracker answered %s for %s; re-link with rig task link", issue.Key, ext.Key)
+		res.Error = fmt.Sprintf("the tracker answered %s for %s; re-link with rig task link %s %s", issue.Key, ext.Key, t.Short, issue.Key)
 		return res
 	}
 	values := ownedValues(w.wf, issue, ext.Owned)
