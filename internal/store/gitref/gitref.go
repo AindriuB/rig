@@ -58,8 +58,10 @@ type plumbing interface {
 // Store keeps task logs as refs in one repository. Each write holds the
 // store lock (see lock.go) for its read, callback and append, so writers in
 // this and other processes take turns instead of spending their tries racing
-// each other; the compare-and-swap still guards correctness. Reads take no
-// lock. An Update callback must not write through any Store of the same
+// each other. The compare-and-swap protects every existing ref; uniqueness of
+// external links for new tasks relies on the lock and is best-effort across a
+// stale-lock break (duplicates then show as ErrAmbiguous on Resolve). Reads
+// take no lock. An Update callback must not write through any Store of the same
 // repository.
 type Store struct {
 	mu       sync.Mutex // held for the whole of each write, around the file lock
@@ -313,7 +315,9 @@ func message(events []store.Event, short string) string {
 }
 
 // CreateTask starts a new task log at refs/rig/tasks/<ULID>. Its short id
-// avoids every short id already in the store.
+// avoids every short id already in the store. It refuses a second task for one
+// external issue (ErrLinked) under the store lock, so that check is
+// best-effort across a stale-lock break; see lock.
 func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
@@ -328,6 +332,9 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 		return store.Task{}, err
 	}
 	tasks, _ := fold(logs)
+	if existing, err := store.PrepareCreate(&n, tasks); err != nil {
+		return existing, err
+	}
 	shorts := make(map[string]bool, len(tasks))
 	for _, t := range tasks {
 		shorts[t.Short] = true
@@ -387,7 +394,10 @@ func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, er
 // Update appends the events next returns, given the task as it is now. If
 // the ref moves before the append lands, it reads the task again and calls
 // next again, up to 8 tries; then it returns a wrapped ErrConflict. Nothing
-// is written if next, or stamping its events, fails.
+// is written if next, or stamping its events, fails. An external event that
+// would link an issue another task links is refused (ErrLinked) under the
+// store lock, so that check is best-effort across a stale-lock break, as in
+// CreateTask; see lock.
 func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
@@ -413,6 +423,16 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		stamped, err := s.opts.Stamp(cur, events)
 		if err != nil {
 			return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+		}
+		if slices.ContainsFunc(stamped, func(e store.Event) bool { return e.Kind == store.KindExternal }) {
+			logs, err := s.readAll(ctx, TasksPrefix, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			tasks, _ := fold(logs)
+			if err := store.CheckRelink(task.ID, stamped, tasks); err != nil {
+				return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+			}
 		}
 		if len(stamped) == 0 {
 			return nil, "", nil

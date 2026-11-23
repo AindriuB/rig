@@ -3,7 +3,9 @@ package store
 import (
 	"encoding/json"
 	"maps"
+	"slices"
 	"sort"
+	"strings"
 )
 
 // SortEvents orders events by (Seq, ID), in place.
@@ -71,6 +73,38 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 			Created: e.Time, Updated: e.Time,
 		}
 		maps.Copy(task.Fields, d.Fields)
+		task.Parent = d.Parent
+		if d.External != nil {
+			applyExternal(task, *d.External)
+			if d.Snapshot != nil {
+				applySync(task, *d.Snapshot)
+			}
+		}
+	case KindParent:
+		var d ParentData
+		if !decode(e, &d) || task.ID == "" {
+			return false
+		}
+		task.Parent = d.Task
+	case KindExternal:
+		var d ExternalData
+		if !decode(e, &d) || task.ID == "" || (d.Kind == "") != (d.Key == "") {
+			return false
+		}
+		if d.Kind == "" {
+			if task.External == nil {
+				return false
+			}
+			task.External = nil
+			return true
+		}
+		applyExternal(task, d)
+	case KindTrackerSync:
+		var d TrackerSyncData
+		if !decode(e, &d) || task.ID == "" || task.External == nil {
+			return false
+		}
+		applySync(task, d)
 	case KindTransition:
 		var d TransitionData
 		if !decode(e, &d) || task.ID == "" || d.To == "" {
@@ -149,6 +183,27 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 		return false
 	}
 	return true
+}
+
+// applyExternal links task to d. A link written again keeps the snapshot
+// already folded only when it is the same issue: the same kind, and the same
+// host and key in any case. Otherwise the snapshot starts empty.
+func applyExternal(task *Task, d ExternalData) {
+	ext := &External{
+		Kind: d.Kind, Host: d.Host, Project: d.Project, Key: d.Key, URL: d.URL,
+		Type: d.Type, Owned: slices.Clone(d.Owned), ParentKey: d.ParentKey,
+	}
+	if old := task.External; old != nil && old.Kind == d.Kind &&
+		strings.EqualFold(old.Host, d.Host) && strings.EqualFold(old.Key, d.Key) {
+		ext.SyncedAt, ext.Rev, ext.Snapshot = old.SyncedAt, old.Rev, old.Snapshot
+	}
+	task.External = ext
+}
+
+// applySync records a tracker snapshot on task's link.
+func applySync(task *Task, d TrackerSyncData) {
+	task.External.SyncedAt, task.External.Rev = d.At, d.Rev
+	task.External.Snapshot = maps.Clone(d.Values)
 }
 
 func decode(e Event, v any) bool {

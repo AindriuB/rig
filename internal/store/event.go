@@ -19,13 +19,17 @@ const (
 	KindFinding       = "finding"
 	KindFindingStatus = "finding-status"
 	KindNote          = "note"
+	KindParent        = "parent"
+	KindExternal      = "external"
+	KindTrackerSync   = "tracker-sync"
 )
 
 // knownKind reports whether this rig understands kind.
 func knownKind(kind string) bool {
 	switch kind {
 	case KindCreated, KindTransition, KindField, KindCount,
-		KindFinding, KindFindingStatus, KindNote:
+		KindFinding, KindFindingStatus, KindNote,
+		KindParent, KindExternal, KindTrackerSync:
 		return true
 	}
 	return false
@@ -64,6 +68,41 @@ type CreatedData struct {
 	Fields   map[string]any `json:"fields,omitempty"`
 	Workflow WorkflowRef    `json:"workflow"`
 	State    string         `json:"state"`
+	// Parent, External and Snapshot are folded as the parent, external and
+	// tracker-sync events would be.
+	Parent   string           `json:"parent,omitempty"`
+	External *ExternalData    `json:"external,omitempty"`
+	Snapshot *TrackerSyncData `json:"snapshot,omitempty"`
+}
+
+// ParentData sets a task's parent: a task id, or "" to clear it.
+type ParentData struct {
+	Task string `json:"task"`
+}
+
+// ExternalData links a task to an issue in a tracker. Owned lists the rig
+// fields the tracker owns; Type is the tracker's own level label; ParentKey is
+// the issue's parent when that parent has no task yet. An external event whose
+// Kind and Key are both empty clears the task's link and drops its snapshot;
+// Stamp refuses it on a task that is not linked, and refuses an event with only
+// one of Kind and Key.
+type ExternalData struct {
+	Kind      string   `json:"kind"`
+	Host      string   `json:"host,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	Key       string   `json:"key"`
+	URL       string   `json:"url,omitempty"`
+	Type      string   `json:"type,omitempty"`
+	Owned     []string `json:"owned,omitempty"`
+	ParentKey string   `json:"parentKey,omitempty"`
+}
+
+// TrackerSyncData is a snapshot of the owned fields as the tracker last gave
+// them, and the tracker's revision.
+type TrackerSyncData struct {
+	At     time.Time      `json:"at"`
+	Rev    string         `json:"rev,omitempty"`
+	Values map[string]any `json:"values,omitempty"`
 }
 
 // TransitionData moves a task from one state to another. Sha, PR and Reason

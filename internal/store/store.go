@@ -53,15 +53,35 @@ type Task struct {
 	Previous string `json:"previous,omitempty"`
 	// StateSha is the sha recorded by the transition into the current state,
 	// or "" when that transition recorded none.
-	StateSha     string            `json:"stateSha,omitempty"`
-	Shas         map[string]string `json:"shas"`
-	Branch       string            `json:"branch"`
-	PR           int               `json:"pr,omitempty"`
-	Reason       string            `json:"reason,omitempty"`
-	Counters     map[string]int    `json:"counters"`
-	OpenFindings int               `json:"openFindings"`
-	Created      time.Time         `json:"created"`
-	Updated      time.Time         `json:"updated"`
+	StateSha string            `json:"stateSha,omitempty"`
+	Shas     map[string]string `json:"shas"`
+	Branch   string            `json:"branch"`
+	// Parent is the id of the task's parent, or "".
+	Parent string `json:"parent,omitempty"`
+	// External is the issue the task is linked to, or nil.
+	External     *External      `json:"external,omitempty"`
+	PR           int            `json:"pr,omitempty"`
+	Reason       string         `json:"reason,omitempty"`
+	Counters     map[string]int `json:"counters"`
+	OpenFindings int            `json:"openFindings"`
+	Created      time.Time      `json:"created"`
+	Updated      time.Time      `json:"updated"`
+}
+
+// External is a task's link to a tracker issue. SyncedAt, Rev and Snapshot
+// come from the latest tracker snapshot.
+type External struct {
+	Kind      string         `json:"kind"`
+	Host      string         `json:"host,omitempty"`
+	Project   string         `json:"project,omitempty"`
+	Key       string         `json:"key"`
+	URL       string         `json:"url,omitempty"`
+	Type      string         `json:"type,omitempty"`
+	Owned     []string       `json:"owned,omitempty"`
+	ParentKey string         `json:"parentKey,omitempty"`
+	SyncedAt  time.Time      `json:"syncedAt,omitzero"`
+	Rev       string         `json:"rev,omitempty"`
+	Snapshot  map[string]any `json:"snapshot,omitempty"`
 }
 
 // Finding is one review finding on a task.
@@ -101,6 +121,15 @@ type NewTask struct {
 	Fields   map[string]any
 	Workflow WorkflowRef
 	Initial  string
+	// Parent is a task reference; CreateTask stores the parent's id.
+	Parent string
+	// External links the task to an issue. At most one task links an issue.
+	External *External
+	// Snapshot is the tracker's values for the owned fields.
+	Snapshot map[string]any
+	// BranchTemplate, when set, is expanded ({short}, {slug}, {id}, {key})
+	// into the task's Branch, replacing Branch.
+	BranchTemplate string
 }
 
 // TaskFilter narrows Tasks. An empty States matches every state.
@@ -141,6 +170,10 @@ type Store interface {
 
 // ErrNotFound reports a reference that matches nothing.
 var ErrNotFound = errors.New("not found")
+
+// ErrLinked reports that CreateTask found a task already linked to the
+// issue. The task returned with it is that task.
+var ErrLinked = errors.New("issue already linked to a task")
 
 // ErrAmbiguous reports a reference that matches more than one task.
 var ErrAmbiguous = errors.New("ambiguous")

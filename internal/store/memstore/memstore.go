@@ -55,8 +55,12 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	all := s.tasks()
+	if existing, err := store.PrepareCreate(&n, all); err != nil {
+		return existing, err
+	}
 	shorts := map[string]bool{}
-	for _, t := range s.tasks() {
+	for _, t := range all {
 		shorts[t.Short] = true
 	}
 	e, err := s.opts.Created(n, func(sh string) bool { return shorts[sh] })
@@ -118,6 +122,9 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 	}
 	stamped, err := s.opts.Stamp(log, events)
 	if err != nil {
+		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+	}
+	if err := store.CheckRelink(id, stamped, s.tasks()); err != nil {
 		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
 	}
 	s.logs[id] = append(slices.Clip(log), stamped...)
