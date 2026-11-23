@@ -84,3 +84,12 @@ func TestFakeRecordsAndRejects(t *testing.T) {
 		t.Fatalf("SetStatus: %v, %v", err, f.StatusCalls)
 	}
 }
+
+// A fake with Err set fails Capabilities with that error.
+func TestFakeCapabilitiesErr(t *testing.T) {
+	f := fake.New(tracker.Caps{}, nil, nil)
+	f.Err = fmt.Errorf("login: %w", tracker.ErrAuth)
+	if _, err := f.Capabilities(t.Context()); !errors.Is(err, tracker.ErrAuth) {
+		t.Errorf("Capabilities = %v, want ErrAuth", err)
+	}
+}

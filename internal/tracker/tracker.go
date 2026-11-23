@@ -24,6 +24,8 @@ import (
 // Tracker is what rig needs from an issue tracker.
 type Tracker interface {
 	// Capabilities reports which methods and features the tracker supports.
+	// It contacts the tracker, so it returns ErrAuth when the login does not
+	// work.
 	Capabilities(ctx context.Context) (Caps, error)
 	// Issue returns one issue. It returns ErrNotFound for an unknown key.
 	Issue(ctx context.Context, key string) (Issue, error)

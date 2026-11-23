@@ -20,6 +20,10 @@ type Tracker struct {
 	statuses map[string]bool
 	rev      int
 
+	// Err, when set, is returned by Capabilities. Set it to ErrAuth or a
+	// transient error to test how a caller handles a failing tracker.
+	Err error
+
 	// Comments records every successful Comment call.
 	Comments []CommentCall
 	// StatusCalls records every successful SetStatus call.
@@ -58,8 +62,11 @@ func New(caps tracker.Caps, issues []tracker.Issue, statuses []string) *Tracker 
 	return t
 }
 
-// Capabilities returns the configured capabilities.
+// Capabilities returns the configured capabilities, or Err.
 func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
+	if t.Err != nil {
+		return tracker.Caps{}, t.Err
+	}
 	return t.caps, nil
 }
 
