@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -513,13 +514,32 @@ func (a *app) planRefresh(t store.Task, issue tracker.Issue, values map[string]a
 	return p, nil
 }
 
+// linkMismatch says how a task's link differs from the configured tracker, or
+// "" when it is the same one. The kind and host always count; for GitHub and
+// GitLab so does the project.
+func linkMismatch(ext *store.External, spec trackerSpec) string {
+	l := spec.Link
+	same := ext.Kind == l.Kind && strings.EqualFold(ext.Host, l.Host)
+	if same && (l.Kind == config.TrackerGitHub || l.Kind == config.TrackerGitLab) {
+		same = strings.EqualFold(ext.Project, l.Project)
+	}
+	if same {
+		return ""
+	}
+	return fmt.Sprintf("linked to %s, but the tracker is %s", linkName(ext.Kind, ext.Host, ext.Project), linkName(l.Kind, l.Host, l.Project))
+}
+
+func linkName(kind, host, project string) string {
+	return strings.Join(slices.DeleteFunc([]string{kind, host, project}, func(s string) bool { return s == "" }), " ")
+}
+
 // refreshOne re-reads the issue t is linked to and brings its owned fields up
 // to date. With dry it writes nothing.
 func (a *app) refreshOne(ctx context.Context, w *work, tr tracker.Tracker, spec trackerSpec, t store.Task, dry bool) refreshTask {
 	ext := t.External
 	res := refreshTask{Task: t.Short, Key: ext.Key, Status: "error", Changed: []string{}, Replaced: []replacedField{}}
-	if ext.Kind != spec.Kind {
-		res.Error = fmt.Sprintf("linked to %s, but the tracker is %s", ext.Kind, spec.Kind)
+	if msg := linkMismatch(ext, spec); msg != "" {
+		res.Error = msg
 		return res
 	}
 	issue, err := tr.Issue(ctx, ext.Key)

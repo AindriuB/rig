@@ -678,3 +678,29 @@ func TestTrackerRefreshMovedKey(t *testing.T) {
 		t.Fatalf("exit %d %+v", code, out)
 	}
 }
+
+// F1: a task linked to another project is not refreshed from this tracker.
+func TestTrackerRefreshWrongProject(t *testing.T) {
+	cfg := map[string]any{"kind": "github", "project": "acme/a"}
+	e := newTrkEnv(t, cfg)
+	s := &scripted{issues: map[string]tracker.Issue{"1": issue("1", "One")}, errs: map[string]error{}}
+	e.tr = s
+	var pull pulled
+	if code := e.json(&pull, "tracker", "pull", "1"); code != 0 {
+		t.Fatal(code)
+	}
+	sh := pull.Items[0].Task.Short
+	is := s.issues["1"]
+	is.Title, is.Rev = "Renamed", "r2"
+	s.issues["1"] = is
+	e.globalConfig(map[string]any{"tracker": map[string]any{"kind": "github", "project": "acme/b"}})
+	n := e.eventCount(sh)
+	var out refreshed
+	code := e.json(&out, "tracker", "refresh", "--all")
+	if code != 2 || out.Tasks[0].Status != "error" || !strings.Contains(out.Tasks[0].Error, "acme/a") || !strings.Contains(out.Tasks[0].Error, "acme/b") {
+		t.Fatalf("exit %d %+v", code, out)
+	}
+	if e.eventCount(sh) != n {
+		t.Fatal("a mismatched refresh wrote to the task")
+	}
+}
