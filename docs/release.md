@@ -21,7 +21,7 @@
 ## Verify the published state
 - `gh release view v<version> --json isDraft,assets --jq '.isDraft, [.assets[].name]'`
   prints `false` and `rig-{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,windows-amd64.exe}`, `SHA256SUMS`.
-- `GOPRIVATE=github.com/AindriuB/* go install github.com/AindriuB/rig/cmd/rig@v<version>` in a temp `GOBIN`, then `rig version` prints `<version>`.
+- `go install github.com/AindriuB/rig/cmd/rig@v<version>` in a temp `GOBIN`, then `rig version` prints `<version>`.
 
 ## If a step fails
 - Do not delete or move a pushed tag. Fix forward with `<version+patch>`.
