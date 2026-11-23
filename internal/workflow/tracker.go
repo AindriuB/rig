@@ -121,6 +121,9 @@ func (w *Workflow) validateTracker(add addFunc) {
 		if (attr == AttrLabels || attr == AttrAcceptance) && (isText || (declared && field.Type != TypeList)) {
 			add(path, "attribute %q needs a list field; %q is not one", attr, f)
 		}
+		if attr != AttrTitle && attr != AttrLabels && attr != AttrAcceptance && declared && field.Type != TypeString && field.Type != TypeText {
+			add(path, "attribute %q needs a text field; %q is not one", attr, f)
+		}
 		if prev, dup := seen[attr]; dup {
 			add(path, "attribute %q is already mapped from %q", attr, prev)
 		} else {

@@ -84,6 +84,26 @@ func TestTrackerValidate(t *testing.T) {
 	}
 }
 
+func TestTrackerMapTypeFit(t *testing.T) {
+	for _, attr := range []string{"description", "priority", "assignee", "type"} {
+		for typ, ok := range map[string]bool{"list": false, "int": false, "string": true, "text": true} {
+			src := strings.Replace(trackerBase, `"prio": "priority"`, `"prio": "`+attr+`"`, 1)
+			src = strings.Replace(src, `"prio": {"type": "string"}`, `"prio": {"type": "`+typ+`"}`, 1)
+			w, err := Parse([]byte(src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			bad := false
+			for _, p := range w.Validate() {
+				bad = bad || p.Path == "tracker.map.prio"
+			}
+			if bad == ok {
+				t.Errorf("%s from %s field: problem=%v, want %v", attr, typ, bad, !ok)
+			}
+		}
+	}
+}
+
 func TestTrackerUnknownKeyRefused(t *testing.T) {
 	for _, src := range []string{
 		`{"tracker": {"bogus": 1}}`,
