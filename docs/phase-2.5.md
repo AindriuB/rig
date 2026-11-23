@@ -94,7 +94,7 @@ Two settings vary independently, so they are two sections:
 |---|---|---|---|
 | `forge.kind` | `github`, `gitlab` | detected from the `origin` host | `--global`, or `--repo` for an exception |
 | `forge.host` | a host name | the `origin` host | `--global` |
-| `tracker.kind` | `local`, `jira`, `github`, `gitlab` | `local` | `--global` |
+| `tracker.kind` | `local`, `jira`, `github`, `gitlab`; `exec` is added in phase 3 | `local` | `--global` |
 | `tracker.url` | `https://…`; required for `jira`, and for `github`/`gitlab` on a self-hosted host | none | `--global` |
 | `tracker.project` | Jira: a project key (`[A-Z][A-Z0-9]+`); GitHub: `owner/name`; GitLab: `group/…/name` | `local`: none; `github`/`gitlab`: the forge repository | `--repo` |
 | `workflow` | a preset name (`basic`) or an absolute path to a workflow file | `basic` | global file only, hand-edited |
@@ -104,7 +104,8 @@ Two settings vary independently, so they are two sections:
 `refs/rig/` and nowhere else. It is what "plain files" becomes once rig
 holds the state: no service, nothing to log in to. Markdown
 `docs/plan/tasks` files are not a tracker kind; they are how a project tracks
-tasks without rig, and phase 3's importer moves them into the store (see Q17).
+tasks without rig. A plan importer is later and unscheduled; tracker
+intake in phase 3 covers most of its use (see Q17).
 
 A global file for an organisation on GitHub that tracks in Jira:
 
@@ -166,21 +167,15 @@ never route their state through a tracker.
 
 The tracker holds the human-facing record: the issue people see, its title,
 description and status. With `local`, the store is that record too. With
-`jira`, `github` or `gitlab`, phase 4 adds a tracker port:
+`jira`, `github`, `gitlab` or `exec`, phase 3 adds a tracker port. It is
+defined in [phase-3.md](phase-3.md); the sketch that stood here, with a
+`Transition` that mirrored every state change, was dropped because the
+report to a tracker is explicit and optional.
 
-```go
-type Tracker interface {
-    Issue(ctx context.Context, key string) (Issue, error)        // title, description, status, url
-    Transition(ctx context.Context, key string, to TaskState) error
-    Link(ctx context.Context, key string, pr forge.PullRequest) error
-}
-```
-
-and a task gains an `issue` field (`{kind, key, url}`), a new JSON field and
-so a minor change. `rig task new --issue RIG-42` then fills the spec from the
-issue, and each transition mirrors its status to the issue. Phase 2 and 2.5
-only read and validate `tracker.kind`; `rig task` works the same under every
-kind until phase 4. Nothing in phase 2's formats has to change for this.
+The port, the task fields it adds (`parent`, `external`), `rig task new
+--from` and the explicit `rig tracker report` are in [phase-3.md](phase-3.md).
+Phase 2 and 2.5 only read and validate `tracker.kind`; `rig task` works the
+same under every kind until phase 3 ships (0.4.0).
 
 ### Commands
 
@@ -254,7 +249,9 @@ gain auth lines: it runs often and makes no extra network calls (see Q15).
 
 The Jira check uses `net/http` from the standard library with a 15-second
 timeout; it is the first time rig talks HTTP itself. The check is the only
-Jira call in phase 2.5; reading issues is phase 4's tracker adapter.
+Jira call in phase 2.5; reading issues is phase 3's tracker adapter. Phase 3
+also adds Jira Server/Data Center: `rig login jira --pat` and a v2 `myself`
+check (see [phase-3.md](phase-3.md), Q42).
 
 ## Package layout
 
@@ -306,15 +303,15 @@ work without a keychain; it is never stored. *Recommend: allow it.*
 offline-tolerant.*
 
 **Q16. When to build the Jira part.** Nothing else in rig uses a Jira token
-until phase 4's tracker adapter. Building `rig login jira` now is useful only
+until phase 3's tracker adapter. Building `rig login jira` now is useful only
 for the login check itself. *Recommend: build it now as asked, since the
-`/myself` check gives it a real test, and phase 4 then only reads the
+`/myself` check gives it a real test, and phase 3 then only reads the
 token.*
 
 **Q17. Tracker kinds.** `local` (rig's store, no service), `jira`, `github`
 (GitHub Issues), `gitlab` (GitLab issues). "Plain files" is `local`: the
 state is in git, needs no service, and does not conflict on merge. Markdown
-`docs/plan/tasks` files are not a kind rig reads; phase 3 imports them.
+`docs/plan/tasks` files are not a kind rig reads; an importer is later, unscheduled.
 *Recommend: these four, default `local`.*
 
 **Q18. Secrets in config.** A developer may commit `.rig/config.json`.
@@ -324,9 +321,9 @@ the allow-list.*
 
 **Q19. The store and the tracker.** *Recommend: the store holds the loop's
 state under every tracker kind, and `rig task`/`rig next` never go through
-the tracker. Phase 4 adds the `Tracker` port above, an `issue` field on a
-task and `rig task new --issue <key>`; phase 2 and 2.5 only validate
-`tracker.kind`.*
+the tracker. Phase 3 adds the `Tracker` port, an `external` link on a
+task and `rig task new --from <key>` (see [phase-3.md](phase-3.md)); phase 2
+and 2.5 only validate `tracker.kind`.*
 
 **Q20. Where per-project values go.** Three options: a `.rig/` file in each
 clone, which a fresh clone or a deleted one loses; a section of the global
