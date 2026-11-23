@@ -52,6 +52,8 @@ type Tracker struct {
 	path    string // url.PathEscape of the project path
 	project string
 	host    string
+	base    string // this project's web URL, learned once from GitLab
+	baseMu  sync.Mutex
 	dir     string
 	timeout time.Duration
 
@@ -298,7 +300,11 @@ func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
 	if err != nil {
 		return tracker.IssueRef{}, false
 	}
-	rest, ok := cutPrefixFold(u.Path, "/"+t.project+"/-/")
+	b, err := url.Parse(t.base)
+	if err != nil || t.base == "" || !strings.EqualFold(u.Scheme, b.Scheme) || !strings.EqualFold(u.Host, b.Host) {
+		return tracker.IssueRef{}, false
+	}
+	rest, ok := cutPrefixFold(u.Path, strings.TrimSuffix(b.Path, "/")+"/-/")
 	if !ok {
 		return tracker.IssueRef{}, false
 	}
@@ -310,6 +316,27 @@ func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
 		return tracker.IssueRef{}, false
 	}
 	return tracker.IssueRef{Key: w.IID, URL: w.WebURL, Title: w.Title, Type: strings.ToLower(w.WorkItemType.Name)}, true
+}
+
+// projectBase learns this project's own web URL once, so a ref is accepted only
+// when it lies under it (this holds for a relative URL root too).
+func (t *Tracker) projectBase(ctx context.Context) error {
+	t.baseMu.Lock()
+	defer t.baseMu.Unlock()
+	if t.base != "" {
+		return nil
+	}
+	var p struct {
+		WebURL string `json:"web_url"`
+	}
+	if err := t.get(ctx, &p, "projects/"+t.path); err != nil {
+		return err
+	}
+	if p.WebURL == "" {
+		return errors.New("gitlab tracker: project lookup returned no web_url")
+	}
+	t.base = strings.TrimSuffix(p.WebURL, "/")
+	return nil
 }
 
 func cutPrefixFold(s, prefix string) (string, bool) {
@@ -336,6 +363,9 @@ func (t *Tracker) family(ctx context.Context, key string) (parent *tracker.Issue
 				}
 			} `json:"workItems"`
 		}
+	}
+	if err = t.projectBase(ctx); err != nil {
+		return nil, nil, false, err
 	}
 	if err = t.graphql(ctx, hierarchyQuery, map[string]any{"path": t.project, "iid": key}, &data); err != nil {
 		return nil, nil, false, err

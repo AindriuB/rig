@@ -36,6 +36,7 @@ type fakeState struct {
 	Hierarchy bool        `json:"hierarchy"`
 	NoAuth    bool        `json:"noauth"`
 	GQLFail   bool        `json:"gqlfail"`
+	BaseURL   string      `json:"base_url"`
 	Counter   int         `json:"counter"`
 	Issues    []fakeIssue `json:"issues"`
 }
@@ -125,6 +126,12 @@ func fakeGlab(dir string, args []string) int {
 	switch {
 	case endpoint == "user":
 		return out(map[string]string{"username": "tester"})
+	case endpoint == "projects/"+url.PathEscape(fakeProject) && method == "GET":
+		u := st.BaseURL
+		if u == "" {
+			u = "https://gitlab.example/" + fakeProject
+		}
+		return out(map[string]string{"web_url": u})
 	case endpoint == "graphql":
 		return fakeGraphQL(&st, stdin, out)
 	case endpoint == base && method == "GET":

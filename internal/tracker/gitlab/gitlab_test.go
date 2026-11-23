@@ -202,21 +202,52 @@ func TestGraphQLErrorExitMeansNoHierarchy(t *testing.T) {
 
 func TestWorkItemRefBelongsToProject(t *testing.T) {
 	cases := []struct {
-		project, url string
-		ok           bool
+		base, url string
+		ok        bool
 	}{
-		{"grp/sub/proj", "https://h/grp/sub/proj/-/issues/7", true},
-		{"grp/sub/proj", "https://h/GRP/sub/proj/-/work_items/7", true},
-		{"grp/sub/proj", "https://h/grp/other/-/issues/7", false},
-		{"grp/sub/proj", "https://h/grp/sub/proj/-/issues/7/extra", false},
-		{"grp/sub/proj", "https://h/groups/grp/-/epics/7", false},
-		{"acme/groups/app", "https://h/acme/groups/app/-/issues/7", true},
+		{"https://h/grp/sub/proj", "https://h/grp/sub/proj/-/issues/7", true},
+		{"https://h/grp/sub/proj", "https://h/GRP/sub/proj/-/work_items/7", true},
+		{"https://h/grp/sub/proj", "https://h/grp/other/-/issues/7", false},
+		{"https://h/grp/sub/proj", "https://h/grp/sub/proj/-/issues/7/extra", false},
+		{"https://h/grp/sub/proj", "https://h/groups/grp/-/epics/7", false},
+		{"https://h/acme/groups/app", "https://h/acme/groups/app/-/issues/7", true},
+		// A relative URL root is part of the learned base.
+		{"https://h/gitlab/grp/proj", "https://h/gitlab/grp/proj/-/issues/7", true},
+		// Another project whose path merely ends with this project's path.
+		{"https://h/grp/proj", "https://h/other/grp/proj/-/issues/7", false},
+		{"https://h/gitlab/grp/proj", "https://h/other/gitlab/grp/proj/-/issues/7", false},
+		{"https://h/grp/proj", "https://evil/grp/proj/-/issues/7", false},
+		{"https://h/grp/proj", "http://h/grp/proj/-/issues/7", false},
 	}
 	for _, c := range cases {
-		tr := &Tracker{project: c.project}
+		tr := &Tracker{base: c.base}
 		_, ok := tr.workItem(workItemRef{IID: "7", WebURL: c.url})
 		if ok != c.ok {
-			t.Errorf("%s %s: ok = %v, want %v", c.project, c.url, ok, c.ok)
+			t.Errorf("%s %s: ok = %v, want %v", c.base, c.url, ok, c.ok)
 		}
+	}
+}
+
+// 36-1: GitLab under a relative URL root keeps its parent and children, and a
+// foreign project whose path ends with this one's is still dropped.
+func TestFamilyUnderRelativeURLRoot(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	root := "https://example.com/gitlab/" + fakeProject
+	st := fakeState{Hierarchy: true, BaseURL: root, Issues: []fakeIssue{
+		{IID: 1, WebURL: root + "/-/issues/1", Title: "p", State: "opened", IssueType: "issue"},
+		{IID: 2, WebURL: root + "/-/issues/2", Title: "kept", State: "opened", IssueType: "issue", Parent: 1},
+		{IID: 3, WebURL: "https://example.com/other/gitlab/" + fakeProject + "/-/issues/3", Title: "foreign", State: "opened", IssueType: "issue", Parent: 1},
+	}}
+	b, _ := json.Marshal(st)
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kids, err := tr.Children(context.Background(), "1")
+	if err != nil || len(kids) != 1 || kids[0].Key != "2" {
+		t.Errorf("Children = %+v, %v; want only issue 2", kids, err)
+	}
+	iss, err := tr.Issue(context.Background(), "2")
+	if err != nil || iss.Parent == nil || iss.Parent.Key != "1" {
+		t.Errorf("Issue(2).Parent = %+v, %v; want 1", iss.Parent, err)
 	}
 }
