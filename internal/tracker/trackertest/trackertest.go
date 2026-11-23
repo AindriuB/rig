@@ -17,7 +17,8 @@ type Seed struct {
 	// Key is an existing issue. Status is its current status and NextStatus
 	// a different status the tracker accepts.
 	Key, Status, NextStatus string
-	// ParentKey is an issue whose child is ChildKey. Needed when
+	// ParentKey is an issue whose child is ChildKey, which has no children
+	// of its own. Needed when
 	// Caps.Children is true.
 	ParentKey, ChildKey string
 	// Label is carried by at least two issues, and the tracker holds at
@@ -117,6 +118,18 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 		}
 		if !found {
 			t.Errorf("Children(%s) = %v, missing %s", s.ParentKey, got, s.ChildKey)
+		}
+		for _, c := range got {
+			if c.Key == s.ParentKey {
+				t.Errorf("Children(%s) lists the parent itself", s.ParentKey)
+			}
+		}
+		leaf, err := tr.Children(ctx, s.ChildKey)
+		if err != nil {
+			t.Fatalf("Children(leaf): %v", err)
+		}
+		if len(leaf) != 0 {
+			t.Errorf("Children(%s) = %v, want none for a leaf", s.ChildKey, leaf)
 		}
 		if _, err := tr.Children(ctx, s.MissingKey); !errors.Is(err, tracker.ErrNotFound) {
 			t.Errorf("Children(missing) = %v, want ErrNotFound", err)
