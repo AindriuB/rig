@@ -91,7 +91,7 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 
 	t.Run("Comment", func(t *testing.T) {
 		tr, s, caps := setup(t)
-		err := tr.Comment(ctx, s.Key, tracker.Comment{Body: "hello"})
+		res, err := tr.Comment(ctx, s.Key, tracker.Comment{Body: "hello"})
 		if !caps.Comment {
 			if !errors.Is(err, tracker.ErrUnsupported) {
 				t.Errorf("Comment = %v, want ErrUnsupported", err)
@@ -101,7 +101,10 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 		if err != nil {
 			t.Fatalf("Comment: %v", err)
 		}
-		if err := tr.Comment(ctx, s.MissingKey, tracker.Comment{Body: "x"}); !errors.Is(err, tracker.ErrNotFound) {
+		if res.ID == "" {
+			t.Errorf("Comment returned an empty ID: %+v", res)
+		}
+		if _, err := tr.Comment(ctx, s.MissingKey, tracker.Comment{Body: "x"}); !errors.Is(err, tracker.ErrNotFound) {
 			t.Errorf("Comment(missing) = %v, want ErrNotFound", err)
 		}
 	})

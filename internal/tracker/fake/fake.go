@@ -147,18 +147,19 @@ func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef,
 	return out, nil
 }
 
-// Comment records the comment.
-func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) error {
+// Comment records the comment and returns a generated id.
+func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (tracker.CommentResult, error) {
 	if !t.caps.Comment {
-		return fmt.Errorf("comment: %w", tracker.ErrUnsupported)
+		return tracker.CommentResult{}, fmt.Errorf("comment: %w", tracker.ErrUnsupported)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, err := t.get(key); err != nil {
-		return err
+		return tracker.CommentResult{}, err
 	}
 	t.Comments = append(t.Comments, CommentCall{Key: key, Comment: c})
-	return nil
+	id := strconv.Itoa(len(t.Comments))
+	return tracker.CommentResult{ID: id, URL: "fake://" + key + "/comment/" + id}, nil
 }
 
 // SetStatus moves the issue to status and bumps its Rev when the status

@@ -74,7 +74,7 @@ func TestFakeRecordsAndRejects(t *testing.T) {
 	f := fake.New(tracker.Caps{Comment: true, SetStatus: true},
 		[]tracker.Issue{{Key: "A-1", Status: "todo"}}, []string{"todo", "done"})
 	ctx := t.Context()
-	if err := f.Comment(ctx, "A-1", tracker.Comment{Body: "hi"}); err != nil || len(f.Comments) != 1 {
+	if _, err := f.Comment(ctx, "A-1", tracker.Comment{Body: "hi"}); err != nil || len(f.Comments) != 1 {
 		t.Fatalf("Comment: %v, %v", err, f.Comments)
 	}
 	if _, err := f.SetStatus(ctx, "A-1", "bogus"); err == nil {

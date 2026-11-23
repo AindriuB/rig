@@ -35,7 +35,7 @@ type Tracker interface {
 	Children(ctx context.Context, key string) ([]IssueRef, error)
 	// Comment adds a comment to an issue. It returns ErrUnsupported when
 	// Caps.Comment is false.
-	Comment(ctx context.Context, key string, c Comment) error
+	Comment(ctx context.Context, key string, c Comment) (CommentResult, error)
 	// SetStatus moves an issue to status. It returns ErrUnsupported when
 	// Caps.SetStatus is false, and an error for a status the tracker does
 	// not know.
@@ -124,6 +124,12 @@ type Query struct {
 // the tracker's markup.
 type Comment struct {
 	Body string `json:"body"`
+}
+
+// CommentResult identifies the comment Comment created.
+type CommentResult struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 // StatusResult is the outcome of SetStatus.
