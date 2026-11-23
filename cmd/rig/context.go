@@ -59,13 +59,17 @@ func tokens(n int) int { return (n + 3) / 4 }
 func (a *app) context(ctx context.Context, args []string) int {
 	fs := newFlags()
 	budgetFlag, repoFlag := fs.str("--budget"), fs.str("--repo")
-	asJSON := fs.boolean("--json")
+	ff := addFormatFlags(fs)
 	pos, err := fs.parse(args)
 	if err != nil {
 		return a.fail("context", "%v", err)
 	}
 	if len(pos) != 1 {
-		return a.fail("context", "usage: rig context <task> [--budget <tokens>] [--json] [--repo <dir>]")
+		return a.fail("context", "usage: rig context <task> [--budget <tokens>] [--format text|markdown|json] [--repo <dir>]")
+	}
+	format, err := ff.resolveArgs(args)
+	if err != nil {
+		return a.fail("context", "%v", err)
 	}
 	budget := defaultBudget
 	if *budgetFlag != "" {
@@ -87,11 +91,14 @@ func (a *app) context(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail("context", err)
 	}
-	out := fitBudget(t.Short, budget, secs)
-	if *asJSON {
-		return a.printJSON(out)
+	switch format {
+	case formatJSON:
+		return a.printJSON(fitBudget(t.Short, budget, secs))
+	case formatMarkdown:
+		fmt.Fprint(a.stdout, renderContextMD(fitBudgetIn(markdownLayout, t.Short, budget, markdownSections(secs))))
+		return 0
 	}
-	fmt.Fprint(a.stdout, renderContext(out))
+	fmt.Fprint(a.stdout, renderContext(fitBudget(t.Short, budget, secs)))
 	return 0
 }
 
@@ -107,7 +114,7 @@ func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 		return nil, err
 	}
 	secs := []ctxSection{
-		{Name: "Header", Items: w.headerLines(view)},
+		{Name: "Header", Items: append(w.headerLines(view), w.linkLines(ctx, view)...)},
 		{Name: "Body", Items: w.bodyLines(t)},
 		{Name: "Findings", Items: w.findingLines(findings)},
 	}
@@ -143,6 +150,11 @@ func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 // each later section adds lines while they fit, keeping room for its
 // "… n more" line.
 func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
+	return fitBudgetIn(textLayout, short, budget, secs)
+}
+
+// fitBudgetIn is fitBudget charging the bytes of layout.
+func fitBudgetIn(l mdLayout, short string, budget int, secs []ctxSection) ctxOut {
 	limit := budget * 4
 	out := ctxOut{Task: short, Budget: budget}
 	used := 0
@@ -155,7 +167,7 @@ func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
 			if len(s.Items) == 0 {
 				s.hidden = true
 			} else {
-				used += sectionSize(s.Name, s.Items, 0)
+				used += sectionSize(l, s.Name, s.Items, 0)
 			}
 			s.Omitted = 0
 			if i == 1 {
@@ -164,7 +176,7 @@ func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
 			out.Sections = append(out.Sections, s)
 			continue
 		}
-		out.Sections = append(out.Sections, cutSection(s, limit-used, &used))
+		out.Sections = append(out.Sections, cutSection(l, s, limit-used, &used))
 	}
 	out.Used = tokens(used)
 	out.OverBudget = fixed > limit
@@ -172,15 +184,15 @@ func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
 }
 
 // cutSection returns s cut to rem bytes, adding what it prints to *used.
-func cutSection(s ctxSection, rem int, used *int) ctxSection {
+func cutSection(l mdLayout, s ctxSection, rem int, used *int) ctxSection {
 	n := len(s.Items)
 	cut := ctxSection{Name: s.Name, Items: []string{}}
 	if n == 0 {
 		cut.hidden = true
 		return cut
 	}
-	reserve := len(moreLine(n))
-	size := len(headingLine(s.Name))
+	reserve := len(l.more(n))
+	size := len(l.heading(s.Name)) + l.tail
 	if size+reserve > rem {
 		cut.Omitted = n
 		cut.hidden = true
@@ -200,7 +212,7 @@ func cutSection(s ctxSection, rem int, used *int) ctxSection {
 	}
 	cut.Omitted = n - len(cut.Items)
 	if cut.Omitted > 0 {
-		size += len(moreLine(cut.Omitted))
+		size += len(l.more(cut.Omitted))
 	}
 	*used += size
 	return cut
@@ -210,13 +222,13 @@ func headingLine(name string) string { return "## " + name + "\n" }
 func moreLine(n int) string          { return "… " + strconv.Itoa(n) + " more\n" }
 
 // sectionSize is the bytes a section prints.
-func sectionSize(name string, items []string, omitted int) int {
-	n := len(headingLine(name))
+func sectionSize(l mdLayout, name string, items []string, omitted int) int {
+	n := len(l.heading(name)) + l.tail
 	for _, it := range items {
 		n += len(it) + 1
 	}
 	if omitted > 0 {
-		n += len(moreLine(omitted))
+		n += len(l.more(omitted))
 	}
 	return n
 }
@@ -268,6 +280,23 @@ func (w *work) headerLines(v workflow.TaskView) []string {
 	}
 	counters = append(counters, fmt.Sprintf("openFindings=%d", v.OpenFindings))
 	return append(lines, "counters: "+strings.Join(counters, " "))
+}
+
+// linkLines are the Header rows for a task's parent and tracker link; a task
+// with neither has none.
+func (w *work) linkLines(ctx context.Context, v workflow.TaskView) []string {
+	var lines []string
+	if v.Parent != "" {
+		p := v.Parent
+		if pt, err := w.st.Task(ctx, v.Parent); err == nil {
+			p = pt.Short
+		}
+		lines = append(lines, "parent: "+p)
+	}
+	if v.External != nil {
+		lines = append(lines, "external: "+externalSummary(v.External))
+	}
+	return lines
 }
 
 // bodyLines is section 2: the body, then each context field that is set.
