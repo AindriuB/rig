@@ -22,6 +22,9 @@ const (
 	KeyTrackerCommand       = "tracker.command"
 	KeyTrackerJiraAPI       = "tracker.jira.api"
 	KeyTrackerJiraEpicField = "tracker.jira.epicField"
+	// KeyTrackerJiraAcceptanceField is the id of the Jira field that holds an
+	// issue's acceptance criteria. Unset, the issue has none.
+	KeyTrackerJiraAcceptanceField = "tracker.jira.acceptanceField"
 )
 
 // Tracker kinds.
@@ -42,7 +45,7 @@ const DefaultWorkflow = "basic"
 // keys is the allow-list, sorted.
 var keys = []string{
 	KeyForgeHost, KeyForgeKind, KeyPushPrefixes,
-	KeyTrackerCommand, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
+	KeyTrackerCommand, KeyTrackerJiraAcceptanceField, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
 	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow,
 }
 
@@ -174,7 +177,7 @@ func checkValue(key, v string) error {
 		if v != "auto" && v != "v2" && v != "v3" {
 			return bad(`"auto", "v2" or "v3"`)
 		}
-	case KeyTrackerJiraEpicField:
+	case KeyTrackerJiraEpicField, KeyTrackerJiraAcceptanceField:
 		if !fieldRE.MatchString(v) {
 			return bad("a Jira field id such as customfield_10014")
 		}

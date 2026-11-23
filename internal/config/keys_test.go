@@ -108,3 +108,35 @@ func TestKeysIsACopy(t *testing.T) {
 		t.Fatal("Keys() returned the internal slice")
 	}
 }
+
+// 3.7b AC7: tracker.jira.acceptanceField is a field id, settable in every scope.
+func TestJiraAcceptanceFieldKey(t *testing.T) {
+	for _, v := range []string{"customfield_10100", "acceptance-criteria"} {
+		if err := checkValue(KeyTrackerJiraAcceptanceField, v); err != nil {
+			t.Errorf("acceptanceField %q: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "a b", "x/y", "a.b"} {
+		if err := checkValue(KeyTrackerJiraAcceptanceField, v); err == nil {
+			t.Errorf("acceptanceField %q accepted", v)
+		}
+	}
+	if !slices.Contains(Keys(), KeyTrackerJiraAcceptanceField) {
+		t.Error("key not on the allow-list")
+	}
+	l := open(t, repoEnv(t))
+	if _, ok := l.Get(KeyTrackerJiraAcceptanceField); ok {
+		t.Error("acceptanceField set by default")
+	}
+	for _, scope := range []string{ScopeGlobal, ScopeRepo, ScopeLocal} {
+		if err := l.Set(scope, KeyTrackerJiraAcceptanceField, "customfield_7"); err != nil {
+			t.Fatalf("Set(%s): %v", scope, err)
+		}
+		if v, _ := l.GetIn(scope, KeyTrackerJiraAcceptanceField); v.Value != "customfield_7" {
+			t.Errorf("GetIn(%s) = %+v", scope, v)
+		}
+	}
+	if err := l.Set(ScopeGlobal, KeyTrackerJiraAcceptanceField, "bad id"); err == nil {
+		t.Error("bad id set")
+	}
+}
