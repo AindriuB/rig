@@ -57,11 +57,47 @@ func loopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// Site validates site as Host does and returns the parsed URL: the one place
+// that decides which hosts a Jira token may go to. It is https, or http for a
+// loopback host only, with no embedded credentials.
+func Site(site string) (*url.URL, error) { return parse(site) }
+
+// Account names the secret entry for a Jira site: "jira:<host>", or
+// "jira:<host>:<repoKey>" for a repository's own login when repoKey is not
+// empty. host is what Host returns.
+func Account(host, repoKey string) string {
+	if repoKey == "" {
+		return "jira:" + host
+	}
+	return "jira:" + host + ":" + repoKey
+}
+
+// Accounts returns the entries to look in for a site, most specific first: the
+// repository's own when repoKey is not empty, then the global one. A login
+// writes to the first.
+func Accounts(host, repoKey string) []string {
+	if repoKey == "" {
+		return []string{Account(host, "")}
+	}
+	return []string{Account(host, repoKey), Account(host, "")}
+}
+
 // Check asks site who the user is: GET <site>/rest/api/3/myself with basic
 // auth. A 200 is nil, a 401 or 403 is ErrRejected, and anything else (a
 // redirect, a server error, no answer) is another error. Redirects are not
 // followed, so the credentials go only to site.
 func Check(ctx context.Context, client *http.Client, site, user, token string) error {
+	return check(ctx, client, site, "/rest/api/3/myself", func(r *http.Request) { r.SetBasicAuth(user, token) })
+}
+
+// CheckPAT is Check for a Server/Data Center personal access token:
+// GET <site>/rest/api/2/myself with the token as a Bearer credential and no
+// user.
+func CheckPAT(ctx context.Context, client *http.Client, site, token string) error {
+	return check(ctx, client, site, "/rest/api/2/myself", func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) })
+}
+
+func check(ctx context.Context, client *http.Client, site, path string, auth func(*http.Request)) error {
 	u, err := parse(site)
 	if err != nil {
 		return err
@@ -72,12 +108,12 @@ func Check(ctx context.Context, client *http.Client, site, user, token string) e
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	endpoint := strings.TrimRight(u.String(), "/") + "/rest/api/3/myself"
+	endpoint := strings.TrimRight(u.String(), "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("jira check: %w", err)
 	}
-	req.SetBasicAuth(user, token)
+	auth(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.Do(req)
 	if err != nil {

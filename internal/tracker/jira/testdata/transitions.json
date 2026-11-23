@@ -1,0 +1,13 @@
+{
+  "To Do": [
+    {"id": "11", "name": "Start progress", "to": {"id": "2", "name": "In Progress"}},
+    {"id": "13", "name": "Close", "to": {"id": "3", "name": "Done"}}
+  ],
+  "In Progress": [
+    {"id": "21", "name": "Stop progress", "to": {"id": "1", "name": "To Do"}},
+    {"id": "23", "name": "Close", "to": {"id": "3", "name": "Done"}}
+  ],
+  "Done": [
+    {"id": "31", "name": "Reopen", "to": {"id": "1", "name": "To Do"}}
+  ]
+}

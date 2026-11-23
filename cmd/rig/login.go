@@ -65,13 +65,14 @@ type loginStatus struct {
 type loginOpts struct {
 	url, user, store *string
 	repo, asJSON     *bool
+	pat              *bool // a Server/Data Center personal access token, no user
 }
 
 func newLoginFlags() (*flagSet, loginOpts) {
 	f := newFlags()
 	return f, loginOpts{
 		url: f.str("--url"), user: f.str("--user"), store: f.str("--store"),
-		repo: f.boolean("--repo"), asJSON: f.boolean("--json"),
+		repo: f.boolean("--repo"), asJSON: f.boolean("--json"), pat: f.boolean("--pat"),
 	}
 }
 
@@ -94,9 +95,12 @@ func (a *app) login(ctx context.Context, args []string) int {
 	default:
 		return a.fail("login", "unknown service %q: use github, gitlab, jira or status", service)
 	}
-	jiraFlags := *o.url != "" || *o.user != "" || *o.store != "" || *o.repo
+	jiraFlags := *o.url != "" || *o.user != "" || *o.store != "" || *o.repo || *o.pat
 	if (service == "github" || service == "gitlab" || service == "status") && jiraFlags {
-		return a.fail("login", "--url, --user, --repo and --store apply to jira only")
+		return a.fail("login", "--url, --user, --repo, --store and --pat apply to jira only")
+	}
+	if *o.pat && *o.user != "" {
+		return a.fail("login", "--pat stores a token with no user; drop --user")
 	}
 	if *o.asJSON && service != "status" {
 		return a.fail("login", "--json applies to `rig login status` only")
@@ -120,7 +124,7 @@ func (a *app) login(ctx context.Context, args []string) int {
 	if v, _ := layers.Get(config.KeyTrackerKind); v.Value == config.TrackerJira {
 		withJira = true
 	} else if jiraFlags {
-		return a.fail("login", "--url, --user, --repo and --store apply to jira, which tracker.kind does not select")
+		return a.fail("login", "--url, --user, --repo, --store and --pat apply to jira, which tracker.kind does not select")
 	}
 	failed := a.loginForge(ctx, layers, remote, "") != 0
 	if withJira && a.loginJira(ctx, layers, root, o) != 0 {
@@ -142,7 +146,7 @@ func (a *app) logout(ctx context.Context, args []string) int {
 	if len(pos) != 1 {
 		return a.fail("logout", "usage: rig logout jira|github|gitlab")
 	}
-	if *o.user != "" || *o.store != "" || *o.asJSON {
+	if *o.user != "" || *o.store != "" || *o.asJSON || *o.pat {
 		return a.fail("logout", "only --url and --repo are accepted")
 	}
 	switch pos[0] {
@@ -256,7 +260,6 @@ func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo boo
 	if err != nil {
 		return "", "", nil, err
 	}
-	global := "jira:" + host
 	if repo {
 		if root == "" {
 			return "", "", nil, errors.New("--repo needs a git repository")
@@ -265,9 +268,9 @@ func (a *app) jiraAccounts(layers *config.Layers, root, flagURL string, repo boo
 		if key == "" {
 			return "", "", nil, errors.New("--repo needs a repository with an origin remote")
 		}
-		return site, source, []string{global + ":" + key}, nil
+		return site, source, []string{jira.Account(host, key)}, nil
 	}
-	return site, source, []string{global}, nil
+	return site, source, []string{jira.Account(host, "")}, nil
 }
 
 // loginJira implements `rig login jira`.
@@ -304,7 +307,7 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 	fmt.Fprintf(a.stderr, "Jira site: %s (from %s)\n", host, source)
 
 	user := strings.TrimSpace(*o.user)
-	if user == "" {
+	if user == "" && !*o.pat {
 		if tty.IsTerminal(a.stdin) {
 			fmt.Fprint(a.stderr, "Jira user (email): ")
 		}
@@ -314,15 +317,23 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 		}
 		user = strings.TrimSpace(line)
 	}
-	if user == "" {
+	if user == "" && !*o.pat {
 		return a.fail("login", "no user")
 	}
-	token, err := tty.ReadSecret("Jira API token: ", a.stdin, a.stderr)
+	prompt := "Jira API token: "
+	if *o.pat {
+		prompt = "Jira personal access token: "
+	}
+	token, err := tty.ReadSecret(prompt, a.stdin, a.stderr)
 	if err != nil {
 		return a.fail("login", "%v", err)
 	}
 
-	switch err := jira.Check(ctx, a.httpClient, site, user, token); {
+	check := func() error { return jira.Check(ctx, a.httpClient, site, user, token) }
+	if *o.pat {
+		check = func() error { return jira.CheckPAT(ctx, a.httpClient, site, token) }
+	}
+	switch err := check(); {
 	case errors.Is(err, jira.ErrRejected):
 		fmt.Fprintf(a.stderr, "rig login: %v; nothing stored\n", err)
 		return 1
@@ -338,6 +349,10 @@ func (a *app) loginJira(ctx context.Context, layers *config.Layers, root string,
 			return a.fail("login", "%v (with no Secret Service running, use --store file)", err)
 		}
 		return a.fail("login", "%v", err)
+	}
+	if *o.pat {
+		fmt.Fprintf(a.stdout, "Logged in to %s with a personal access token (%s)\n", strings.TrimPrefix(account, "jira:"), store)
+		return 0
 	}
 	fmt.Fprintf(a.stdout, "Logged in to %s as %s (%s)\n", strings.TrimPrefix(account, "jira:"), user, store)
 	return 0
@@ -442,7 +457,7 @@ func (a *app) checkForge(ctx context.Context, t forgeTarget) (loggedIn bool, use
 	if err := validHost(t.host); err != nil {
 		return false, "", err
 	}
-	res, err := proc.Run(ctx, proc.Options{Dir: a.cwd, Timeout: toolTimeout}, t.tool, "auth", "status", "--hostname", t.host)
+	res, err := proc.Run(ctx, proc.Options{Dir: a.cwd, Timeout: toolTimeout, ScrubTokens: true}, t.tool, "auth", "status", "--hostname", t.host)
 	var ee *proc.ExitError
 	switch {
 	case err == nil:
@@ -486,7 +501,7 @@ func (a *app) loginForge(ctx context.Context, layers *config.Layers, remote, ser
 	// Name the host before the tool runs: the origin remote of a cloned
 	// repository can steer it.
 	fmt.Fprintf(a.stderr, "%s login for %s (from %s)\n", t.tool, t.host, source)
-	code, err := a.interactive(ctx, proc.Options{Dir: a.cwd}, t.tool, "auth", "login", "--hostname", t.host)
+	code, err := a.interactive(ctx, proc.Options{Dir: a.cwd, ScrubTokens: true}, t.tool, "auth", "login", "--hostname", t.host)
 	if err != nil {
 		fmt.Fprintf(a.stderr, "rig login: %s: %v\n", t.tool, err)
 		return 1
@@ -550,10 +565,7 @@ func (a *app) jiraStatus(ctx context.Context, layers *config.Layers) loginStatus
 		s.Error = err.Error()
 		return s
 	}
-	accounts := []string{"jira:" + host}
-	if key := layers.RepoKey(); key != "" {
-		accounts = []string{"jira:" + host + ":" + key, accounts[0]}
-	}
+	accounts := jira.Accounts(host, layers.RepoKey())
 
 	var found *secret.Secret
 	var lookupErr error
@@ -585,7 +597,7 @@ search:
 	}
 	if env := a.getenv(jiraTokenEnv); env != "" {
 		token, s.Store = env, storeEnv
-		if user == "" {
+		if found == nil {
 			s.Error = jiraTokenEnv + " is set but no user is stored: run rig login jira"
 			return s
 		}
@@ -597,7 +609,13 @@ search:
 		return s
 	}
 	s.User = user
-	switch err := jira.Check(ctx, a.httpClient, site, user, token); {
+	// A stored login with no user is a personal access token (rig login jira
+	// --pat): it is checked against the v2 API as a Bearer credential.
+	check := func() error { return jira.Check(ctx, a.httpClient, site, user, token) }
+	if user == "" {
+		check = func() error { return jira.CheckPAT(ctx, a.httpClient, site, token) }
+	}
+	switch err := check(); {
 	case err == nil:
 		s.LoggedIn = true
 	default:

@@ -1,0 +1,77 @@
+[
+  {
+    "expand": "renderedFields,names,schema,operations",
+    "id": "10001",
+    "self": "https://jira.acme.example/rest/api/2/issue/10001",
+    "key": "RIG-1",
+    "fields": {
+      "summary": "Faster login",
+      "description": "h2. Goal\n\nEpic for the login work.",
+      "issuetype": {"id": "10000", "name": "Epic", "subtask": false},
+      "priority": {"id": "2", "name": "High"},
+      "assignee": {"name": "ann", "key": "ann", "displayName": "Ann Lee", "active": true},
+      "labels": ["rig", "backend"],
+      "status": {"id": "1", "name": "To Do", "statusCategory": {"key": "new"}},
+      "updated": "2025-03-01T10:00:00.000+0000",
+      "customfield_10014": null
+    }
+  },
+  {
+    "id": "10002",
+    "key": "RIG-2",
+    "fields": {
+      "summary": "Cache the session lookup",
+      "description": "Use the *session cache*.\n\n* first\n** nested\n",
+      "customfield_10100": "* Lookup is cached for 5 minutes\n* Cache is cleared on logout\n",
+      "customfield_10014": "RIG-1",
+      "issuetype": {"id": "10001", "name": "Story", "subtask": false},
+      "priority": {"id": "3", "name": "Medium"},
+      "assignee": null,
+      "labels": ["rig"],
+      "status": {"id": "1", "name": "To Do"},
+      "updated": "2025-03-02T10:00:00.000+0000"
+    }
+  },
+  {
+    "id": "10003",
+    "key": "RIG-3",
+    "fields": {
+      "summary": "Write the cache test",
+      "description": null,
+      "issuetype": {"id": "10002", "name": "Sub-task", "subtask": true},
+      "priority": {"name": "Low"},
+      "assignee": null,
+      "labels": [],
+      "parent": {"id": "10002", "key": "RIG-2", "fields": {"summary": "Cache the session lookup", "issuetype": {"name": "Story"}}},
+      "customfield_10014": null,
+      "status": {"id": "1", "name": "To Do"},
+      "updated": "2025-03-03T10:00:00.000+0000"
+    }
+  },
+  {
+    "id": "10004",
+    "key": "RIG-4",
+    "fields": {
+      "summary": "Document the cache",
+      "description": "",
+      "issuetype": {"id": "10003", "name": "Task", "subtask": false},
+      "priority": {"name": "Medium"},
+      "assignee": null,
+      "labels": ["rig", "docs"],
+      "status": {"id": "1", "name": "To Do"},
+      "updated": "2025-03-04T10:00:00.000+0000"
+    }
+  },
+  {
+    "id": "10005",
+    "key": "RIG-5",
+    "fields": {
+      "summary": "Unrelated chore",
+      "description": null,
+      "issuetype": {"id": "10003", "name": "Task"},
+      "labels": ["ops"],
+      "status": {"id": "3", "name": "Done"},
+      "updated": "2025-03-05T10:00:00.000+0000"
+    }
+  }
+]

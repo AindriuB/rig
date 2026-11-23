@@ -1,0 +1,10 @@
+{"version":1,"type":"doc","content":[
+{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Goal"}]},
+{"type":"paragraph","content":[{"type":"text","text":"Make the "},{"type":"text","text":"login","marks":[{"type":"strong"}]},{"type":"text","text":" flow "},{"type":"text","text":"faster","marks":[{"type":"em"}]},{"type":"text","text":" using "},{"type":"text","text":"cache.get()","marks":[{"type":"code"}]},{"type":"text","text":". See "},{"type":"text","text":"the spec","marks":[{"type":"link","attrs":{"href":"https://example.com/spec"}}]},{"type":"hardBreak"},{"type":"text","text":"Second line."}]},
+{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]},
+{"type":"orderedList","attrs":{"order":1},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"step one"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"step two"}]}]}]},
+{"type":"codeBlock","attrs":{"language":"go"},"content":[{"type":"text","text":"fmt.Println(\"hi\")"}]},
+{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"quoted"}]}]},
+{"type":"rule"},
+{"type":"panel","attrs":{"panelType":"info"},"content":[{"type":"paragraph","content":[{"type":"text","text":"Panel text "},{"type":"mention","attrs":{"id":"1","text":"@Ann"}}]}]}
+]}
