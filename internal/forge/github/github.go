@@ -34,7 +34,7 @@ const prFields = "number,url,title,state,isDraft,headRefName,headRefOid,baseRefN
 const defaultLimit = 100
 
 func (c *Client) gh(ctx context.Context, args ...string) (proc.Result, error) {
-	return proc.Run(ctx, proc.Options{Dir: c.Dir, Timeout: c.Timeout}, "gh", args...)
+	return proc.Run(ctx, proc.Options{Dir: c.Dir, Timeout: c.Timeout, ScrubTokens: true}, "gh", args...)
 }
 
 // fail turns a gh failure into an error carrying the last lines gh printed.
@@ -227,7 +227,7 @@ func (c *Client) Checks(ctx context.Context, pr int) ([]forge.Check, error) {
 
 // watch runs a blocking gh command that only ctx limits.
 func (c *Client) watch(ctx context.Context, args ...string) (proc.Result, error) {
-	res, err := proc.Run(ctx, proc.Options{Dir: c.Dir}, "gh", args...)
+	res, err := proc.Run(ctx, proc.Options{Dir: c.Dir, ScrubTokens: true}, "gh", args...)
 	if errors.Is(err, proc.ErrTimeout) {
 		return res, context.DeadlineExceeded
 	}
