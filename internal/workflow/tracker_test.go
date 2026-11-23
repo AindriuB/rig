@@ -85,9 +85,10 @@ func TestTrackerValidate(t *testing.T) {
 }
 
 func TestTrackerMapTypeFit(t *testing.T) {
-	for _, attr := range []string{"description", "priority", "assignee", "type"} {
+	for _, attr := range []string{"description", "priority", "assignee", "type", "title"} {
 		for typ, ok := range map[string]bool{"list": false, "int": false, "string": true, "text": true} {
 			src := strings.Replace(trackerBase, `"body": "description", `, ``, 1)
+			src = strings.Replace(src, `"title": "title", `, ``, 1)
 			src = strings.Replace(src, `"prio": "priority"`, `"prio": "`+attr+`"`, 1)
 			src = strings.Replace(src, `"prio": {"type": "string"}`, `"prio": {"type": "`+typ+`"}`, 1)
 			w, err := Parse([]byte(src))
