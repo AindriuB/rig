@@ -122,6 +122,8 @@ func (w *Workflow) Validate() []Problem {
 	validateFields(add, "fields", w.Fields, true)
 	validateFields(add, "findings.fields", w.Findings.Fields, false)
 
+	w.validateTracker(add)
+
 	// Transitions.
 	for i, tr := range w.AllTransitions {
 		path := fmt.Sprintf("transitions[%d]", i)
