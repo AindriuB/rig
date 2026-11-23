@@ -245,3 +245,55 @@ func testUnlinkTask(t *testing.T, s store.Store) {
 		t.Fatalf("relink after clear: %v", err)
 	}
 }
+
+// A tracker-sync event is refused unless the task is linked at that point in
+// the batch: on an unlinked task, and after a clear in the same batch. After a
+// link in the same batch it is accepted.
+func testTrackerSyncNeedsLink(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	batch := func(ref string, kinds []string, data ...any) error {
+		_, err := s.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
+			var evs []store.Event
+			for i, k := range kinds {
+				e, err := store.NewEvent(k, data[i])
+				if err != nil {
+					return nil, err
+				}
+				evs = append(evs, e)
+			}
+			return evs, nil
+		})
+		return err
+	}
+	sync := store.TrackerSyncData{Rev: "r2", Values: map[string]any{"title": "X"}}
+	link := store.ExternalData{Kind: "jira", Host: "j.example", Key: "AB-7"}
+
+	plain := create(t, s, "plain")
+	before := len(events(t, s, plain.ID))
+	if err := batch(plain.ID, []string{store.KindTrackerSync}, sync); err == nil {
+		t.Fatal("tracker-sync on an unlinked task accepted")
+	}
+	if n := len(events(t, s, plain.ID)); n != before {
+		t.Fatalf("a refused sync wrote %d events", n-before)
+	}
+
+	linked, err := s.CreateTask(ctx, linkedTask("linked", "AB-9"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before = len(events(t, s, linked.ID))
+	if err := batch(linked.ID, []string{store.KindExternal, store.KindTrackerSync}, store.ExternalData{}, sync); err == nil {
+		t.Fatal("tracker-sync after a clear in the same batch accepted")
+	}
+	if n := len(events(t, s, linked.ID)); n != before {
+		t.Fatalf("a refused batch wrote %d events", n-before)
+	}
+
+	if err := batch(plain.ID, []string{store.KindExternal, store.KindTrackerSync}, link, sync); err != nil {
+		t.Fatalf("link then sync: %v", err)
+	}
+	got, _ := s.Task(ctx, plain.ID)
+	if got.External == nil || got.External.Rev != "r2" || got.External.Snapshot["title"] != "X" {
+		t.Fatalf("after link and sync: %+v", got.External)
+	}
+}

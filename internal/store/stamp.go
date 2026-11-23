@@ -130,6 +130,9 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 			})
 		case KindTrackerSync:
 			e.Data, err = rewrite(e, func(d *TrackerSyncData) error {
+				if !linked {
+					return errors.New("task is not linked")
+				}
 				if d.At.IsZero() {
 					d.At = now
 				}
