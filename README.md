@@ -30,12 +30,6 @@ rig needs Go 1.24 or later, `git`, and `gh` (GitHub) or `glab` (GitLab).
 go install github.com/AindriuB/rig/cmd/rig@v0.3.0
 ```
 
-While the repository is private, tell Go not to use the public proxy:
-
-```bash
-GOPRIVATE=github.com/AindriuB/* go install github.com/AindriuB/rig/cmd/rig@v0.3.0
-```
-
 ## Commands
 
 ```text
