@@ -40,7 +40,7 @@ func New(dir string) *Client {
 const defaultLimit = 100
 
 func (c *Client) glab(ctx context.Context, args ...string) (proc.Result, error) {
-	return proc.Run(ctx, proc.Options{Dir: c.Dir, Timeout: c.Timeout}, "glab", args...)
+	return proc.Run(ctx, proc.Options{Dir: c.Dir, Timeout: c.Timeout, ScrubTokens: true}, "glab", args...)
 }
 
 // fail turns a glab failure into an error carrying the last lines it printed.
