@@ -67,7 +67,7 @@ func (a *app) context(ctx context.Context, args []string) int {
 	if len(pos) != 1 {
 		return a.fail("context", "usage: rig context <task> [--budget <tokens>] [--format text|markdown|json] [--repo <dir>]")
 	}
-	format, err := ff.resolve()
+	format, err := ff.resolveArgs(args)
 	if err != nil {
 		return a.fail("context", "%v", err)
 	}

@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // outFormat is how a command prints its result.
 type outFormat int
@@ -54,4 +57,20 @@ func (f *formatFlags) resolve() (outFormat, error) {
 		return formatText, nil
 	}
 	return got[0], nil
+}
+
+// resolveArgs is resolve for a command given args: --format repeated with
+// different values is an error too, which the flag parser alone would hide
+// by keeping the last one.
+func (f *formatFlags) resolveArgs(args []string) (outFormat, error) {
+	_, vals, err := splitRepeated(args, []string{"--format"}, []string{"--repo", "--budget", "--state"})
+	if err != nil {
+		return formatText, err
+	}
+	for _, v := range vals["--format"] {
+		if v != vals["--format"][0] {
+			return formatText, fmt.Errorf("--format given with different values %s", slices.Compact(slices.Clone(vals["--format"])))
+		}
+	}
+	return f.resolve()
 }

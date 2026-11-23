@@ -59,6 +59,9 @@ func TestFormatFlagExitCodes(t *testing.T) {
 	for _, args := range [][]string{
 		{"task", "show", "fx", "--format", "yaml"},
 		{"task", "show", "fx", "--json", "--markdown"},
+		{"task", "show", "fx", "--format", "json", "--format", "markdown"},
+		{"task", "list", "--format", "markdown", "--format=json"},
+		{"context", "fx", "--format=text", "--format", "json"},
 		{"task", "list", "--format", "yaml"},
 		{"task", "list", "--json", "--format", "markdown"},
 		{"context", "fx", "--format", "yaml"},
@@ -72,6 +75,7 @@ func TestFormatFlagExitCodes(t *testing.T) {
 	for _, args := range [][]string{
 		{"task", "show", "fx", "--json", "--format", "json"},
 		{"task", "list", "--format", "text"},
+		{"task", "show", "fx", "--format", "json", "--format=json"},
 		{"task", "show", "fx", "--markdown"},
 		{"task", "list", "--markdown"},
 	} {

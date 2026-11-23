@@ -236,7 +236,7 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 	if err != nil || len(pos) != 1 {
 		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--format text|markdown|json] [--repo <dir>]")
 	}
-	format, err := ff.resolve()
+	format, err := ff.resolveArgs(args)
 	if err != nil {
 		return a.fail("task show", "%v", err)
 	}
@@ -417,7 +417,7 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
 		return a.fail("task list", "usage: rig task list [--state <s>]... [--all] [--format text|markdown|json] [--repo <dir>]")
 	}
-	format, err := ff.resolve()
+	format, err := ff.resolveArgs(args)
 	if err != nil {
 		return a.fail("task list", "%v", err)
 	}
