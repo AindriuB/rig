@@ -33,8 +33,11 @@ const (
 // 2-10 ms for up to s.lockWait, then returns a wrapped ErrConflict. A lock
 // file older than lockStale is removed and the take retried.
 //
-// The lock is for throughput only. Two writers can both break one stale lock
-// and briefly both hold it; the compare-and-swap in commit keeps that safe.
+// The compare-and-swap in commit protects every existing ref, whatever the
+// lock does. Uniqueness of external links for new tasks relies on the lock:
+// two writers can both break one stale lock and briefly both hold it, and
+// then each may create a task for the same issue. That is best-effort across
+// a stale-lock break; the duplicates show as ErrAmbiguous on Resolve.
 func (s *Store) lock(ctx context.Context) (func(), error) {
 	s.mu.Lock()
 	release, err := s.lockFile(ctx)

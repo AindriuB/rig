@@ -58,8 +58,10 @@ type plumbing interface {
 // Store keeps task logs as refs in one repository. Each write holds the
 // store lock (see lock.go) for its read, callback and append, so writers in
 // this and other processes take turns instead of spending their tries racing
-// each other; the compare-and-swap still guards correctness. Reads take no
-// lock. An Update callback must not write through any Store of the same
+// each other. The compare-and-swap protects every existing ref; uniqueness of
+// external links for new tasks relies on the lock and is best-effort across a
+// stale-lock break (duplicates then show as ErrAmbiguous on Resolve). Reads
+// take no lock. An Update callback must not write through any Store of the same
 // repository.
 type Store struct {
 	mu       sync.Mutex // held for the whole of each write, around the file lock
@@ -313,7 +315,9 @@ func message(events []store.Event, short string) string {
 }
 
 // CreateTask starts a new task log at refs/rig/tasks/<ULID>. Its short id
-// avoids every short id already in the store.
+// avoids every short id already in the store. It refuses a second task for one
+// external issue (ErrLinked) under the store lock, so that check is
+// best-effort across a stale-lock break; see lock.
 func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Task{}, err
