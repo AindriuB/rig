@@ -15,11 +15,12 @@ func build(caps tracker.Caps) func(t *testing.T) (tracker.Tracker, trackertest.S
 	return func(t *testing.T) (tracker.Tracker, trackertest.Seed) {
 		parent := tracker.IssueRef{Key: "P-1"}
 		f := fake.New(caps, []tracker.Issue{
-			{Key: "P-1", Title: "parent", Status: "todo"},
-			{Key: "P-2", Title: "child", Status: "todo", Parent: &parent},
+			{Key: "P-1", Title: "parent", Status: "todo", Labels: []string{"rig"}},
+			{Key: "P-2", Title: "child", Status: "todo", Parent: &parent, Labels: []string{"rig"}},
+			{Key: "P-3", Title: "other", Status: "todo", Labels: []string{"other"}},
 		}, []string{"todo", "done"})
 		return f, trackertest.Seed{Key: "P-1", Status: "todo", NextStatus: "done",
-			ParentKey: "P-1", ChildKey: "P-2", MissingKey: "P-404"}
+			ParentKey: "P-1", ChildKey: "P-2", Label: "rig", MissingKey: "P-404"}
 	}
 }
 

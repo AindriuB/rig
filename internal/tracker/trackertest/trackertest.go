@@ -6,6 +6,7 @@ package trackertest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/AindriuB/rig/internal/tracker"
@@ -19,6 +20,9 @@ type Seed struct {
 	// ParentKey is an issue whose child is ChildKey. Needed when
 	// Caps.Children is true.
 	ParentKey, ChildKey string
+	// Label is carried by at least two issues, and the tracker holds at
+	// least one issue without it.
+	Label string
 	// MissingKey is a well-formed key that no issue has.
 	MissingKey string
 }
@@ -52,7 +56,7 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		tr, _, caps := setup(t)
+		tr, s, caps := setup(t)
 		_, err := tr.Search(ctx, tracker.Query{})
 		if !caps.Search {
 			if !errors.Is(err, tracker.ErrUnsupported) {
@@ -61,7 +65,37 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 			return
 		}
 		if err != nil {
-			t.Errorf("Search: %v", err)
+			t.Fatalf("Search: %v", err)
+		}
+		limited, err := tr.Search(ctx, tracker.Query{Labels: []string{s.Label}, Limit: 1})
+		if err != nil {
+			t.Fatalf("Search(limit 1): %v", err)
+		}
+		if len(limited) != 1 {
+			t.Errorf("Search(label, Limit 1) returned %d issues, want 1", len(limited))
+		}
+		labelled, err := tr.Search(ctx, tracker.Query{Labels: []string{s.Label}})
+		if err != nil {
+			t.Fatalf("Search(label): %v", err)
+		}
+		if len(labelled) < 2 {
+			t.Errorf("Search(label) returned %d issues, want at least 2", len(labelled))
+		}
+		for _, ref := range labelled {
+			is, err := tr.Issue(ctx, ref.Key)
+			if err != nil {
+				t.Fatalf("Issue(%s): %v", ref.Key, err)
+			}
+			if !slices.Contains(is.Labels, s.Label) {
+				t.Errorf("Search(label %q) returned %s with labels %v", s.Label, ref.Key, is.Labels)
+			}
+		}
+		none, err := tr.Search(ctx, tracker.Query{Labels: []string{"rig-no-such-label"}})
+		if err != nil {
+			t.Fatalf("Search(no such label): %v", err)
+		}
+		if len(none) != 0 {
+			t.Errorf("Search(no such label) = %v, want none", none)
 		}
 	})
 
