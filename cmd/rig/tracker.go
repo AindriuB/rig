@@ -130,7 +130,7 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 	}
 	spec.Trusted = true
 	site, _ := uv.Value.(string)
-	spec.Link = trackerLink{Kind: spec.Kind, Project: tc.Project}
+	spec.Link = trackerLink{Kind: spec.Kind}
 
 	switch spec.Kind {
 	case config.TrackerJira:
@@ -529,7 +529,7 @@ func (a *app) planRefresh(t store.Task, issue tracker.Issue, values map[string]a
 func (a *app) resolveParent(ctx context.Context, w *work, t store.Task, dry bool, res *refreshTask) error {
 	ext := t.External
 	find := func(tasks []store.Task) (string, string) {
-		pt, ok := store.Linked(&store.External{Kind: ext.Kind, Host: ext.Host, Key: ext.ParentKey}, tasks)
+		pt, ok := store.Linked(&store.External{Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.ParentKey}, tasks)
 		if !ok {
 			return "", ""
 		}

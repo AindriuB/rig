@@ -140,7 +140,7 @@ func TestTrackerJiraLogin(t *testing.T) {
 	spec, err := e.a.trackerSpec(ctx, e.repo)
 	if err != nil || spec.Jira.User != "me@example.com" || spec.Jira.Token != "stored" || spec.Jira.API != "v2" ||
 		spec.Jira.Project != "RIG" || spec.Jira.EpicField != "customfield_10014" || spec.Jira.AcceptanceField != "customfield_10020" ||
-		spec.Jira.Site != "https://acme.example.com" || spec.Link != (trackerLink{"jira", "acme.example.com", "RIG"}) {
+		spec.Jira.Site != "https://acme.example.com" || spec.Link != (trackerLink{"jira", "acme.example.com", ""}) {
 		t.Fatalf("spec %+v, %v", spec, err)
 	}
 	// RIG_JIRA_TOKEN beats the stored token.
@@ -848,5 +848,58 @@ func TestTrackerRefreshParentCycle(t *testing.T) {
 	}
 	if len(out.Tasks[0].Warnings) != 1 || !strings.Contains(out.Tasks[0].Warnings[0], "cycle") {
 		t.Fatalf("%+v", out)
+	}
+}
+
+// Round 2: issue 7 in acme/a and issue 7 in acme/b are two tasks.
+func TestTrackerPullSameKeyOtherProject(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "github", "project": "acme/a"})
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("7", "Seven")}, nil)
+	var a, b, again pulled
+	if code := e.json(&a, "tracker", "pull", "7"); code != 0 {
+		t.Fatal(code)
+	}
+	e.globalConfig(map[string]any{"tracker": map[string]any{"kind": "github", "project": "ACME/B"}})
+	e.out.Reset()
+	if code := e.json(&b, "tracker", "pull", "7"); code != 0 || b.Items[0].Existing || b.Items[0].Task.ID == a.Items[0].Task.ID {
+		t.Fatalf("other project: exit %d %+v", code, b)
+	}
+	// The same project in another case is the same link.
+	e.globalConfig(map[string]any{"tracker": map[string]any{"kind": "github", "project": "Acme/A"}})
+	e.out.Reset()
+	if code := e.json(&again, "tracker", "pull", "7"); code != 0 || !again.Items[0].Existing || again.Items[0].Task.ID != a.Items[0].Task.ID {
+		t.Fatalf("same project, other case: exit %d %+v", code, again)
+	}
+	if all, _ := e.st().Tasks(ctx, store.TaskFilter{}); len(all) != 2 {
+		t.Fatalf("%d tasks, want 2", len(all))
+	}
+}
+
+// Round 2: a parent in another project is not this task's parent.
+func TestTrackerPullParentSameProjectOnly(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "github", "project": "acme/b"})
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("1", "Parent")}, nil)
+	var p pulled
+	if code := e.json(&p, "tracker", "pull", "1"); code != 0 {
+		t.Fatal(code)
+	}
+	e.globalConfig(map[string]any{"tracker": map[string]any{"kind": "github", "project": "acme/a"}})
+	child := issue("2", "Child")
+	child.Parent = &tracker.IssueRef{Key: "1"}
+	e.tr = fake.New(allCaps, []tracker.Issue{child}, nil)
+	e.out.Reset()
+	var c pulled
+	if code := e.json(&c, "tracker", "pull", "2"); code != 0 || c.Items[0].Task.Parent != "" || c.Items[0].Parent != "" {
+		t.Fatalf("exit %d %+v", code, c)
+	}
+}
+
+// Round 2: a Jira link carries no project, even when tracker.project is set.
+func TestTrackerJiraLinkHasNoProject(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG"})
+	e.stores[storeKeychain].Set(ctx, "jira:acme.example.com", secret.Secret{User: "me@example.com", Token: "t"})
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.Link.Project != "" {
+		t.Fatalf("%+v, %v", spec.Link, err)
 	}
 }

@@ -50,13 +50,14 @@ func ValidBranch(name string) bool {
 }
 
 // Linked returns the task among tasks linked to the same issue as ext: the
-// same kind, host (any case) and key (any case, as Resolve matches it).
+// same kind, host and project (any case) and key (any case, as Resolve
+// matches it).
 func Linked(ext *External, tasks []Task) (Task, bool) {
 	if ext == nil {
 		return Task{}, false
 	}
 	for _, t := range tasks {
-		if x := t.External; x != nil && x.Kind == ext.Kind && strings.EqualFold(x.Host, ext.Host) && strings.EqualFold(x.Key, ext.Key) {
+		if x := t.External; x != nil && x.Kind == ext.Kind && strings.EqualFold(x.Host, ext.Host) && strings.EqualFold(x.Project, ext.Project) && strings.EqualFold(x.Key, ext.Key) {
 			return t, true
 		}
 	}
@@ -104,7 +105,7 @@ func CheckRelink(id string, events []Event, tasks []Task) error {
 				}
 			}
 		}
-		if t, ok := Linked(&External{Kind: d.Kind, Host: d.Host, Key: d.Key}, others); ok {
+		if t, ok := Linked(&External{Kind: d.Kind, Host: d.Host, Project: d.Project, Key: d.Key}, others); ok {
 			return fmt.Errorf("%s %s is task %s: %w", d.Kind, d.Key, t.Short, ErrLinked)
 		}
 	}

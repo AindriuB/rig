@@ -32,6 +32,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"LinkedTask", testLinkedTask},
 		{"LinkedRepeatWritesNothing", testLinkedRepeat},
 		{"LinkedCaseAndKind", testLinkedCaseAndKind},
+		{"LinkedProject", testLinkedProject},
 		{"UnlinkTask", testUnlinkTask},
 		{"RelinkRefusedWhenHeld", testRelinkRefusedWhenHeld},
 		{"TrackerSyncNeedsLink", testTrackerSyncNeedsLink},

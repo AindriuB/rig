@@ -341,8 +341,8 @@ func testRelinkRefusedWhenHeld(t *testing.T, s store.Store) {
 	other := create(t, s, "other")
 	before := len(events(t, s, other.ID))
 	for _, d := range []store.ExternalData{
-		{Kind: "jira", Host: "j.example", Key: "AB-7"},
-		{Kind: "jira", Host: "J.EXAMPLE", Key: "ab-7"},
+		{Kind: "jira", Host: "j.example", Project: "AB", Key: "AB-7"},
+		{Kind: "jira", Host: "J.EXAMPLE", Project: "ab", Key: "ab-7"},
 	} {
 		_, err := s.Update(ctx, other.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
 			e, err := store.NewEvent(store.KindExternal, d)
@@ -364,5 +364,29 @@ func testRelinkRefusedWhenHeld(t *testing.T, s store.Store) {
 	got := update(t, s, other.ID, []string{store.KindExternal}, store.ExternalData{Kind: "jira", Host: "j.example", Key: "AB-8"})
 	if got.External == nil || got.External.Key != "AB-8" {
 		t.Fatalf("link to a free issue: %+v", got.External)
+	}
+}
+
+// A link is also unique by project (any case): the same kind, host and key in
+// another project is another issue.
+func testLinkedProject(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	first, err := s.CreateTask(ctx, linkedTask("one", "AB-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := linkedTask("two", "AB-7")
+	other.External.Project = "CD"
+	second, err := s.CreateTask(ctx, other)
+	if err != nil {
+		t.Fatalf("same key, other project: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("other project returned the first task")
+	}
+	lower := linkedTask("three", "AB-7")
+	lower.External.Project = "ab"
+	if got, err := s.CreateTask(ctx, lower); !errors.Is(err, store.ErrLinked) || got.ID != first.ID {
+		t.Fatalf("project in another case = %+v, %v", got, err)
 	}
 }

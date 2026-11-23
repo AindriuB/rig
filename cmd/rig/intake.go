@@ -204,7 +204,7 @@ func intake(ctx context.Context, a *app, st store.Store, tr tracker.Tracker, wf 
 		if err := checkIssueKey("parent", p.Key); err != nil {
 			return intakeItem{}, err
 		}
-		pl := &store.External{Kind: o.Link.Kind, Host: o.Link.Host, Key: p.Key}
+		pl := &store.External{Kind: o.Link.Kind, Host: o.Link.Host, Project: o.Link.Project, Key: p.Key}
 		if pt, ok := store.Linked(pl, tasks); ok {
 			n.Parent, item.Parent = pt.ID, pt.Short
 		} else {
