@@ -505,13 +505,21 @@ func mdLink(s string) (text, href string, n int, ok bool) {
 // markdownToADF converts Markdown to an ADF document value for a v3 comment
 // body. The document always has at least one paragraph.
 func markdownToADF(md string) adfNode {
-	doc := adfNode{Version: 1, Type: "doc", Content: []adfNode{}}
-	for _, b := range parseMarkdown(md) {
+	doc := adfNode{Version: 1, Type: "doc", Content: blocksToADF(parseMarkdown(md))}
+	if len(doc.Content) == 0 {
+		doc.Content = []adfNode{{Type: "paragraph", Content: []adfNode{}}}
+	}
+	return doc
+}
+
+func blocksToADF(blocks []mdBlock) []adfNode {
+	var out []adfNode
+	for _, b := range blocks {
 		switch b.kind {
 		case blockPara:
-			doc.Content = append(doc.Content, adfNode{Type: "paragraph", Content: adfSpans(strings.Join(b.lines, "\n"))})
+			out = append(out, adfNode{Type: "paragraph", Content: adfSpans(strings.Join(b.lines, "\n"))})
 		case blockHeading:
-			doc.Content = append(doc.Content, adfNode{Type: "heading", Attrs: &adfAttrs{Level: b.level}, Content: adfSpans(b.lines[0])})
+			out = append(out, adfNode{Type: "heading", Attrs: &adfAttrs{Level: b.level}, Content: adfSpans(b.lines[0])})
 		case blockCode:
 			n := adfNode{Type: "codeBlock"}
 			if b.lang != "" {
@@ -520,24 +528,18 @@ func markdownToADF(md string) adfNode {
 			if code := strings.Join(b.lines, "\n"); code != "" {
 				n.Content = []adfNode{{Type: "text", Text: code}}
 			}
-			doc.Content = append(doc.Content, n)
+			out = append(out, n)
 		case blockQuote:
-			var inner []adfNode
-			for _, p := range parseMarkdown(strings.Join(b.lines, "\n")) {
-				inner = append(inner, adfNode{Type: "paragraph", Content: adfSpans(strings.Join(p.lines, "\n"))})
-			}
+			inner := blocksToADF(parseMarkdown(strings.Join(b.lines, "\n")))
 			if len(inner) == 0 {
 				inner = []adfNode{{Type: "paragraph", Content: []adfNode{}}}
 			}
-			doc.Content = append(doc.Content, adfNode{Type: "blockquote", Content: inner})
+			out = append(out, adfNode{Type: "blockquote", Content: inner})
 		case blockList:
-			doc.Content = append(doc.Content, adfListFrom(b.items)...)
+			out = append(out, adfListFrom(b.items)...)
 		}
 	}
-	if len(doc.Content) == 0 {
-		doc.Content = []adfNode{{Type: "paragraph", Content: []adfNode{}}}
-	}
-	return doc
+	return out
 }
 
 // adfListFrom builds nested lists from flat items; each run of one list kind
