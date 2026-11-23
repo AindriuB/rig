@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/AindriuB/rig/internal/proc"
+	"github.com/AindriuB/rig/internal/secret"
 )
 
 // patServer answers GET /rest/api/2/myself 200 for the marker Bearer token and
@@ -127,5 +129,69 @@ func TestLoginForgeToolsScrubTokens(t *testing.T) {
 	}
 	if len(opts) != 1 || !opts[0].ScrubTokens {
 		t.Errorf("auth login options %+v", opts)
+	}
+}
+
+// jiraStatusOf runs `rig login status --json` and returns the jira entry.
+func jiraStatusOf(t *testing.T, e *loginEnv) loginStatus {
+	t.Helper()
+	stubTool(t, "gh", true)
+	if code := e.run("login", "status", "--json"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	var got []loginStatus
+	if err := json.Unmarshal(e.out.Bytes(), &got); err != nil || len(got) != 2 {
+		t.Fatalf("json: %v\n%s", err, e.out.String())
+	}
+	return got[1]
+}
+
+func TestLoginStatusStoredPATChecksV2WithBearer(t *testing.T) {
+	srv, paths := patServer(t)
+	e := newLoginEnv(t)
+	e.jiraConfig(srv.URL)
+	e.stores[storeKeychain].m["jira:"+strings.TrimPrefix(srv.URL, "https://")] = secret.Secret{Token: marker}
+
+	got := jiraStatusOf(t, e)
+	if got != (loginStatus{Service: "jira", LoggedIn: true, Scope: "global", Store: "keychain"}) {
+		t.Fatalf("jira: %+v", got)
+	}
+	if p := paths(); len(p) != 1 || p[0] != "/rest/api/2/myself Bearer" {
+		t.Fatalf("requests %v", p)
+	}
+}
+
+// With a stored PAT, RIG_JIRA_TOKEN replaces the token and the login stays a
+// PAT: the env value is sent as a Bearer credential to the v2 API.
+func TestLoginStatusEnvTokenOverStoredPATIsCheckedAsBearer(t *testing.T) {
+	srv, paths := patServer(t)
+	e := newLoginEnv(t)
+	e.jiraConfig(srv.URL)
+	e.stores[storeKeychain].m["jira:"+strings.TrimPrefix(srv.URL, "https://")] = secret.Secret{Token: "stored-stale"}
+	e.envVars[jiraTokenEnv] = marker
+
+	got := jiraStatusOf(t, e)
+	if !got.LoggedIn || got.Store != "env" || got.User != "" || got.Error != "" {
+		t.Fatalf("jira: %+v", got)
+	}
+	if p := paths(); len(p) != 1 || p[0] != "/rest/api/2/myself Bearer" {
+		t.Fatalf("requests %v", p)
+	}
+}
+
+// RIG_JIRA_TOKEN alone is not enough: there is no stored user, so status
+// reports the error without calling the site.
+func TestLoginStatusEnvTokenWithNothingStoredIsAnError(t *testing.T) {
+	srv, paths := patServer(t)
+	e := newLoginEnv(t)
+	e.jiraConfig(srv.URL)
+	e.envVars[jiraTokenEnv] = marker
+
+	got := jiraStatusOf(t, e)
+	if got.LoggedIn || got.Store != "env" || !strings.Contains(got.Error, jiraTokenEnv+" is set but no user is stored") {
+		t.Fatalf("jira: %+v", got)
+	}
+	if p := paths(); len(p) != 0 {
+		t.Fatalf("requests %v", p)
 	}
 }
