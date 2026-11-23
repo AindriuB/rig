@@ -53,6 +53,8 @@ type Workflow struct {
 	Findings       Findings         `json:"findings"`
 	Counters       []string         `json:"counters,omitempty"`
 	Hooks          []Hook           `json:"hooks,omitempty"`
+	// Tracker says how issues map to tasks; nil when the file has none.
+	Tracker *Tracker `json:"tracker,omitempty"`
 }
 
 // State is one state of a workflow.
