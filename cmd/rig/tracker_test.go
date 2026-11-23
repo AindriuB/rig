@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -415,6 +416,45 @@ func TestTrackerPullSources(t *testing.T) {
 	}
 }
 
+// A workflow with a tracker map: the mapped fields are owned and filled from
+// the issue, and the snapshot holds them.
+func TestTrackerPullMapsOwnedFields(t *testing.T) {
+	wf := filepath.Join(t.TempDir(), "mapped.json")
+	if err := os.WriteFile(wf, []byte(`{
+  "name": "mapped", "version": 1, "initial": "design", "branch": "rig/{short}-{slug}",
+  "states": {"design": {"action": "design"}, "ready": {"action": "start"}, "done": {"final": true}},
+  "transitions": [{"from": "design", "to": "ready"}, {"from": "ready", "to": "done"}],
+  "fields": {"prio": {"type": "string"}, "tags": {"type": "list"}, "ac": {"type": "list"}, "owner": {"type": "string"}},
+  "tracker": {"intake": {"states": ["design", "ready"]},
+    "map": {"title": "title", "body": "description", "prio": "priority", "tags": "labels", "ac": "acceptance"}}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := newTrkEnv(t, ghCfg())
+	e.envVars["RIG_WORKFLOW"] = wf
+	is := issue("5", "Five")
+	is.Priority, is.Labels, is.Acceptance = "High", []string{"x", "y"}, []string{"it works"}
+	e.tr = &scripted{issues: map[string]tracker.Issue{"5": is}}
+	var out pulled
+	if code := e.json(&out, "tracker", "pull", "5", "--state", "ready"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	it := out.Items[0].Task
+	if it.State != "ready" || it.Fields["prio"] != "High" || len(it.Fields["tags"].([]any)) != 2 || it.Fields["ac"].([]any)[0] != "it works" ||
+		!strings.HasPrefix(it.Branch, "rig/t-") || len(it.External.Drift) != 0 || strings.Join(it.External.Owned, ",") != "ac,body,prio,tags,title" {
+		t.Fatalf("%+v", it)
+	}
+	if _, ok := it.Fields["owner"]; ok {
+		t.Fatal("an unmapped field was filled")
+	}
+	// Without --state the first intake state is used.
+	e.tr.(*scripted).issues["6"] = issue("6", "Six")
+	out = pulled{}
+	if code := e.json(&out, "tracker", "pull", "6"); code != 0 || out.Items[0].Task.State != "design" {
+		t.Fatalf("exit %d %+v", code, out)
+	}
+}
+
 type refreshRow struct {
 	Task, Key, Status string
 	Changed           []string
@@ -555,6 +595,72 @@ func TestTrackerRefresh(t *testing.T) {
 	}
 	if code := e.run("tracker", "refresh"); code != 2 {
 		t.Fatalf("no target: exit %d", code)
+	}
+}
+
+// AC7: show prints the Issue and writes nothing; status prints
+// {kind, trusted, capabilities, login}, and a rejected login is login.ok=false
+// with exit 0.
+func TestTrackerShowAndStatus(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	is := issue("7", "Seven")
+	is.Labels = []string{"a"}
+	is.Parent = &tracker.IssueRef{Key: "1", Title: "Top"}
+	f := fake.New(allCaps, []tracker.Issue{is}, nil)
+	e.tr = f
+	var raw map[string]any
+	if code := e.json(&raw, "tracker", "show", "7"); code != 0 {
+		t.Fatalf("exit %d %s", code, e.err.String())
+	}
+	for _, k := range []string{"key", "url", "title", "description", "acceptance", "priority", "assignee", "labels", "type", "status", "parent", "rev"} {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("show --json has no %q: %v", k, raw)
+		}
+	}
+	if raw["key"] != "7" || raw["title"] != "Seven" || len(raw) != 12 {
+		t.Fatalf("%v", raw)
+	}
+	if code := e.run("tracker", "show", "7"); code != 0 || !strings.Contains(e.out.String(), "Seven") {
+		t.Fatalf("text: exit %d %q", code, e.out.String())
+	}
+	if all, _ := e.st().Tasks(ctx, store.TaskFilter{}); len(all) != 0 {
+		t.Fatal("show wrote a task")
+	}
+	if code := e.run("tracker", "show", "99"); code != 2 {
+		t.Fatalf("not found: exit %d", code)
+	}
+	if code := e.run("tracker", "show", "a/b"); code != 2 {
+		t.Fatalf("bad key: exit %d", code)
+	}
+
+	var st struct {
+		Kind         string
+		Trusted      bool
+		Capabilities *tracker.Caps
+		Login        struct {
+			OK    bool
+			Error string
+		}
+	}
+	if code := e.json(&st, "tracker", "status"); code != 0 || st.Kind != "github" || !st.Trusted || st.Capabilities == nil ||
+		!st.Capabilities.Search || !st.Login.OK {
+		t.Fatalf("exit %d %+v", code, st)
+	}
+	f.Err = tracker.ErrAuth
+	st.Login.OK, st.Capabilities = true, &tracker.Caps{}
+	if code := e.json(&st, "tracker", "status"); code != 0 || st.Login.OK || st.Login.Error == "" || st.Capabilities != nil {
+		t.Fatalf("auth: exit %d %+v", code, st)
+	}
+	f.Err = errors.New("boom")
+	if code := e.run("tracker", "status"); code != 2 {
+		t.Fatalf("other error: exit %d", code)
+	}
+
+	// No Jira login is reported, not failed.
+	e = newTrkEnv(t, map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG"})
+	st.Login.OK = true
+	if code := e.json(&st, "tracker", "status"); code != 0 || st.Kind != "jira" || st.Login.OK || !strings.Contains(st.Login.Error, "rig login jira") {
+		t.Fatalf("no login: exit %d %+v", code, st)
 	}
 }
 
