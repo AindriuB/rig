@@ -768,6 +768,101 @@ func TestLoginJiraRefusesTrackedLocalTrackerURL(t *testing.T) {
 	}
 }
 
+// refuseTrackerBypass asserts login jira refuses before any prompt or token read.
+func refuseTrackerBypass(t *testing.T, e *loginEnv) {
+	t.Helper()
+	e.stdin("u\n" + marker + "\n")
+	if code := e.run("login", "jira"); code != 2 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	if !strings.Contains(e.err.String(), "which is committed to this repository") || strings.Contains(e.err.String(), "Jira site:") {
+		t.Fatalf("stderr %q", e.err.String())
+	}
+	if len(e.stores[storeKeychain].m) != 0 {
+		t.Fatal("token stored")
+	}
+	if b, _ := io.ReadAll(e.a.stdin); !strings.Contains(string(b), marker) {
+		t.Fatal("stdin was read before the refusal")
+	}
+}
+
+func TestLoginJiraRefusesTrackedDirCaseVariant(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	e.localTrackerURL(srv.URL)
+	up, low := filepath.Join(e.repo, ".RIG"), filepath.Join(e.repo, ".rig")
+	if err := os.Rename(low, up); err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, e.repo, "add", ".RIG/config.json")
+	if err := os.Rename(up, low); err != nil {
+		t.Fatal(err)
+	}
+	refuseTrackerBypass(t, e)
+}
+
+func TestLoginJiraRefusesTrackedFileCaseVariant(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	e.localTrackerURL(srv.URL)
+	dir := filepath.Join(e.repo, ".rig")
+	if err := os.Rename(filepath.Join(dir, "config.json"), filepath.Join(dir, "Config.json")); err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, e.repo, "add", ".rig/Config.json")
+	if err := os.Rename(filepath.Join(dir, "Config.json"), filepath.Join(dir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	refuseTrackerBypass(t, e)
+}
+
+func TestLoginJiraRefusesSymlinkedRigDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privileges on Windows")
+	}
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	b, _ := json.Marshal(map[string]any{"tracker": map[string]any{"url": srv.URL}})
+	if err := os.MkdirAll(filepath.Join(e.repo, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.repo, "real", "config.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitc(t, e.repo, "add", "real/config.json")
+	if err := os.Symlink("real", filepath.Join(e.repo, ".rig")); err != nil {
+		t.Fatal(err)
+	}
+	refuseTrackerBypass(t, e)
+}
+
+func TestLoginJiraRefusesSymlinkedConfigFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privileges on Windows")
+	}
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	b, _ := json.Marshal(map[string]any{"tracker": map[string]any{"url": srv.URL}})
+	if err := os.WriteFile(filepath.Join(e.repo, "elsewhere.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(e.repo, ".rig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "elsewhere.json"), filepath.Join(e.repo, ".rig", "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	refuseTrackerBypass(t, e)
+}
+
+func TestLoginJiraRefusesTrackedGitlinkAtRig(t *testing.T) {
+	srv := jiraServer(t, 200)
+	e := newLoginEnv(t)
+	e.localTrackerURL(srv.URL)
+	gitc(t, e.repo, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",.rig")
+	refuseTrackerBypass(t, e)
+}
+
 func TestLoginJiraAcceptsUntrackedLocalTrackerURL(t *testing.T) {
 	srv := jiraServer(t, 200)
 	e := newLoginEnv(t)
