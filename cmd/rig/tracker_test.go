@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -761,5 +762,91 @@ func TestTrackerRepoHostAlias(t *testing.T) {
 	spec, err := e.a.trackerSpec(ctx, e.repo)
 	if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
 		t.Fatalf("spec %+v, %v", spec, err)
+	}
+}
+
+type parentRefresh struct {
+	Tasks []struct {
+		Task, Key, Status string
+		Changed, Warnings []string
+	}
+}
+
+// F4: refresh links a task to its parent once the parent's issue is a task.
+func TestTrackerRefreshResolvesParent(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = &scripted{issues: map[string]tracker.Issue{}, errs: map[string]error{}}
+	s := e.tr.(*scripted)
+	for _, is := range chain()[:2] {
+		s.issues[is.Key] = is
+	}
+	var child pulled
+	if code := e.json(&child, "tracker", "pull", "2"); code != 0 {
+		t.Fatal(code)
+	}
+	var parent pulled
+	if code := e.json(&parent, "tracker", "pull", "1"); code != 0 {
+		t.Fatal(code)
+	}
+	cs, ps := child.Items[0].Task.Short, parent.Items[0].Task
+	task := func(ref string) store.Task {
+		tk, err := e.st().Task(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tk
+	}
+	if task(cs).Parent != "" {
+		t.Fatal("child has a parent before the refresh")
+	}
+	var dry parentRefresh
+	e.out.Reset()
+	e.json(&dry, "tracker", "refresh", cs, "--dry-run")
+	if task(cs).Parent != "" {
+		t.Fatal("--dry-run set the parent")
+	}
+	var out parentRefresh
+	e.out.Reset()
+	if code := e.json(&out, "tracker", "refresh", cs); code != 0 {
+		t.Fatalf("exit %d %s", code, e.err.String())
+	}
+	if got := task(cs).Parent; got != ps.ID {
+		t.Fatalf("parent = %q, want %q", got, ps.ID)
+	}
+	if !slices.Contains(out.Tasks[0].Changed, "parent") {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// F4: a parent that would make a cycle is a warning, not a parent.
+func TestTrackerRefreshParentCycle(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	s := &scripted{issues: map[string]tracker.Issue{}, errs: map[string]error{}}
+	e.tr = s
+	for _, is := range chain()[:2] {
+		s.issues[is.Key] = is
+	}
+	var child, parent pulled
+	e.json(&child, "tracker", "pull", "2")
+	e.out.Reset()
+	e.json(&parent, "tracker", "pull", "1")
+	cs, ps := child.Items[0].Task, parent.Items[0].Task
+	// The parent task is made a child of the child task by hand.
+	if _, err := e.st().Update(ctx, ps.Short, func(store.Task, []store.Finding) ([]store.Event, error) {
+		ev, err := store.NewEvent(store.KindParent, store.ParentData{Task: cs.ID})
+		return []store.Event{ev}, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var out parentRefresh
+	e.out.Reset()
+	if code := e.json(&out, "tracker", "refresh", cs.Short); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if tk, _ := e.st().Task(ctx, cs.Short); tk.Parent != "" {
+		t.Fatalf("a cycle was linked: %q", tk.Parent)
+	}
+	if len(out.Tasks[0].Warnings) != 1 || !strings.Contains(out.Tasks[0].Warnings[0], "cycle") {
+		t.Fatalf("%+v", out)
 	}
 }

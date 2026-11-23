@@ -467,6 +467,7 @@ type refreshTask struct {
 	Changed  []string        `json:"changed"`
 	Replaced []replacedField `json:"replaced"`
 	Error    string          `json:"error,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
 }
 
 // refreshOut is `rig tracker refresh --json`.
@@ -519,6 +520,62 @@ func (a *app) planRefresh(t store.Task, issue tracker.Issue, values map[string]a
 	}
 	p.events = append(evs, sync)
 	return p, nil
+}
+
+// resolveParent links t to the task for its issue's parent, once that parent
+// is in the store. A parent that would make a cycle is a warning, and no
+// parent is set. With dry it writes nothing. It adds "parent" to res.Changed
+// when the parent is, or would be, set.
+func (a *app) resolveParent(ctx context.Context, w *work, t store.Task, dry bool, res *refreshTask) error {
+	ext := t.External
+	find := func(tasks []store.Task) (string, string) {
+		pt, ok := store.Linked(&store.External{Kind: ext.Kind, Host: ext.Host, Key: ext.ParentKey}, tasks)
+		if !ok {
+			return "", ""
+		}
+		if err := store.CheckParent(t.ID, pt.ID, tasks); err != nil {
+			return "", fmt.Sprintf("parent %s of %s is not linked: %v", ext.ParentKey, ext.Key, err)
+		}
+		return pt.ID, ""
+	}
+	tasks, err := w.st.Tasks(ctx, store.TaskFilter{})
+	if err != nil {
+		return err
+	}
+	parent, warn := find(tasks)
+	if warn != "" {
+		res.Warnings = append(res.Warnings, warn)
+	}
+	if parent == "" {
+		return nil
+	}
+	if !dry {
+		var applied bool
+		_, err = w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+			if cur.Parent != "" || cur.External == nil || cur.External.ParentKey != ext.ParentKey {
+				return nil, nil
+			}
+			all, err := w.st.Tasks(ctx, store.TaskFilter{})
+			if err != nil {
+				return nil, err
+			}
+			id, _ := find(all)
+			if id == "" {
+				return nil, nil
+			}
+			ev, err := store.NewEvent(store.KindParent, store.ParentData{Task: id})
+			applied = err == nil
+			return []store.Event{ev}, err
+		})
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return nil
+		}
+	}
+	res.Changed = append(res.Changed, "parent")
+	return nil
 }
 
 // linkMismatch says how a task's link differs from the configured tracker, or
@@ -592,10 +649,16 @@ func (a *app) refreshOne(ctx context.Context, w *work, tr tracker.Tracker, spec 
 			return res
 		}
 	}
+	if ext.ParentKey != "" && t.Parent == "" {
+		if err := a.resolveParent(ctx, w, t, dry, &res); err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
 	res.Status = "unchanged"
-	if len(plan.changed) > 0 {
+	if len(plan.changed) > 0 || len(res.Changed) > 0 {
 		res.Status = "updated"
-		res.Changed = plan.changed
+		res.Changed = append(plan.changed, res.Changed...)
 	}
 	if plan.replaced != nil {
 		res.Replaced = plan.replaced
