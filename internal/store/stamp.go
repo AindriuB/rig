@@ -20,11 +20,35 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 	}
 	now := o.Now().UTC().Round(0)
 	id := NewULID(now)
-	raw, err := json.Marshal(CreatedData{
+	d := CreatedData{
 		Short: ShortID(TaskPrefix, id, taken), Slug: n.Slug, Title: n.Title,
 		Body: n.Body, Branch: n.Branch, Fields: n.Fields, Workflow: n.Workflow,
-		State: n.Initial,
-	})
+		State: n.Initial, Parent: n.Parent,
+	}
+	if x := n.External; x != nil {
+		if x.Kind == "" || x.Key == "" {
+			return Event{}, errors.New("new task: external link has no kind or key")
+		}
+		d.External = &ExternalData{
+			Kind: x.Kind, Host: x.Host, Project: x.Project, Key: x.Key, URL: x.URL,
+			Type: x.Type, Owned: x.Owned, ParentKey: x.ParentKey,
+		}
+		if n.Snapshot != nil {
+			at := x.SyncedAt
+			if at.IsZero() {
+				at = now
+			}
+			d.Snapshot = &TrackerSyncData{At: at, Rev: x.Rev, Values: n.Snapshot}
+		}
+	}
+	if n.BranchTemplate != "" {
+		key := ""
+		if n.External != nil {
+			key = n.External.Key
+		}
+		d.Branch = ExpandBranch(n.BranchTemplate, d.Short, n.Slug, id, key)
+	}
+	raw, err := json.Marshal(d)
 	if err != nil {
 		return Event{}, fmt.Errorf("new task: %w", err)
 	}
@@ -81,6 +105,22 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 			err = check(e, func(d *CountData) error {
 				if d.Counter == "" {
 					return errors.New("no counter name")
+				}
+				return nil
+			})
+		case KindParent:
+			err = check(e, func(*ParentData) error { return nil })
+		case KindExternal:
+			err = check(e, func(d *ExternalData) error {
+				if d.Kind == "" || d.Key == "" {
+					return errors.New("no kind or key")
+				}
+				return nil
+			})
+		case KindTrackerSync:
+			e.Data, err = rewrite(e, func(d *TrackerSyncData) error {
+				if d.At.IsZero() {
+					d.At = now
 				}
 				return nil
 			})

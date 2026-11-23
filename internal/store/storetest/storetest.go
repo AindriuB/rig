@@ -29,6 +29,12 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Findings", testFindings},
 		{"Notes", testNotes},
 		{"TasksNewestFirst", testTasksNewestFirst},
+		{"LinkedTask", testLinkedTask},
+		{"LinkedRepeatWritesNothing", testLinkedRepeat},
+		{"ParentedTask", testParentedTask},
+		{"ParentUpdates", testParentUpdates},
+		{"BranchStamped", testBranchStamped},
+		{"ResolveByKey", testResolveByKey},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })

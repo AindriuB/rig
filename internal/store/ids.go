@@ -22,7 +22,7 @@ func ShortID(prefix, ulid string, taken func(string) bool) string {
 }
 
 // Resolve finds the task ref names among tasks: a full ULID (in any case),
-// a short id or a slug. A full ULID match wins outright. Otherwise one match
+// a short id, a slug or an external issue key (any case). A full ULID match wins outright. Otherwise one match
 // is returned, none is ErrNotFound and several is an *AmbiguousError listing
 // the matching ids in the order tasks gave them.
 func Resolve(ref string, tasks []Task) (Task, error) {
@@ -37,7 +37,7 @@ func Resolve(ref string, tasks []Task) (Task, error) {
 	}
 	var matches []Task
 	for _, t := range tasks {
-		if t.Short == ref || t.Slug == ref {
+		if t.Short == ref || t.Slug == ref || (t.External != nil && strings.EqualFold(t.External.Key, ref)) {
 			matches = append(matches, t)
 		}
 	}

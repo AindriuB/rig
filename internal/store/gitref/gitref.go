@@ -328,6 +328,9 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 		return store.Task{}, err
 	}
 	tasks, _ := fold(logs)
+	if existing, err := store.PrepareCreate(&n, tasks); err != nil {
+		return existing, err
+	}
 	shorts := make(map[string]bool, len(tasks))
 	for _, t := range tasks {
 		shorts[t.Short] = true
