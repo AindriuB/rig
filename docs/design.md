@@ -10,18 +10,19 @@ built.
 workflow transitions, push, pull requests, CI waits, context briefs, config,
 login) that any loop can use, driven by any harness: Claude Code, other agent
 CLIs, CI or a person. It has no built-in lifecycle: a workflow file defines
-states, transitions and the gates that guard them. claude-kit's loop is one
-such workflow, owned by the kit. The sections below that describe the kit
-are the history of how rig started.
+states, transitions and the gates that guard them. A review loop is one
+such workflow, owned by the project that runs it. The sections below that
+describe such a loop are the history of how rig started.
 
-`rig` is its own tool. It was built inside claude-kit under `cli/` and moved
-here with its history in phase 1.5. Nothing in it imports from or reads
-claude-kit; the kit uses it only through the contract below.
+`rig` is its own tool. It began as a subdirectory of an agent toolkit and
+moved here with its history in phase 1.5. Its callers use it only through the
+contract below.
 
 ## Why
 
-The kit runs a plan → fanout → review → verify → record loop. Today its state
-and its rules live in prose and shell text:
+rig started as the mechanics of an agent review loop: plan → fanout →
+review → verify → record. In that loop, state and rules lived in prose and
+shell text:
 
 - **State is markdown the model re-reads.** Task state is parsed out of
   `## Review round N` and `## Wave verified — <sha>` sections, then confirmed
@@ -101,17 +102,15 @@ Supporting packages:
   | `host` | forge host, for self-hosted instances | the origin host |
   | `pushPrefixes` | branch prefixes `rig push` may push | `["task", "record"]` |
 
-Install with `go install github.com/AindriuB/rig/cmd/rig@<tag>`. claude-kit's
-`install.sh` and `install.ps1` install a pinned tag, check `rig version`
-against the minimum the kit needs (`RIG_MIN_VERSION`, declared once in each
-installer), and carry on with a message when Go or the fetch is missing: the
-kit's older scripts still work without rig.
+Install with `go install github.com/AindriuB/rig/cmd/rig@<tag>`. A caller
+that installs rig for its users can pin a tag and check `rig version` against
+the minimum it needs.
 
 ## The contract between rig and its callers
 
-A caller, claude-kit being the first, talks to rig only through its commands, their exit codes and their
+A caller talks to rig only through its commands, their exit codes and their
 `--json` output. It never imports rig's code or reads its files, and rig
-never reads the kit's. That is what lets rig live in another repository and
+never reads the caller's. That is what lets rig live in another repository and
 be versioned on its own.
 
 `rig version` prints a semantic version (`0.1.0` for phase 1, `0.3.0` with
@@ -315,24 +314,23 @@ commands and the extension points.
 
 The state machine this section used to define (planned → implementing →
 reviewed → verified@sha → pr_open → ci_green → ready → merged) is now
-claude-kit's workflow file, shown in phase-2.md as the worked example.
+an example workflow file, shown in phase-2.md as the worked example.
 
 ## Phases
 
 | Phase | What it delivers |
 |---|---|
 | 0 | This document, and a baseline of permission prompts and tokens per task |
-| 1 | `rig push`, `rig pr`, `rig status`, `rig version`; the github and gitlab adapters; the kit's commands and agents switched to them |
-| 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history; the kit installs a pinned release |
-| 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. The kit's loop is a test fixture, not built in |
+| 1 | `rig push`, `rig pr`, `rig status`, `rig version`; the github and gitlab adapters |
+| 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history |
+| 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
-| 3 | Views and exports: Markdown and HTML renderings of tasks, notes and history from the store, by template, for any workflow. Importers for existing plans (the kit's `docs/plan` first) as programs the user runs |
+| 3 | Views and exports: Markdown and HTML renderings of tasks, notes and history from the store, by template, for any workflow. Importers for existing plans (markdown `docs/plan` task files first) as programs the user runs |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs, and tracker adapters (`jira`, `github`, `gitlab`, and `exec` for any program) |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
-| 1.0 | The kit-specific parts of phase 1 (`.claude/rig.json`, `claude-handoff.md` and `docs/plan/tasks` reads, default push prefixes) move behind config or are dropped, as a major change |
+| 1.0 | Phase 1's compatibility parts (`.claude/rig.json`, `claude-handoff.md` and `docs/plan/tasks` reads, default push prefixes) move behind config or are dropped, as a major change |
 
 README, architecture, conventions, release notes and ADRs stay in the tree
 throughout. Plans, tasks, findings and history are what move into the store,
-for the projects that choose to use it. The kit's own changes to become one
-consumer of these actions are a follow-up in the kit's repository.
+for the projects that choose to use it.

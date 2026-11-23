@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// fixture reads and parses testdata/claude-kit-loop.json.
+// fixture reads and parses testdata/review-loop.json.
 func fixture(t *testing.T) *Workflow {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "claude-kit-loop.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func fixture(t *testing.T) *Workflow {
 
 func TestParseFixture(t *testing.T) {
 	w := fixture(t)
-	if w.Name != "claude-kit-loop" || w.Version != 1 || w.Initial != "planned" || w.OnNewCommit != "implementing" {
+	if w.Name != "review-loop" || w.Version != 1 || w.Initial != "planned" || w.OnNewCommit != "implementing" {
 		t.Fatalf("header = %q %d %q %q", w.Name, w.Version, w.Initial, w.OnNewCommit)
 	}
 	if !w.States["verified"].ShaBound || !w.States["merged"].Final || w.States["ready"].Who != WhoHuman {
@@ -207,7 +207,7 @@ func TestValidateRefusesOverlappingRoutes(t *testing.T) {
 	// The fixture before review round 1: a from-list transition back to
 	// implementing that also named reviewed, beside the gated, counted
 	// reviewed → implementing.
-	data, err := os.ReadFile(filepath.Join("testdata", "claude-kit-loop.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

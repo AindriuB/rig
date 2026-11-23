@@ -1,5 +1,5 @@
 {
-  "name": "claude-kit-loop",
+  "name": "review-loop",
   "version": 1,
   "initial": "planned",
   "branch": "task/{short}-{slug}",

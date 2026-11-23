@@ -159,16 +159,16 @@ placeholder inside longer text, such as `--to={state}`, is refused by
 validation. In a hook `{state}` is the state entered; in a gate it is the state
 the move leaves.
 
-## Worked example: the claude-kit loop
+## Worked example: a review loop
 
-claude-kit's plan, implement, review, verify, pull request, merge loop is one
-workflow among others. The file below is the fixture rig tests against
-(`internal/workflow/testdata/claude-kit-loop.json`); the kit owns its real
-copy.
+An example review workflow: plan, implement, review, verify, pull request,
+merge. It is one workflow among others. The file below is the fixture rig
+tests against (`internal/workflow/testdata/review-loop.json`); a project that
+uses it keeps its own copy.
 
 ```json
 {
-  "name": "claude-kit-loop",
+  "name": "review-loop",
   "version": 1,
   "initial": "planned",
   "branch": "task/{short}-{slug}",

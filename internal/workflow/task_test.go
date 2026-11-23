@@ -166,7 +166,7 @@ func TestView(t *testing.T) {
 	w := fixture(t)
 	task := store.Task{
 		ID: "01X", Short: "t-1", Slug: "s", Title: "T", State: "ready", StateSha: "s1",
-		Shas: map[string]string{"ready": "s1"}, PR: 4, Workflow: store.WorkflowRef{Name: "claude-kit-loop", Version: 1},
+		Shas: map[string]string{"ready": "s1"}, PR: 4, Workflow: store.WorkflowRef{Name: "review-loop", Version: 1},
 	}
 	v := w.View(task, "s2")
 	if v.State != "implementing" || v.RecordedState != "ready" || v.HeadSha != "s2" || v.StateSha != "s1" || v.Branch != "task/t-1-s" {

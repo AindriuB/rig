@@ -221,7 +221,7 @@ func TestWorkflowValidateUnknownStates(t *testing.T) {
 }
 
 // TestWorkflowEndToEnd runs both subcommands on the gitref store in a
-// throwaway repository, under the kit-loop workflow.
+// throwaway repository, under the review-loop workflow.
 func TestWorkflowEndToEnd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -229,7 +229,7 @@ func TestWorkflowEndToEnd(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	repo, _ := newRepo(t)
-	fixture, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "claude-kit-loop.json"))
+	fixture, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

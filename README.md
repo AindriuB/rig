@@ -3,9 +3,8 @@
 `rig` is a small command-line tool for the mechanical parts of a
 branch-per-task workflow: pushing a task branch, opening and reading pull
 requests, waiting for CI, keeping tasks, findings and notes, and printing where
-the work stands. It was built
-for [claude-kit](https://github.com/AindriuB/workspace), where coding agents
-run these steps many times a day, but it does not depend on the kit.
+the work stands. It was built for loops where coding agents run these
+steps many times a day, but it does not depend on any particular loop.
 
 It exists for two reasons:
 

@@ -45,9 +45,9 @@ func mustFindings(t *testing.T, st store.Store, id string) []store.Finding {
 	return fs
 }
 
-func kitLoopPath(t *testing.T) string {
+func reviewLoopPath(t *testing.T) string {
 	t.Helper()
-	p, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "claude-kit-loop.json"))
+	p, err := filepath.Abs(filepath.Join("..", "..", "internal", "workflow", "testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func TestFindingUsageAndWorkflowErrors(t *testing.T) {
 func TestFindingFields(t *testing.T) {
 	st := memstore.New(store.Options{Now: tick()})
 	a, _ := workApp(t, st)
-	kit := kitLoopPath(t)
+	loop := reviewLoopPath(t)
 	a.getenv = func(k string) string {
 		if k == "RIG_WORKFLOW" {
-			return kit
+			return loop
 		}
 		return ""
 	}
@@ -349,16 +349,16 @@ func TestFindingAddAndSetSurviveConcurrentChange(t *testing.T) {
 }
 
 // TestFindingNoteEndToEnd runs both commands on a gitref store in a throwaway
-// repository, under the kit-loop workflow.
+// repository, under the review-loop workflow.
 func TestFindingNoteEndToEnd(t *testing.T) {
 	repo, _ := newRepo(t)
-	kit := kitLoopPath(t)
+	loop := reviewLoopPath(t)
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "none"))
 	a := &app{cwd: repo, getenv: func(k string) string {
 		switch k {
 		case "RIG_WORKFLOW":
-			return kit
+			return loop
 		case "RIG_ACTOR":
 			return "tester"
 		}

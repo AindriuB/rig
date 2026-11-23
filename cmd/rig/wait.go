@@ -20,7 +20,7 @@ const (
 )
 
 // prWait implements `rig pr wait`, which blocks until a pull request's checks
-// or one CI run finish. It keeps the contract of claude-kit's ci-wait.sh, down to
+// or one CI run finish. It keeps the contract of an earlier ci-wait.sh script, down to
 // the "ci-wait:" prefix on errors, because callers read both.
 //
 // Exit 0: green, and one line of output. Exit 1: red; the failed check or job

@@ -25,16 +25,16 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("basic severities = %v", s)
 	}
 
-	abs, err := filepath.Abs(filepath.Join("testdata", "claude-kit-loop.json"))
+	abs, err := filepath.Abs(filepath.Join("testdata", "review-loop.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	w, src, err = Load(abs)
-	if err != nil || src.Path != abs || src.Preset != "" || w.Name != "claude-kit-loop" {
+	if err != nil || src.Path != abs || src.Preset != "" || w.Name != "review-loop" {
 		t.Fatalf("Load(fixture) = %v, %v", src, err)
 	}
 
-	for _, bad := range []string{"", "nope", filepath.Join("testdata", "claude-kit-loop.json"), "./basic", filepath.Join(t.TempDir(), "missing.json")} {
+	for _, bad := range []string{"", "nope", filepath.Join("testdata", "review-loop.json"), "./basic", filepath.Join(t.TempDir(), "missing.json")} {
 		if _, _, err := Load(bad); err == nil {
 			t.Errorf("Load(%q) succeeded", bad)
 		}
@@ -205,8 +205,8 @@ func (h *harness) update(ref string, kind string, data any) {
 	}
 }
 
-func TestWalkClaudeKitLoop(t *testing.T) {
-	abs, _ := filepath.Abs(filepath.Join("testdata", "claude-kit-loop.json"))
+func TestWalkReviewLoop(t *testing.T) {
+	abs, _ := filepath.Abs(filepath.Join("testdata", "review-loop.json"))
 	w, _, err := Load(abs)
 	if err != nil {
 		t.Fatal(err)

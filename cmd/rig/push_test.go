@@ -68,7 +68,7 @@ func TestPushFallsBackToTheBranchWhenTheTaskFileIsGone(t *testing.T) {
 }
 
 // TestPushRefusals is the refusal table: every case from the "asks" list of
-// claude-kit's push-guard tests that can be written as arguments, and more. Each must
+// an earlier push-guard hook's tests that can be written as arguments, and more. Each must
 // exit 2 before `git push` starts and leave the remote as it was.
 func TestPushRefusals(t *testing.T) {
 	repo, remote := newRepo(t)
