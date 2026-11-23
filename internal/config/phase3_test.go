@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -43,8 +44,13 @@ func TestTrackerCommandSetScopes(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.root, ".rig")); err == nil {
 		t.Error("a refused write created .rig")
 	}
-	want := []string{"/usr/bin/prog", "--flag", "a b"}
-	e.global(t, `{"tracker":{"command":["/usr/bin/prog","--flag","a b"]}}`)
+	prog := filepath.Join(t.TempDir(), "prog")
+	want := []string{prog, "--flag", "a b"}
+	raw, err := json.Marshal(map[string]any{"tracker": map[string]any{"command": want}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.global(t, string(raw))
 	v, ok := open(t, e).Get(KeyTrackerCommand)
 	if !ok || v.Scope != ScopeGlobal || !reflect.DeepEqual(v.Value, want) {
 		t.Fatalf("Get = %+v, %v", v, ok)
