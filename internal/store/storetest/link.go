@@ -3,9 +3,12 @@ package storetest
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"reflect"
 	"testing"
 
+	"github.com/AindriuB/rig/internal/proc"
 	"github.com/AindriuB/rig/internal/store"
 )
 
@@ -144,6 +147,34 @@ func testBranchStamped(t *testing.T, s store.Store) {
 	plain := store.NewTask{Slug: "plain", Workflow: basic, Initial: "todo", Branch: "task/plain"}
 	if got, err := s.CreateTask(ctx, plain); err != nil || got.Branch != "task/plain" {
 		t.Fatalf("no template: %+v, %v", got, err)
+	}
+}
+
+// An unlinked task stamped from a template that uses {key} gets a branch
+// git accepts; a template that cannot give one is refused and writes nothing.
+func testBranchStampedUnlinked(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	for i, tmpl := range []string{"rig/{key}", "{key}-{slug}", "{key}/{short}"} {
+		n := store.NewTask{Slug: fmt.Sprintf("unlinked-%d", i), Workflow: basic, Initial: "todo", BranchTemplate: tmpl}
+		task, err := s.CreateTask(ctx, n)
+		if err != nil {
+			t.Fatalf("%s: %v", tmpl, err)
+		}
+		res, err := proc.Run(ctx, proc.Options{
+			Dir: t.TempDir(),
+			Env: []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull},
+		}, "git", "check-ref-format", "--branch", task.Branch)
+		if err != nil {
+			t.Fatalf("%s: branch %q refused by git: %v %s", tmpl, task.Branch, err, res.Stderr)
+		}
+	}
+	before := len(mustTasks(t, s))
+	bad := store.NewTask{Slug: "bad", Workflow: basic, Initial: "todo", BranchTemplate: "{key}/"}
+	if _, err := s.CreateTask(ctx, bad); err == nil {
+		t.Fatal("invalid branch template accepted")
+	}
+	if after := len(mustTasks(t, s)); after != before {
+		t.Fatalf("refused create wrote a task: %d tasks, want %d", after, before)
 	}
 }
 

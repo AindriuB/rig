@@ -95,8 +95,49 @@ func TestExpandBranch(t *testing.T) {
 	if want := "feat/proj-1-x-42-add-it-t-ab12-01ID"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if got := ExpandBranch("b/{key}", "s", "s", "i", ""); got != "b/" {
-		t.Fatalf("no key: %q", got)
+	// With no key, {key} is the short id.
+	for tmpl, want := range map[string]string{
+		"rig/{key}":     "rig/t-ab12",
+		"{key}-{slug}":  "t-ab12-add-it",
+		"{key}/{short}": "t-ab12/t-ab12",
+	} {
+		if got := ExpandBranch(tmpl, "t-ab12", "add-it", "01ID", ""); got != want {
+			t.Fatalf("no key: ExpandBranch(%q) = %q, want %q", tmpl, got, want)
+		}
+	}
+}
+
+func TestValidBranch(t *testing.T) {
+	for _, name := range []string{"rig/t-ab12", "t-ab12-add-it", "feat/ab-7/x", "a.b", "a@b"} {
+		if !ValidBranch(name) {
+			t.Errorf("ValidBranch(%q) = false", name)
+		}
+	}
+	for _, name := range []string{
+		"", "@", "HEAD", "rig/", "/x", "a//b", "-slug", "a..b", "a.", "a/.b", "a.lock", "a/b.lock/c",
+		"a@{b", "a b", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", `a\b`, "a\x7fb", "a\tb",
+	} {
+		if ValidBranch(name) {
+			t.Errorf("ValidBranch(%q) = true", name)
+		}
+	}
+}
+
+func TestOptionsCreatedUnlinkedBranch(t *testing.T) {
+	o := Options{Now: func() time.Time { return t0 }}
+	e, err := o.Created(NewTask{Slug: "s", Initial: "todo", BranchTemplate: "rig/{key}"}, func(string) bool { return false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d CreatedData
+	if err := json.Unmarshal(e.Data, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Branch != "rig/"+d.Short {
+		t.Fatalf("branch = %q short %q", d.Branch, d.Short)
+	}
+	if _, err := o.Created(NewTask{Slug: "s", Initial: "todo", BranchTemplate: "rig/{slug}.lock"}, func(string) bool { return false }); err == nil {
+		t.Fatal("invalid branch accepted")
 	}
 }
 
