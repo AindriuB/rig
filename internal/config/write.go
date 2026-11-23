@@ -26,22 +26,8 @@ const ignoreLine = "/.rig/"
 // ScopeGlobal. It refuses credential-like keys, unknown keys and the
 // global-only keys, and checks the value first. The write is atomic.
 func (l *Layers) Set(scope, key, value string) error {
-	if err := checkScope(scope, key); err != nil {
-		return err
-	}
 	if err := checkSettable(key); err != nil {
 		return err
-	}
-	if key == KeyTrackerCommand {
-		var raw any
-		if err := json.Unmarshal([]byte(value), &raw); err != nil {
-			return fmt.Errorf("%s must be a JSON list such as [\"prog\", \"arg\"]: %w", key, err)
-		}
-		list, err := parseCommand(raw)
-		if err != nil {
-			return err
-		}
-		return l.write(scope, key, list)
 	}
 	if err := checkValue(key, value); err != nil {
 		return err
@@ -57,9 +43,6 @@ func (l *Layers) Set(scope, key, value string) error {
 // Unset removes key from scope. Removing a key that is not set is not an
 // error and writes nothing.
 func (l *Layers) Unset(scope, key string) error {
-	if err := checkScope(scope, key); err != nil {
-		return err
-	}
 	if err := checkSettable(key); err != nil {
 		return err
 	}

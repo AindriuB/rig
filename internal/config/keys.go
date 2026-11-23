@@ -93,20 +93,10 @@ func checkSettable(key string) error {
 		}
 		return -1
 	}, key)
-	if norm == "pushprefixes" || norm == "workflow" {
+	if norm == "pushprefixes" || norm == "workflow" || norm == "trackercommand" {
 		return fmt.Errorf("%q is read only from the global file ~/.rig/config.json; edit that file by hand", key)
 	}
 	return checkKey(key)
-}
-
-// checkScope refuses tracker.command in every scope but the global file: it
-// is a program rig runs, and only the user's own global file may name one.
-func checkScope(scope, key string) error {
-	norm := strings.ToLower(strings.ReplaceAll(key, ".", ""))
-	if norm == "trackercommand" && scope != ScopeGlobal {
-		return fmt.Errorf("%q is a program rig runs: set it only with --global (~/.rig/config.json)", key)
-	}
-	return nil
 }
 
 // parseCommand checks tracker.command's value: a non-empty list of strings,

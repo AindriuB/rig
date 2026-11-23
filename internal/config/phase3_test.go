@@ -25,44 +25,29 @@ func TestTrackerKindExec(t *testing.T) {
 	}
 }
 
-// AC2: tracker.command is settable only with --global; a list round-trips.
+// AC2: tracker.command is global-only: Set and Unset refuse it in every
+// scope, and a list written to the global file by hand is read and round-trips.
 func TestTrackerCommandSetScopes(t *testing.T) {
 	e := repoEnv(t)
 	l := open(t, e)
-	for _, scope := range []string{ScopeRepo, ScopeLocal} {
+	for _, scope := range []string{ScopeRepo, ScopeLocal, ScopeGlobal} {
 		for _, key := range []string{KeyTrackerCommand, "Tracker.Command"} {
-			if err := l.Set(scope, key, `["prog"]`); err == nil || !strings.Contains(err.Error(), "--global") {
+			if err := l.Set(scope, key, `["prog"]`); err == nil || !strings.Contains(err.Error(), "read only from the global file") {
 				t.Errorf("Set(%s, %s) = %v, want refusal", scope, key, err)
 			}
-			if err := l.Unset(scope, key); err == nil {
-				t.Errorf("Unset(%s, %s) = nil", scope, key)
+			if err := l.Unset(scope, key); err == nil || !strings.Contains(err.Error(), "read only from the global file") {
+				t.Errorf("Unset(%s, %s) = %v, want refusal", scope, key, err)
 			}
 		}
 	}
 	if _, err := os.Stat(filepath.Join(e.root, ".rig")); err == nil {
 		t.Error("a refused write created .rig")
 	}
-	if err := l.Set(ScopeGlobal, KeyTrackerCommand, `["/usr/bin/prog","--flag","a b"]`); err != nil {
-		t.Fatal(err)
-	}
 	want := []string{"/usr/bin/prog", "--flag", "a b"}
+	e.global(t, `{"tracker":{"command":["/usr/bin/prog","--flag","a b"]}}`)
 	v, ok := open(t, e).Get(KeyTrackerCommand)
 	if !ok || v.Scope != ScopeGlobal || !reflect.DeepEqual(v.Value, want) {
 		t.Fatalf("Get = %+v, %v", v, ok)
-	}
-	if got, _ := l.Get(KeyTrackerCommand); !reflect.DeepEqual(got.Value, want) {
-		t.Fatalf("in-memory Get = %+v", got)
-	}
-	if err := l.Unset(ScopeGlobal, KeyTrackerCommand); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := open(t, e).Get(KeyTrackerCommand); ok {
-		t.Fatal("still set after unset")
-	}
-	for _, bad := range []string{``, `prog`, `[]`, `[""]`, `["a",1]`, `{"a":1}`} {
-		if err := l.Set(ScopeGlobal, KeyTrackerCommand, bad); err == nil {
-			t.Errorf("Set(%q) accepted", bad)
-		}
 	}
 }
 
