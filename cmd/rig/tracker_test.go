@@ -116,9 +116,10 @@ func TestTrackerExecNeedsTrustedCommand(t *testing.T) {
 	if code := e.run("tracker", "show", "X-1"); code != 2 || !strings.Contains(e.err.String(), "tracker.command") {
 		t.Fatalf("exit %d, stderr %q", code, e.err.String())
 	}
-	e = newTrkEnv(t, map[string]any{"kind": "exec", "command": []string{"/usr/bin/true", "--x"}})
+	prog := filepath.Join(t.TempDir(), "prog")
+	e = newTrkEnv(t, map[string]any{"kind": "exec", "command": []string{prog, "--x"}})
 	spec, err := e.a.trackerSpec(ctx, e.repo)
-	if err != nil || strings.Join(spec.Exec, " ") != "/usr/bin/true --x" || spec.Dir == "" {
+	if err != nil || strings.Join(spec.Exec, " ") != prog+" --x" || spec.Dir == "" {
 		t.Fatalf("spec %+v, %v", spec, err)
 	}
 }
@@ -155,7 +156,7 @@ func TestTrackerJiraLogin(t *testing.T) {
 func TestTrackerRepoFromConfigAndRemote(t *testing.T) {
 	e := newTrkEnv(t, ghCfg())
 	spec, err := e.a.trackerSpec(ctx, e.repo)
-	if err != nil || spec.GitHub.Repo != "acme/rig" || spec.GitHub.Host != "" || spec.GitHub.Dir != e.repo ||
+	if err != nil || spec.GitHub.Repo != "acme/rig" || spec.GitHub.Host != "" || filepath.Clean(spec.GitHub.Dir) != filepath.Clean(e.repo) ||
 		spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) {
 		t.Fatalf("project from config: %+v, %v", spec, err)
 	}
