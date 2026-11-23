@@ -122,3 +122,41 @@ func TestFoldEmptyLog(t *testing.T) {
 		t.Fatalf("Fold(nil) = %+v %v %v %d", task, findings, notes, skipped)
 	}
 }
+
+// A link written again keeps its snapshot only when it is the same issue
+// (kind exactly; host and key in any case); any other link starts empty.
+func TestFoldRelinkSnapshot(t *testing.T) {
+	base := ExternalData{Kind: "jira", Host: "j.example", Key: "AB-7"}
+	cases := []struct {
+		name string
+		to   ExternalData
+		keep bool
+	}{
+		{"same issue", base, true},
+		{"same issue, other case", ExternalData{Kind: "jira", Host: "J.Example", Key: "ab-7"}, true},
+		{"other key", ExternalData{Kind: "jira", Host: "j.example", Key: "AB-8"}, false},
+		{"other host", ExternalData{Kind: "jira", Host: "k.example", Key: "AB-7"}, false},
+		{"other kind", ExternalData{Kind: "github", Host: "j.example", Key: "AB-7"}, false},
+		{"kind in other case", ExternalData{Kind: "Jira", Host: "j.example", Key: "AB-7"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := append(sampleLog(t),
+				ev(t, 13, KindExternal, base),
+				ev(t, 14, KindTrackerSync, TrackerSyncData{At: t0, Rev: "r1", Values: map[string]any{"title": "Old"}}),
+				ev(t, 15, KindExternal, tc.to))
+			task, _, _, skipped := Fold(log)
+			if skipped != 0 || task.External == nil {
+				t.Fatalf("skipped %d, external %+v", skipped, task.External)
+			}
+			x := task.External
+			if tc.keep {
+				if x.Rev != "r1" || x.Snapshot["title"] != "Old" || x.SyncedAt.IsZero() {
+					t.Fatalf("snapshot lost: %+v", x)
+				}
+			} else if x.Rev != "" || x.Snapshot != nil || !x.SyncedAt.IsZero() {
+				t.Fatalf("snapshot carried to another issue: %+v", x)
+			}
+		})
+	}
+}

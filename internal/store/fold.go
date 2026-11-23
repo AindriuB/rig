@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // SortEvents orders events by (Seq, ID), in place.
@@ -185,13 +186,15 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 }
 
 // applyExternal links task to d. A link written again keeps the snapshot
-// already folded.
+// already folded only when it is the same issue: the same kind, and the same
+// host and key in any case. Otherwise the snapshot starts empty.
 func applyExternal(task *Task, d ExternalData) {
 	ext := &External{
 		Kind: d.Kind, Host: d.Host, Project: d.Project, Key: d.Key, URL: d.URL,
 		Type: d.Type, Owned: slices.Clone(d.Owned), ParentKey: d.ParentKey,
 	}
-	if old := task.External; old != nil {
+	if old := task.External; old != nil && old.Kind == d.Kind &&
+		strings.EqualFold(old.Host, d.Host) && strings.EqualFold(old.Key, d.Key) {
 		ext.SyncedAt, ext.Rev, ext.Snapshot = old.SyncedAt, old.Rev, old.Snapshot
 	}
 	task.External = ext
