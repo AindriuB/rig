@@ -170,7 +170,7 @@ func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (t
 }
 
 // SetStatus moves the issue to status and bumps its Rev when the status
-// changes. A status the fake was not given is an error.
+// changes. A status the fake was not given returns ErrNoTransition.
 func (t *Tracker) SetStatus(ctx context.Context, key, status string) (tracker.StatusResult, error) {
 	if !t.caps.SetStatus {
 		return tracker.StatusResult{}, fmt.Errorf("set status: %w", tracker.ErrUnsupported)
@@ -182,7 +182,7 @@ func (t *Tracker) SetStatus(ctx context.Context, key, status string) (tracker.St
 		return tracker.StatusResult{}, err
 	}
 	if !t.statuses[status] {
-		return tracker.StatusResult{}, fmt.Errorf("unknown status %q", status)
+		return tracker.StatusResult{}, fmt.Errorf("status %q: %w", status, tracker.ErrNoTransition)
 	}
 	res := tracker.StatusResult{From: is.Status, To: status, Changed: is.Status != status}
 	if res.Changed {

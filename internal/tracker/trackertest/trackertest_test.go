@@ -44,7 +44,7 @@ func TestFakePassesContract(t *testing.T) {
 
 // AC2: the sentinels are distinguishable through wrapping.
 func TestSentinelsDistinct(t *testing.T) {
-	errs := []error{tracker.ErrUnsupported, tracker.ErrNotFound, tracker.ErrAuth}
+	errs := []error{tracker.ErrUnsupported, tracker.ErrNotFound, tracker.ErrAuth, tracker.ErrNoTransition}
 	for i, e := range errs {
 		w := fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", e))
 		for j, target := range errs {
@@ -77,8 +77,8 @@ func TestFakeRecordsAndRejects(t *testing.T) {
 	if _, err := f.Comment(ctx, "A-1", tracker.Comment{Body: "hi"}); err != nil || len(f.Comments) != 1 {
 		t.Fatalf("Comment: %v, %v", err, f.Comments)
 	}
-	if _, err := f.SetStatus(ctx, "A-1", "bogus"); err == nil {
-		t.Error("unknown status accepted")
+	if _, err := f.SetStatus(ctx, "A-1", "bogus"); !errors.Is(err, tracker.ErrNoTransition) {
+		t.Errorf("unknown status = %v, want ErrNoTransition", err)
 	}
 	if _, err := f.SetStatus(ctx, "A-1", "done"); err != nil || len(f.StatusCalls) != 1 {
 		t.Fatalf("SetStatus: %v, %v", err, f.StatusCalls)

@@ -39,8 +39,8 @@ type Tracker interface {
 	// Caps.Comment is false.
 	Comment(ctx context.Context, key string, c Comment) (CommentResult, error)
 	// SetStatus moves an issue to status. It returns ErrUnsupported when
-	// Caps.SetStatus is false, and an error for a status the tracker does
-	// not know.
+	// Caps.SetStatus is false, and ErrNoTransition for a status the tracker
+	// cannot reach.
 	SetStatus(ctx context.Context, key, status string) (StatusResult, error)
 }
 
@@ -49,6 +49,8 @@ var (
 	ErrUnsupported = errors.New("tracker does not support this")
 	// ErrNotFound reports that no such issue exists.
 	ErrNotFound = errors.New("issue not found")
+	// ErrNoTransition reports a status the tracker cannot move the issue to.
+	ErrNoTransition = errors.New("no transition to that status")
 	// ErrAuth reports missing or rejected credentials. Its wrapping error
 	// must never carry the credential.
 	ErrAuth = errors.New("tracker authentication failed")
