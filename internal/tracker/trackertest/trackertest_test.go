@@ -58,12 +58,13 @@ func TestSentinelsDistinct(t *testing.T) {
 
 // AC3: key validation.
 func TestValidateKey(t *testing.T) {
-	for _, k := range []string{"A-1", "owner/repo#12", strings.Repeat("a", 256)} {
+	for _, k := range []string{"A-1", "owner-repo-12", strings.Repeat("a", 256)} {
 		if err := tracker.ValidateKey(k); err != nil {
 			t.Errorf("ValidateKey(%q) = %v", k, err)
 		}
 	}
-	for _, k := range []string{"", "A 1", " A-1", "A-1\n", "A\t1", "A\x00", "A 1", strings.Repeat("a", 257)} {
+	for _, k := range []string{"", "A 1", " A-1", "A-1\n", "A\t1", "A\x00", "A 1", strings.Repeat("a", 257),
+		"a/b", "a?b", "a#b", "a%b", "..", "a..b", "a\u200fb", "a\u200bb", "\ufeffa", "a\xffb"} {
 		if err := tracker.ValidateKey(k); err == nil {
 			t.Errorf("ValidateKey(%q) accepted", k)
 		}

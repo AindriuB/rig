@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Tracker is what rig needs from an issue tracker.
@@ -59,8 +61,12 @@ var (
 // MaxKeyLen is the longest key, in bytes, that ValidateKey accepts.
 const MaxKeyLen = 256
 
-// ValidateKey checks that key is non-empty, has no whitespace or control
-// characters, and is at most MaxKeyLen bytes. Adapters add their own rules.
+// ValidateKey checks that key is non-empty, is valid UTF-8, is at most
+// MaxKeyLen bytes, and has none of: whitespace, control or Unicode format
+// characters (category Cf, such as U+200B or U+FEFF), '/', '?', '#', '%', or
+// "..". Those would change meaning in a URL path or query. Every adapter must
+// call ValidateKey on every key before it uses the key. Adapters add their own
+// rules.
 func ValidateKey(key string) error {
 	if key == "" {
 		return errors.New("issue key is empty")
@@ -68,9 +74,20 @@ func ValidateKey(key string) error {
 	if len(key) > MaxKeyLen {
 		return fmt.Errorf("issue key is longer than %d bytes", MaxKeyLen)
 	}
+	if !utf8.ValidString(key) {
+		return errors.New("issue key is not valid UTF-8")
+	}
+	if strings.Contains(key, "..") {
+		return errors.New("issue key contains \"..\"")
+	}
 	for _, r := range key {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
+		switch {
+		case unicode.IsSpace(r) || unicode.IsControl(r):
 			return fmt.Errorf("issue key contains whitespace or a control character (%U)", r)
+		case unicode.Is(unicode.Cf, r):
+			return fmt.Errorf("issue key contains a format character (%U)", r)
+		case strings.ContainsRune("/?#%", r):
+			return fmt.Errorf("issue key contains %q", r)
 		}
 	}
 	return nil

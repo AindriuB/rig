@@ -42,6 +42,32 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 		return tr, seed, caps
 	}
 
+	t.Run("MalformedKeys", func(t *testing.T) {
+		tr, _, _ := setup(t)
+		bad := []string{"", "a b", "a/b", "a?b", "a#b", "a%b", "..", "a\u200bb", "a\u200fb", "\ufeffa", "a\xffb"}
+		// A malformed key must be refused before the tracker is asked, so
+		// ErrNotFound (a lookup that found nothing) is not an acceptable
+		// refusal either.
+		check := func(op, k string, err error) {
+			t.Helper()
+			if err == nil {
+				t.Errorf("%s(%q) succeeded", op, k)
+			} else if errors.Is(err, tracker.ErrNotFound) {
+				t.Errorf("%s(%q) = %v: looked the key up instead of refusing it", op, k, err)
+			}
+		}
+		for _, k := range bad {
+			_, err := tr.Issue(ctx, k)
+			check("Issue", k, err)
+			_, err = tr.Children(ctx, k)
+			check("Children", k, err)
+			_, err = tr.Comment(ctx, k, tracker.Comment{Body: "x"})
+			check("Comment", k, err)
+			_, err = tr.SetStatus(ctx, k, "x")
+			check("SetStatus", k, err)
+		}
+	})
+
 	t.Run("Issue", func(t *testing.T) {
 		tr, s, _ := setup(t)
 		is, err := tr.Issue(ctx, s.Key)
