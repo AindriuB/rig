@@ -168,8 +168,18 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 		if err != nil {
 			t.Fatalf("SetStatus: %v", err)
 		}
-		if !res.Changed || res.To != s.NextStatus {
-			t.Errorf("SetStatus result = %+v", res)
+		if !res.Changed || res.To != s.NextStatus || res.From != s.Status {
+			t.Errorf("SetStatus result = %+v, want From %q To %q Changed", res, s.Status, s.NextStatus)
+		}
+		same, err := tr.SetStatus(ctx, s.Key, s.NextStatus)
+		if err != nil {
+			t.Fatalf("SetStatus to the current status: %v", err)
+		}
+		if same.Changed || same.From != s.NextStatus || same.To != s.NextStatus {
+			t.Errorf("SetStatus to the current status = %+v, want unchanged", same)
+		}
+		if _, err := tr.SetStatus(ctx, s.Key, "rig-no-such-status"); !errors.Is(err, tracker.ErrNoTransition) {
+			t.Errorf("SetStatus(unknown status) = %v, want ErrNoTransition", err)
 		}
 		before, err := tr.Issue(ctx, s.Key)
 		if err != nil {
