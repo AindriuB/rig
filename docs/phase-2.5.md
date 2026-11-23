@@ -249,7 +249,9 @@ gain auth lines: it runs often and makes no extra network calls (see Q15).
 
 The Jira check uses `net/http` from the standard library with a 15-second
 timeout; it is the first time rig talks HTTP itself. The check is the only
-Jira call in phase 2.5; reading issues is phase 3's tracker adapter.
+Jira call in phase 2.5; reading issues is phase 3's tracker adapter. Phase 3
+also adds Jira Server/Data Center: `rig login jira --pat` and a v2 `myself`
+check (see [phase-3.md](phase-3.md), Q42).
 
 ## Package layout
 

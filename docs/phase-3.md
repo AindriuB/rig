@@ -235,14 +235,39 @@ passes, as `memstore` and `storetest` do for the store.
 
 | Adapter | How it talks | Notes |
 |---|---|---|
-| `jira` | `net/http`, Basic auth, Jira Cloud REST v3 | Token from the same keychain entry `rig login jira` writes; `RIG_JIRA_TOKEN` overrides. |
+| `jira` | `net/http`; Jira Cloud REST v3 with Basic auth, or Jira Server/Data Center REST v2 with a personal access token over Bearer | Token from the same keychain entry `rig login jira` writes; `RIG_JIRA_TOKEN` overrides. |
 | `github` | `gh` through `internal/proc`, argv only | Sub-issues and types by `gh api graphql` with `-F` variables. |
 | `gitlab` | `glab api` through `internal/proc`, argv only | Work items and issues. |
 | `exec` | one program per operation, JSON on stdin and stdout | For any tracker rig has no adapter for. |
 
 **Jira.** The host check and the account lookup that `rig login` already has
 move into `internal/auth/jira`, so the login and the adapter share one rule
-for which token goes to which host. The adapter sends the token only to the
+for which token goes to which host. One adapter speaks both Jira Cloud (REST
+API v3) and Jira Server/Data Center (REST API v2) in 0.4.0 (Q42). It has two
+small dialects behind one set of calls, and both pass the same `trackertest`
+contract against recorded responses:
+
+- *Text format.* Cloud descriptions are Atlassian Document Format JSON and
+  Server/DC descriptions are wiki markup. Each converts to Markdown for
+  reading, and report comments are written in the dialect's own format from
+  Markdown.
+- *Search.* Cloud uses `/rest/api/3/search/jql` with its token-based paging;
+  Server/DC uses `/rest/api/2/search` with `startAt` paging.
+- *Hierarchy.* Cloud uses the standard `parent` field for epics and sub-tasks.
+  Server/DC uses the "Epic Link" custom field for epics and `parent` for
+  sub-tasks. The Epic Link field id is found once by the field name through the
+  fields endpoint, and `tracker.jira.epicField` overrides it.
+
+`tracker.jira.api` (`auto`, `v2` or `v3`; default `auto`) picks the dialect.
+`auto` reads `/rest/api/2/serverInfo` once, takes `deploymentType`, and caches
+the result: Cloud is v3, Server/DC is v2.
+
+Auth differs by deployment. Cloud keeps email plus API token over Basic.
+Server/DC uses a personal access token over `Bearer`, stored by
+`rig login jira --pat` under the same `jira:<host>` account (and the
+repo-scoped one) with no user. This changes phase-2.5's `rig login jira`: it
+gains `--pat`, and its token check uses `GET /rest/api/2/myself` for v2 rather
+than only `/rest/api/3/myself`. The trust rules are the same for both. The adapter sends the token only to the
 trusted `tracker.url` host, over https (plain http only for a loopback
 address), and refuses a redirect to another host itself. To verify during
 implementation: Go's `net/http` drops the `Authorization` header on a
@@ -293,6 +318,12 @@ trust"). `tracker.kind = exec` with no trusted `tracker.command` is exit 2.
 local, repo, `.claude/rig.json`, global (`internal/config/layers.go:140-150`);
 `tracker.command` follows the workflow key's order (`layers.go:143-148`),
 reading the global file only.
+
+Two keys are new for Jira. `tracker.jira.api` is `auto`, `v2` or `v3`, default
+`auto`. `tracker.jira.epicField` is the Server/DC Epic Link field id, unset by
+default so that it is discovered by name. Both follow the lookup order of the
+other tracker keys. Neither carries a URL or a command, so a tracked
+`.rig/config.json` may set them.
 
 ## Commands
 
@@ -418,9 +449,9 @@ in `internal/config`, called by every `rig tracker` command, `rig task new
 every scope, and edited by hand. Cloning a repository cannot make rig start a
 program.
 
-**Tokens.** A Jira token goes only to the trusted `tracker.url` host, over
-https (plain http for loopback only), and a redirect to another host is
-refused. `internal/proc` (`proc.go:36,76`) lets `Options.Env` only *add* to the
+**Tokens.** A Jira token, an API token or a personal access token alike, goes
+only to the trusted `tracker.url` host, over https (plain http for loopback
+only), and a redirect to another host is refused. `internal/proc` (`proc.go:36,76`) lets `Options.Env` only *add* to the
 parent's environment, so an `exec` adapter would inherit `RIG_JIRA_TOKEN`.
 `proc` gains an environment scrub that removes `RIG_*_TOKEN` variables, used
 for the `exec` adapter and for `gh` and `glab`.
@@ -503,6 +534,11 @@ intake's own code.*
 that writes to a tracker, so it gets its own release and its own review of what
 leaves the machine.*
 
+**Q42. Jira API versions. Decided.** The Jira adapter ships with both REST API
+v3 (Jira Cloud) and v2 (Jira Server/Data Center) in 0.4.0, as one adapter with
+two dialects chosen by `tracker.jira.api`, default `auto`. Server/DC logs in
+with a personal access token (`rig login jira --pat`).
+
 ## Tasks
 
 The plan is built as waves of tasks. Tasks in one wave own disjoint files and
@@ -514,7 +550,7 @@ Every task also keeps `go vet`, `gofmt` and the package tests green.
 | Task | Owns | Delivers | Done when |
 |---|---|---|---|
 | 3.1 store | `internal/store/**` (memstore, storetest, gitref) | The new event kinds, fold, `Parent` and `External`, `Resolve` by key, `NewTask` fields, uniqueness under the lock, branch stamping, `{key}` | `storetest` passes on both backends with linked, parented and branch-stamped tasks; an old log still folds; a repeated key returns the existing task |
-| 3.2 config | `internal/config/**`, one call in `cmd/rig/login.go` | The `exec` kind, global-only `tracker.command`, the shared trust check; `rig login` uses it | A tracked `.rig/config.json` cannot supply `tracker.url` or `tracker.command` through any path; `rig config set tracker.command` is refused in every scope |
+| 3.2 config | `internal/config/**`, one call in `cmd/rig/login.go` | The `exec` kind, global-only `tracker.command`, the `tracker.jira.api` and `tracker.jira.epicField` keys, the shared trust check; `rig login` uses it | A tracked `.rig/config.json` cannot supply `tracker.url` or `tracker.command` through any path; `rig config set tracker.command` is refused in every scope |
 | 3.3 workflow | `internal/workflow/**` (after 3.1) | The `tracker` key, its validation, the `TaskView` fields | The validation cases in "Workflow file" each have a failing and a passing test; `rig workflow validate` reports them |
 
 3.1 and 3.2 are independent. 3.3 needs the `TaskView` types 3.1 adds.
@@ -534,12 +570,14 @@ merged.
 
 | Task | Owns | Delivers | Done when |
 |---|---|---|---|
-| 3.7 exec and jira | `internal/tracker/exec`, `internal/tracker/jira`, `internal/auth/jira` | The exec protocol and the Jira adapter; the account lookup moves out of `cmd/rig/login.go` | Both pass `trackertest` against a local test server or program; a cross-host redirect is refused; a timeout and bad JSON are errors |
+| 3.7a exec | `internal/tracker/exec` | The exec protocol | Passes `trackertest` against a local test program; a timeout and bad JSON are errors |
+| 3.7b jira | `internal/tracker/jira`, `internal/auth/jira`, `cmd/rig/login.go` (after 3.2) | The Jira adapter with both dialects; the account lookup moves out of `cmd/rig/login.go`; `rig login jira --pat` and the v2 `myself` check | Both dialects pass `trackertest` against recorded responses; `auto` picks the dialect from `serverInfo` and caches it; a cross-host redirect is refused; a PAT is sent only to the trusted host |
 | 3.8 github | `internal/tracker/github` | The GitHub adapter | `trackertest` passes against a fake `gh`; no interpolated query text |
 | 3.9 gitlab | `internal/tracker/gitlab` | The GitLab adapter | `trackertest` passes against a fake `glab`; an unsupported epic is a warning |
 
-3.7 touches `cmd/rig/login.go` only to move the lookup helper, so it runs
-after 3.2 has merged.
+3.7b owns `cmd/rig/login.go` once 3.2 has merged: it moves the lookup helper
+and adds the `--pat` login path and the v2 `myself` check. It runs after 3.2.
+3.7a and 3.7b are independent of each other.
 
 ### Wave 2: commands, 0.4.0
 
@@ -579,6 +617,14 @@ checked it.
 - `gh api graphql` sub-issue calls and `glab api` work-item calls behave as
   described.
 - A Jira status change needs a transition lookup first.
+- The exact Jira Cloud `search/jql` paging (token-based), and that
+  `/rest/api/2/serverInfo` reports `deploymentType` as assumed.
+- How much of Atlassian Document Format a usable Markdown conversion must
+  cover, and the same for wiki markup in the other direction.
+- That personal access tokens exist on Server/DC (8.14 and later), and what
+  older instances can use instead.
+- The Epic Link field name on localized Server/DC instances, where the
+  by-name lookup may fail and `tracker.jira.epicField` is needed.
 - A store written with the new events reads cleanly in a 0.3.0 binary.
 - The code not read when this plan was written: the body of `status.go`
   beyond the handoff constant, `finding.go`, `note.go`, the other `config`
