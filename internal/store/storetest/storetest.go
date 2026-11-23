@@ -38,6 +38,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"ParentedTask", testParentedTask},
 		{"ParentUpdates", testParentUpdates},
 		{"BranchStamped", testBranchStamped},
+		{"BranchStampedUnlinked", testBranchStampedUnlinked},
 		{"ResolveByKey", testResolveByKey},
 	}
 	for _, tc := range tests {

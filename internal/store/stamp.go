@@ -48,6 +48,9 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 			key = n.External.Key
 		}
 		d.Branch = ExpandBranch(n.BranchTemplate, d.Short, n.Slug, id, key)
+		if !ValidBranch(d.Branch) {
+			return Event{}, fmt.Errorf("new task: branch template %q gives %q, which is not a valid branch name", n.BranchTemplate, d.Branch)
+		}
 	}
 	raw, err := json.Marshal(d)
 	if err != nil {

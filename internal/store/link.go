@@ -17,12 +17,36 @@ func BranchKey(key string) string {
 }
 
 // ExpandBranch fills the {short}, {slug}, {id} and {key} placeholders of a
-// branch template. {key} is BranchKey of the issue key, or empty for a task
-// with no link.
+// branch template. {key} is BranchKey of the issue key or, for a task with no
+// link, the short id, so a template such as "rig/{key}" still names a branch.
 func ExpandBranch(template, short, slug, id, key string) string {
+	k := short
+	if key != "" {
+		k = BranchKey(key)
+	}
 	return strings.NewReplacer(
-		"{short}", short, "{slug}", slug, "{id}", id, "{key}", BranchKey(key),
+		"{short}", short, "{slug}", slug, "{id}", id, "{key}", k,
 	).Replace(template)
+}
+
+// ValidBranch reports whether name is a branch name git accepts, by the rules
+// of git check-ref-format --branch.
+func ValidBranch(name string) bool {
+	if name == "" || name == "@" || name == "HEAD" || strings.HasPrefix(name, "-") ||
+		strings.HasSuffix(name, ".") || strings.Contains(name, "..") || strings.Contains(name, "@{") {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(" ~^:?*[\\", r) {
+			return false
+		}
+	}
+	for _, c := range strings.Split(name, "/") {
+		if c == "" || strings.HasPrefix(c, ".") || strings.HasSuffix(c, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // Linked returns the task among tasks linked to the same issue as ext: the
