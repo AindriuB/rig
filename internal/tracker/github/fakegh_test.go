@@ -44,7 +44,9 @@ type fakeIssue struct {
 	Type    string   `json:"type"`
 	Parent  int      `json:"parent"`
 	PR      bool     `json:"pr"`
-	Repo    string   `json:"repo"` // search only: the repository the item really belongs to; empty = this one
+	Repo    string   `json:"repo"` // the repository the item (or, as a sub-issue, the child) really belongs to; empty = this one
+	// ParentRepo is the repository of Parent; empty = this one.
+	ParentRepo string `json:"parentRepo"`
 }
 
 type fakeState struct {
@@ -192,7 +194,7 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 			for _, k := range sortedKeys(st.Issues) {
 				c := st.Issues[k]
 				if !c.PR && strconv.Itoa(c.Parent) == n {
-					nodes = append(nodes, ref(st, k, c))
+					nodes = append(nodes, ref(st, k, c, c.Repo))
 				}
 			}
 			return reply(`{"data":{"repository":{"issue":{"subIssues":{"nodes":[` + strings.Join(nodes, ",") + `]}}}}}`)
@@ -204,7 +206,7 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 		parent := "null"
 		if is.Parent != 0 {
 			p := strconv.Itoa(is.Parent)
-			parent = ref(st, p, st.Issues[p])
+			parent = ref(st, p, st.Issues[p], is.ParentRepo)
 		}
 		typ := "null"
 		if is.Type != "" {
@@ -270,12 +272,15 @@ func issueURL(st *fakeState, n string) string {
 	return "https://github.com/" + st.Owner + "/" + st.Name + "/issues/" + n
 }
 
-func ref(st *fakeState, n string, is fakeIssue) string {
+func ref(st *fakeState, n string, is fakeIssue, repoPath string) string {
+	if repoPath == "" {
+		repoPath = st.Owner + "/" + st.Name
+	}
 	typ := "null"
 	if is.Type != "" {
 		typ = `{"name":` + jstr(is.Type) + `}`
 	}
-	return fmt.Sprintf(`{"number":%s,"url":%s,"title":%s,"issueType":%s}`, n, jstr(issueURL(st, n)), jstr(is.Title), typ)
+	return fmt.Sprintf(`{"number":%s,"url":%s,"title":%s,"issueType":%s,"repository":{"nameWithOwner":%s}}`, n, jstr(issueURL(st, n)), jstr(is.Title), typ, jstr(repoPath))
 }
 
 func jstr(s string) string { b, _ := json.Marshal(s); return string(b) }

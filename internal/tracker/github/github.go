@@ -370,6 +370,11 @@ func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (t
 	if err != nil {
 		return tracker.CommentResult{}, err
 	}
+	// The comments endpoint also takes a pull request number; an issue lookup
+	// refuses one, so nothing is posted on a pull request.
+	if _, err := t.graphql(ctx, `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){number}}}`, n); err != nil {
+		return tracker.CommentResult{}, err
+	}
 	body, err := json.Marshal(map[string]string{"body": c.Body})
 	if err != nil {
 		return tracker.CommentResult{}, err

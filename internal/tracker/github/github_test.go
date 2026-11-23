@@ -291,3 +291,44 @@ func TestSearchDropsOtherRepositories(t *testing.T) {
 		t.Errorf("keys = %v, want [1 7]", keys)
 	}
 }
+
+func TestCommentOnPullRequestIsNotFound(t *testing.T) {
+	st := seedState(true)
+	_, calls := fakeGH(t, st)
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if _, err := tr.Comment(ctx, "4", tracker.Comment{Body: "x"}); !errors.Is(err, tracker.ErrNotFound) {
+		t.Fatalf("Comment(PR) = %v, want ErrNotFound", err)
+	}
+	for _, c := range calls() {
+		if strings.Contains(strings.Join(c, " "), "comments") {
+			t.Fatalf("a comment was posted: %q", c)
+		}
+	}
+}
+
+func TestCrossRepositoryParentAndChildAreDropped(t *testing.T) {
+	st := seedState(true)
+	st.Issues["5"] = fakeIssue{Title: "elsewhere", State: "OPEN", Updated: 5}
+	st.Issues["2"] = fakeIssue{Title: "child", State: "OPEN", Updated: 2, Type: "Task", Parent: 5, ParentRepo: "o/other"}
+	st.Issues["9"] = fakeIssue{Title: "foreign child", State: "OPEN", Updated: 9, Parent: 1, Repo: "o/other"}
+	st.Issues["10"] = fakeIssue{Title: "case child", State: "OPEN", Updated: 10, Parent: 1, Repo: "O/R"}
+	tr := newTracker(t, st)
+	is, err := tr.Issue(ctx, "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if is.Parent != nil {
+		t.Errorf("Parent = %+v, want nil for another repository", is.Parent)
+	}
+	kids, err := tr.Children(ctx, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, k := range kids {
+		keys = append(keys, k.Key)
+	}
+	if strings.Join(keys, ",") != "10" {
+		t.Errorf("children = %v, want [10]", keys)
+	}
+}
