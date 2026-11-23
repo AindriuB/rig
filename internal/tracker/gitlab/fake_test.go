@@ -35,6 +35,7 @@ type fakeIssue struct {
 type fakeState struct {
 	Hierarchy bool        `json:"hierarchy"`
 	NoAuth    bool        `json:"noauth"`
+	GQLFail   bool        `json:"gqlfail"`
 	Counter   int         `json:"counter"`
 	Issues    []fakeIssue `json:"issues"`
 }
@@ -169,6 +170,13 @@ func fakeGlab(dir string, args []string) int {
 }
 
 func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
+	if st.GQLFail {
+		// Real glab exits 1 on a GraphQL errors array: message on stderr, body on stdout.
+		body := `{"errors":[{"message":"Field 'widgetDefinitions' doesn't exist on type 'WorkItemType'"}]}`
+		fmt.Println(body)
+		fmt.Fprintln(os.Stderr, "glab: Field 'widgetDefinitions' doesn't exist on type 'WorkItemType'")
+		return 1
+	}
 	var req struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`

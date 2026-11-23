@@ -128,9 +128,9 @@ func (t *Tracker) run(ctx context.Context, input []byte, args ...string) ([]byte
 	}
 	switch m := statusRe.FindString(text); m {
 	case "404":
-		return nil, fmt.Errorf("gitlab tracker: %w", tracker.ErrNotFound)
+		return res.Stdout, fmt.Errorf("gitlab tracker: %w", tracker.ErrNotFound)
 	case "401", "403":
-		return nil, fmt.Errorf("gitlab tracker: %w (HTTP %s)", tracker.ErrAuth, m)
+		return res.Stdout, fmt.Errorf("gitlab tracker: %w (HTTP %s)", tracker.ErrAuth, m)
 	}
 	var lines []string
 	for _, l := range strings.Split(strings.TrimSpace(string(res.Stderr)), "\n") {
@@ -141,7 +141,7 @@ func (t *Tracker) run(ctx context.Context, input []byte, args ...string) ([]byte
 	if len(lines) > 5 {
 		lines = lines[len(lines)-5:]
 	}
-	return nil, fmt.Errorf("gitlab tracker: glab failed: %s", strings.Join(lines, " "))
+	return res.Stdout, fmt.Errorf("gitlab tracker: glab failed: %s", strings.Join(lines, " "))
 }
 
 func (t *Tracker) get(ctx context.Context, v any, endpoint string, fields ...string) error {
@@ -169,12 +169,16 @@ func (t *Tracker) graphql(ctx context.Context, query string, vars map[string]any
 		return err
 	}
 	out, err := t.run(ctx, body, "--header", "Content-Type: application/json", "--input", "-", "graphql")
-	if err != nil {
-		return err
-	}
 	var resp struct {
 		Data   json.RawMessage
 		Errors []struct{ Message string }
+	}
+	if err != nil {
+		// glab exits 1 on a GraphQL errors body; auth failures stay auth failures.
+		if !errors.Is(err, tracker.ErrAuth) && json.Unmarshal(out, &resp) == nil && len(resp.Errors) > 0 {
+			return fmt.Errorf("%w: %s", errGraphQL, resp.Errors[0].Message)
+		}
+		return err
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return fmt.Errorf("gitlab tracker: unreadable GraphQL JSON: %w", err)
@@ -284,14 +288,35 @@ type workItemRef struct {
 	} `json:"workItemType"`
 }
 
-// ref converts a work item to an IssueRef, or reports false for one that is not
+// workItem converts a work item to an IssueRef, or reports false for one that is not
 // an issue of a project (an epic lives in a group and has no key here).
-func (w workItemRef) ref() (tracker.IssueRef, bool) {
-	if validateKey(w.IID) != nil || !(strings.Contains(w.WebURL, "/-/issues/") || strings.Contains(w.WebURL, "/-/work_items/")) ||
-		strings.Contains(w.WebURL, "/groups/") {
+func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
+	if validateKey(w.IID) != nil {
+		return tracker.IssueRef{}, false
+	}
+	u, err := url.Parse(w.WebURL)
+	if err != nil {
+		return tracker.IssueRef{}, false
+	}
+	rest, ok := cutPrefixFold(u.Path, "/"+t.project+"/-/")
+	if !ok {
+		return tracker.IssueRef{}, false
+	}
+	n, ok := strings.CutPrefix(rest, "issues/")
+	if !ok {
+		n, ok = strings.CutPrefix(rest, "work_items/")
+	}
+	if !ok || n != w.IID {
 		return tracker.IssueRef{}, false
 	}
 	return tracker.IssueRef{Key: w.IID, URL: w.WebURL, Title: w.Title, Type: strings.ToLower(w.WorkItemType.Name)}, true
+}
+
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+		return "", false
+	}
+	return s[len(prefix):], true
 }
 
 // family returns the parent and children of one issue. found is false when the
@@ -320,13 +345,13 @@ func (t *Tracker) family(ctx context.Context, key string) (parent *tracker.Issue
 	}
 	for _, w := range data.Project.WorkItems.Nodes[0].Widgets {
 		if w.Parent != nil {
-			if r, ok := w.Parent.ref(); ok {
+			if r, ok := t.workItem(*w.Parent); ok {
 				parent = &r
 			}
 		}
 		if w.Kids != nil {
 			for _, k := range w.Kids.Nodes {
-				if r, ok := k.ref(); ok {
+				if r, ok := t.workItem(k); ok {
 					children = append(children, r)
 				}
 			}

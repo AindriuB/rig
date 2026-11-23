@@ -184,3 +184,39 @@ func TestTokenNotInherited(t *testing.T) {
 		}
 	}
 }
+
+// Real glab exits 1 on a GraphQL errors body; that means "no hierarchy".
+func TestGraphQLErrorExitMeansNoHierarchy(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(`{"gqlfail":true,"issues":[{"iid":1,"web_url":"https://gitlab.example/grp/sub/proj/-/issues/1","title":"t","state":"opened","issue_type":"issue"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caps, err := tr.Capabilities(ctx)
+	if err != nil || caps.Parent || caps.Children {
+		t.Errorf("Capabilities = %+v, %v; want no hierarchy and no error", caps, err)
+	}
+	if _, err := tr.Issue(ctx, "1"); err != nil {
+		t.Errorf("Issue = %v", err)
+	}
+}
+
+func TestWorkItemRefBelongsToProject(t *testing.T) {
+	cases := []struct {
+		project, url string
+		ok           bool
+	}{
+		{"grp/sub/proj", "https://h/grp/sub/proj/-/issues/7", true},
+		{"grp/sub/proj", "https://h/GRP/sub/proj/-/work_items/7", true},
+		{"grp/sub/proj", "https://h/grp/other/-/issues/7", false},
+		{"grp/sub/proj", "https://h/grp/sub/proj/-/issues/7/extra", false},
+		{"grp/sub/proj", "https://h/groups/grp/-/epics/7", false},
+		{"acme/groups/app", "https://h/acme/groups/app/-/issues/7", true},
+	}
+	for _, c := range cases {
+		tr := &Tracker{project: c.project}
+		_, ok := tr.workItem(workItemRef{IID: "7", WebURL: c.url})
+		if ok != c.ok {
+			t.Errorf("%s %s: ok = %v, want %v", c.project, c.url, ok, c.ok)
+		}
+	}
+}
