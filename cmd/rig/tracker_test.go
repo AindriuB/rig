@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -245,10 +246,14 @@ type scripted struct {
 	issues   map[string]tracker.Issue
 	search   []tracker.IssueRef
 	children map[string][]tracker.IssueRef
+	errs     map[string]error // returned by Issue for a key
 }
 
 func (s *scripted) Capabilities(context.Context) (tracker.Caps, error) { return allCaps, nil }
 func (s *scripted) Issue(_ context.Context, k string) (tracker.Issue, error) {
+	if err := s.errs[k]; err != nil {
+		return tracker.Issue{}, err
+	}
 	if is, ok := s.issues[k]; ok {
 		return is, nil
 	}
@@ -407,5 +412,163 @@ func TestTrackerPullSources(t *testing.T) {
 	e.tr = fake.New(tracker.Caps{}, nil, nil)
 	if code := e.run("tracker", "pull", "--query", "q"); code != 0 || !strings.Contains(e.err.String(), "cannot search") {
 		t.Fatalf("exit %d %q", code, e.err.String())
+	}
+}
+
+type refreshRow struct {
+	Task, Key, Status string
+	Changed           []string
+	Replaced          []struct {
+		Field string
+		Lost  any
+	}
+	Error string
+}
+
+type refreshed struct{ Tasks []refreshRow }
+
+func (r refreshed) by(key string) refreshRow {
+	for _, x := range r.Tasks {
+		if x.Key == key {
+			return x
+		}
+	}
+	return refreshRow{}
+}
+
+func (e *trkEnv) eventCount(ref string) int {
+	e.t.Helper()
+	evs, err := e.st().Events(ctx, ref)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return len(evs)
+}
+
+// AC6: refresh reports unchanged, updated, replaced, gone and error; a failed
+// task does not stop the rest; --dry-run prints the same and writes nothing.
+func TestTrackerRefresh(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	s := &scripted{issues: map[string]tracker.Issue{}, errs: map[string]error{}}
+	keys := []string{"1", "2", "3", "4", "5", "6"}
+	for _, k := range keys {
+		s.issues[k] = issue(k, "Issue "+k)
+	}
+	e.tr = s
+	short := map[string]string{}
+	for _, k := range keys {
+		var out pulled
+		if code := e.json(&out, "tracker", "pull", k); code != 0 {
+			t.Fatalf("pull %s: exit %d", k, code)
+		}
+		short[k] = out.Items[0].Task.Short
+	}
+	// 2: the tracker retitles it. 3: retitled on the tracker after a local edit.
+	// 4: deleted. 5: the tracker fails. 6: the body changes and the revision moves.
+	is := s.issues["2"]
+	is.Title, is.Rev = "Issue 2, renamed", "r2"
+	s.issues["2"] = is
+	is = s.issues["3"]
+	is.Title, is.Rev = "Issue 3, renamed", "r3"
+	s.issues["3"] = is
+	if _, err := e.st().Update(ctx, short["3"], func(store.Task, []store.Finding) ([]store.Event, error) {
+		ev, err := store.NewEvent(store.KindField, store.FieldData{Name: "title", Value: "my own title"})
+		return []store.Event{ev}, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	delete(s.issues, "4")
+	s.errs["5"] = errors.New("tracker is down")
+	is = s.issues["6"]
+	is.Description, is.Rev = "new body", "r6"
+	s.issues["6"] = is
+
+	before := map[string]int{}
+	for k, sh := range short {
+		before[k] = e.eventCount(sh)
+	}
+
+	var dry refreshed
+	if code := e.json(&dry, "tracker", "refresh", "--all", "--dry-run"); code != 2 {
+		t.Fatalf("dry-run: exit %d, want 2 (one task failed)", code)
+	}
+	dryOut := e.out.String()
+	for k, sh := range short {
+		if e.eventCount(sh) != before[k] {
+			t.Fatalf("--dry-run wrote to task %s", k)
+		}
+	}
+	var out refreshed
+	if code := e.json(&out, "tracker", "refresh", "--all"); code != 2 || e.out.String() != dryOut {
+		t.Fatalf("exit %d; output differs from the dry run:\n%s\n%s", code, dryOut, e.out.String())
+	}
+	if len(out.Tasks) != 6 {
+		t.Fatalf("%d tasks", len(out.Tasks))
+	}
+	if r := out.by("1"); r.Status != "unchanged" || len(r.Changed) != 0 || len(r.Replaced) != 0 {
+		t.Fatalf("1: %+v", r)
+	}
+	if r := out.by("2"); r.Status != "updated" || strings.Join(r.Changed, ",") != "title" || len(r.Replaced) != 0 {
+		t.Fatalf("2: %+v", r)
+	}
+	if r := out.by("3"); r.Status != "updated" || len(r.Replaced) != 1 || r.Replaced[0].Field != "title" || r.Replaced[0].Lost != "my own title" {
+		t.Fatalf("3: %+v", r)
+	}
+	if r := out.by("4"); r.Status != "gone" {
+		t.Fatalf("4: %+v", r)
+	}
+	if r := out.by("5"); r.Status != "error" || !strings.Contains(r.Error, "tracker is down") {
+		t.Fatalf("5: %+v", r)
+	}
+	if r := out.by("6"); r.Status != "updated" || strings.Join(r.Changed, ",") != "body" {
+		t.Fatalf("6: %+v", r)
+	}
+	// What was written: field events and one tracker-sync, in one update.
+	for k, want := range map[string]int{"1": 0, "2": 2, "3": 2, "4": 0, "5": 0, "6": 2} {
+		if got := e.eventCount(short[k]) - before[k]; got != want {
+			t.Fatalf("task %s: %d new events, want %d", k, got, want)
+		}
+	}
+	tk, _ := e.st().Task(ctx, short["3"])
+	if tk.Title != "Issue 3, renamed" || tk.External.Rev != "r3" || tk.External.Snapshot["title"] != "Issue 3, renamed" {
+		t.Fatalf("task 3 after refresh: %+v", tk)
+	}
+	// A second refresh has nothing left to do.
+	var again refreshed
+	e.json(&again, "tracker", "refresh", "--all")
+	for _, k := range []string{"1", "2", "3", "6"} {
+		if r := again.by(k); r.Status != "unchanged" {
+			t.Fatalf("second refresh, %s: %+v", k, r)
+		}
+	}
+	if got := e.eventCount(short["2"]) - before["2"]; got != 2 {
+		t.Fatalf("second refresh wrote to task 2: %d", got)
+	}
+
+	// One task by reference; a task with no link is exit 2.
+	if code := e.run("tracker", "refresh", short["1"]); code != 0 || !strings.Contains(e.out.String(), "unchanged") {
+		t.Fatalf("one task: exit %d %q", code, e.out.String())
+	}
+	plain, _ := e.st().CreateTask(ctx, store.NewTask{Slug: "plain", Title: "Plain", Initial: "open", Workflow: store.WorkflowRef{Name: "basic", Version: 1}})
+	if code := e.run("tracker", "refresh", plain.Short); code != 2 {
+		t.Fatalf("unlinked: exit %d", code)
+	}
+	if code := e.run("tracker", "refresh"); code != 2 {
+		t.Fatalf("no target: exit %d", code)
+	}
+}
+
+// A key the tracker moved is an error on that task with the way out.
+func TestTrackerRefreshMovedKey(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	s := &scripted{issues: map[string]tracker.Issue{"1": issue("1", "One")}, errs: map[string]error{}}
+	e.tr = s
+	if code := e.run("tracker", "pull", "1"); code != 0 {
+		t.Fatal(code)
+	}
+	s.issues["1"] = issue("9", "One")
+	var out refreshed
+	if code := e.json(&out, "tracker", "refresh", "--all"); code != 2 || out.Tasks[0].Status != "error" || !strings.Contains(out.Tasks[0].Error, "rig task link") {
+		t.Fatalf("exit %d %+v", code, out)
 	}
 }
