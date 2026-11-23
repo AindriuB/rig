@@ -345,3 +345,29 @@ func TestTrackerURLResolver(t *testing.T) {
 		t.Fatal("Get returned a url that could not be checked")
 	}
 }
+
+// tracker.command's program is an absolute path or a bare name, never a
+// relative path a clone could supply.
+func TestTrackerCommandProgramPath(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "prog")
+	for _, p := range []string{"bin/rig-tracker", "./x", "../x", `sub\x`, `..\x`} {
+		if runtime.GOOS != "windows" && strings.Contains(p, `\`) && !strings.Contains(p, "/") {
+			continue
+		}
+		if _, err := parseCommand([]any{p}); err == nil {
+			t.Errorf("parseCommand(%q) accepted", p)
+		}
+	}
+	for _, p := range []string{abs, "rig-tracker"} {
+		if _, err := parseCommand([]any{p, "a/b"}); err != nil {
+			t.Errorf("parseCommand(%q): %v", p, err)
+		}
+	}
+	e := newEnv(t)
+	e.global(t, `{"tracker":{"command":["bin/x"]}}`)
+	if _, err := Open(e.opts()); err == nil {
+		if _, err := open(t, e).TrackerCommand(); err == nil {
+			t.Error("global file with a relative program accepted")
+		}
+	}
+}

@@ -114,6 +114,9 @@ func parseCommand(v any) ([]string, error) {
 		}
 		out = append(out, s)
 	}
+	if p := out[0]; !filepath.IsAbs(p) && strings.ContainsAny(p, `/`+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%s program %q is a relative path; use an absolute path or a bare name found on PATH", KeyTrackerCommand, p)
+	}
 	return out, nil
 }
 
