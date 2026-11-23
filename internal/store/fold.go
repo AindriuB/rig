@@ -87,8 +87,15 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 		task.Parent = d.Task
 	case KindExternal:
 		var d ExternalData
-		if !decode(e, &d) || task.ID == "" || d.Kind == "" || d.Key == "" {
+		if !decode(e, &d) || task.ID == "" || (d.Kind == "") != (d.Key == "") {
 			return false
+		}
+		if d.Kind == "" {
+			if task.External == nil {
+				return false
+			}
+			task.External = nil
+			return true
 		}
 		applyExternal(task, d)
 	case KindTrackerSync:

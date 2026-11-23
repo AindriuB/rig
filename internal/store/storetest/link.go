@@ -206,3 +206,42 @@ func testLinkedCaseAndKind(t *testing.T, s store.Store) {
 		t.Fatalf("external event host = %q", got.External.Host)
 	}
 }
+
+// An external event with an empty kind and key clears the link, and the issue
+// can then be linked to a new task. It is refused on an unlinked task and when
+// only one of kind and key is empty.
+func testUnlinkTask(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	task, err := s.CreateTask(ctx, linkedTask("one", "AB-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateErr := func(ref string, d store.ExternalData) error {
+		_, err := s.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
+			e, err := store.NewEvent(store.KindExternal, d)
+			return []store.Event{e}, err
+		})
+		return err
+	}
+	for _, d := range []store.ExternalData{{Kind: "jira"}, {Key: "AB-7"}} {
+		if err := updateErr(task.ID, d); err == nil {
+			t.Fatalf("half-empty %+v accepted", d)
+		}
+	}
+	if got, _ := s.Task(ctx, task.ID); got.External == nil {
+		t.Fatal("a refused event cleared the link")
+	}
+	got := update(t, s, task.ID, []string{store.KindExternal}, store.ExternalData{})
+	if got.External != nil {
+		t.Fatalf("after clear: %+v", got.External)
+	}
+	if again, _ := s.Task(ctx, task.ID); again.External != nil {
+		t.Fatalf("refolded: %+v", again.External)
+	}
+	if err := updateErr(task.ID, store.ExternalData{}); err == nil {
+		t.Fatal("clearing an unlinked task accepted")
+	}
+	if _, err := s.CreateTask(ctx, linkedTask("two", "AB-7")); err != nil {
+		t.Fatalf("relink after clear: %v", err)
+	}
+}

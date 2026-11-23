@@ -64,7 +64,8 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 // that is malformed or names a finding that does not exist.
 func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 	o = o.WithDefaults()
-	_, findings, notes, _ := Fold(log)
+	task, findings, notes, _ := Fold(log)
+	linked := task.External != nil
 	findingShort := map[string]bool{}
 	for _, f := range findings {
 		findingShort[f.Short] = true
@@ -113,9 +114,17 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 			err = check(e, func(*ParentData) error { return nil })
 		case KindExternal:
 			e.Data, err = rewrite(e, func(d *ExternalData) error {
+				if d.Kind == "" && d.Key == "" {
+					if !linked {
+						return errors.New("clearing a link: task is not linked")
+					}
+					linked = false
+					return nil
+				}
 				if d.Kind == "" || d.Key == "" {
 					return errors.New("no kind or key")
 				}
+				linked = true
 				d.Host = strings.ToLower(d.Host)
 				return nil
 			})
