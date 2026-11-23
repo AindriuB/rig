@@ -128,13 +128,58 @@ func TestMarkdownToADFMixedListKinds(t *testing.T) {
 	}
 }
 
-// 37-2: a quote keeps the lists and headings inside it.
+// 37-2: a quote keeps the lists inside it; R2: only schema-allowed children.
 func TestMarkdownToADFQuoteKeepsBlocks(t *testing.T) {
-	b, _ := json.Marshal(markdownToADF("> # Head\n> - item one"))
+	doc := markdownToADF("> # Head\n> - item one")
+	b, _ := json.Marshal(doc)
 	s := string(b)
-	for _, w := range []string{`"type":"blockquote"`, `"type":"heading"`, `"text":"Head"`, `"type":"bulletList"`, `"text":"item one"`} {
+	for _, w := range []string{`"type":"blockquote"`, `"type":"bulletList"`, `"text":"Head"`, `"text":"item one"`} {
 		if !strings.Contains(s, w) {
 			t.Errorf("missing %s in %s", w, s)
 		}
 	}
+	checkQuoteChildren(t, doc)
+}
+
+func checkQuoteChildren(t *testing.T, n adfNode) {
+	t.Helper()
+	if n.Type == "blockquote" {
+		for _, c := range n.Content {
+			switch c.Type {
+			case "paragraph", "bulletList", "orderedList", "codeBlock":
+			default:
+				t.Errorf("blockquote child %q not allowed", c.Type)
+			}
+		}
+	}
+	for _, c := range n.Content {
+		checkQuoteChildren(t, c)
+	}
+}
+
+func TestMarkdownToADFNestedQuoteFlat(t *testing.T) {
+	doc := markdownToADF("> > a")
+	if len(doc.Content) != 1 || doc.Content[0].Type != "blockquote" || len(doc.Content[0].Content) != 1 || doc.Content[0].Content[0].Type != "paragraph" {
+		b, _ := json.Marshal(doc)
+		t.Fatalf("got %s", b)
+	}
+	checkQuoteChildren(t, doc)
+}
+
+func TestMarkdownToADFDeepQuote(t *testing.T) {
+	doc := markdownToADF(strings.Repeat(">", 10000) + " x")
+	b, err := json.Marshal(doc)
+	if err != nil || !strings.Contains(string(b), `"text":"x"`) {
+		t.Fatalf("err=%v", err)
+	}
+	checkQuoteChildren(t, doc)
+}
+
+func TestMarkdownToADFQuotedHeadingIsParagraph(t *testing.T) {
+	doc := markdownToADF("> # Head")
+	b, _ := json.Marshal(doc)
+	if strings.Contains(string(b), `"heading"`) || !strings.Contains(string(b), `"text":"Head"`) {
+		t.Errorf("got %s", b)
+	}
+	checkQuoteChildren(t, doc)
 }

@@ -301,7 +301,11 @@ func parseMarkdown(src string) []mdBlock {
 		}
 		if strings.HasPrefix(line, ">") {
 			flush()
-			text := strings.TrimPrefix(strings.TrimPrefix(line, ">"), " ")
+			// Strip every quote level in one pass: ADF cannot nest quotes.
+			text := line
+			for strings.HasPrefix(text, ">") {
+				text = strings.TrimPrefix(strings.TrimPrefix(text, ">"), " ")
+			}
 			if n := len(blocks); n > 0 && blocks[n-1].kind == blockQuote && i > 0 && strings.HasPrefix(lines[i-1], ">") {
 				blocks[n-1].lines = append(blocks[n-1].lines, text)
 			} else {
@@ -530,7 +534,14 @@ func blocksToADF(blocks []mdBlock) []adfNode {
 			}
 			out = append(out, n)
 		case blockQuote:
-			inner := blocksToADF(parseMarkdown(strings.Join(b.lines, "\n")))
+			qb := parseMarkdown(strings.Join(b.lines, "\n"))
+			for i := range qb {
+				// ADF allows no heading inside a quote: render it bold.
+				if qb[i].kind == blockHeading {
+					qb[i] = mdBlock{kind: blockPara, lines: []string{"**" + qb[i].lines[0] + "**"}}
+				}
+			}
+			inner := blocksToADF(qb)
 			if len(inner) == 0 {
 				inner = []adfNode{{Type: "paragraph", Content: []adfNode{}}}
 			}
