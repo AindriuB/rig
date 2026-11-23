@@ -230,10 +230,15 @@ func (a *app) printTask(ctx context.Context, cmd string, w *work, t store.Task, 
 func (a *app) taskShow(ctx context.Context, args []string) int {
 	fs := newFlags()
 	repo := fs.str("--repo")
-	asJSON, findings, notes, history := fs.boolean("--json"), fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history")
+	ff := addFormatFlags(fs)
+	findings, notes, history := fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 {
-		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--json] [--repo <dir>]")
+		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--format text|markdown|json] [--repo <dir>]")
+	}
+	format, err := ff.resolve()
+	if err != nil {
+		return a.fail("task show", "%v", err)
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])
 	if err != nil {
@@ -243,8 +248,11 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail("task show", err)
 	}
-	if *asJSON {
+	if format == formatJSON {
 		return a.printJSON(v)
+	}
+	if format == formatMarkdown {
+		return a.taskShowMarkdown(ctx, w, t, v, *findings, *notes, *history)
 	}
 	out := a.stdout
 	fmt.Fprintf(out, "# %s\n\n", v.Title)
@@ -351,6 +359,42 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 	return 0
 }
 
+// taskShowMarkdown prints `rig task show --format markdown`.
+func (a *app) taskShowMarkdown(ctx context.Context, w *work, t store.Task, v workflow.TaskView, findings, notes, history bool) int {
+	s := mdShow{View: v, ShowFind: findings, ShowNotes: notes, ShowHistory: history}
+	if v.Parent != "" {
+		if p, err := w.st.Task(ctx, v.Parent); err == nil {
+			s.ParentShort = p.Short
+		}
+	}
+	var err error
+	if findings {
+		if s.Findings, err = w.st.Findings(ctx, t.ID); err != nil {
+			return a.storeFail("task show", err)
+		}
+	}
+	if notes {
+		if s.Notes, err = w.st.Notes(ctx, store.NoteFilter{Task: t.ID}); err != nil {
+			return a.storeFail("task show", err)
+		}
+	}
+	if history {
+		evs, err := w.st.Events(ctx, t.ID)
+		if err != nil {
+			return a.storeFail("task show", err)
+		}
+		for _, e := range evs {
+			var d store.TransitionData
+			if e.Kind != store.KindTransition || json.Unmarshal(e.Data, &d) != nil {
+				continue
+			}
+			s.History = append(s.History, mdHistory{Time: e.Time, From: d.From, To: d.To, Sha: d.Sha, PR: d.PR, Reason: d.Reason, Actor: e.Actor})
+		}
+	}
+	fmt.Fprint(a.stdout, renderShowMD(s))
+	return 0
+}
+
 // sortedNames returns the keys of m in order.
 func sortedNames[V any](m map[string]V) []string {
 	names := make([]string, 0, len(m))
@@ -368,9 +412,14 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 	}
 	fs := newFlags()
 	repo := fs.str("--repo")
-	asJSON, all := fs.boolean("--json"), fs.boolean("--all")
+	ff := addFormatFlags(fs)
+	all := fs.boolean("--all")
 	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
-		return a.fail("task list", "usage: rig task list [--state <s>]... [--all] [--json] [--repo <dir>]")
+		return a.fail("task list", "usage: rig task list [--state <s>]... [--all] [--format text|markdown|json] [--repo <dir>]")
+	}
+	format, err := ff.resolve()
+	if err != nil {
+		return a.fail("task list", "%v", err)
 	}
 	w, err := a.openWork(ctx, *repo, true)
 	if err != nil {
@@ -395,8 +444,16 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 		}
 		views = append(views, v)
 	}
-	if *asJSON {
+	switch format {
+	case formatJSON:
 		return a.printJSON(views)
+	case formatMarkdown:
+		shorts := make(map[string]string, len(tasks))
+		for _, t := range tasks {
+			shorts[t.ID] = t.Short
+		}
+		fmt.Fprint(a.stdout, renderListMD(views, shorts))
+		return 0
 	}
 	for _, v := range views {
 		fmt.Fprintf(a.stdout, "%s  %-10s  %s  %s\n", v.Short, v.State, v.Slug, v.Title)
