@@ -277,6 +277,27 @@ func TestPushPrefixesReadFromTheMainCheckout(t *testing.T) {
 	}
 }
 
+// With a bare main checkout there is no main root to trust: a linked
+// worktree's own rig.json never supplies pushPrefixes.
+func TestPushPrefixesNotFromAWorktreeOfABareRepo(t *testing.T) {
+	repo, remote := newRepo(t)
+	bare := filepath.Join(filepath.Dir(repo), "bare.git")
+	gitc(t, filepath.Dir(repo), "clone", "-q", "--bare", repo, bare)
+	gitc(t, bare, "remote", "set-url", "origin", remote)
+	gitc(t, bare, "branch", "release/x", "main")
+	wt := filepath.Join(filepath.Dir(repo), "wt-bare")
+	gitc(t, bare, "worktree", "add", "-q", wt, "task/07-foo")
+	os.MkdirAll(filepath.Join(wt, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(wt, ".claude", "rig.json"), []byte(`{"pushPrefixes":["release"]}`), 0o644)
+	before := gitc(t, remote, "for-each-ref")
+	if r := rig(t, t.TempDir(), nil, nil, "push", "release/x", "--worktree", wt); r.code != 2 {
+		t.Fatalf("the worktree's rig.json was honoured: %+v", r)
+	}
+	if gitc(t, remote, "for-each-ref") != before {
+		t.Fatal("release/x reached the remote")
+	}
+}
+
 func TestPushPrefixesReadThroughTheLayers(t *testing.T) {
 	repo, remote := newRepo(t)
 	gitc(t, repo, "branch", "record/x")
