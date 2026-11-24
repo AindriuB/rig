@@ -5,6 +5,7 @@ package memstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -126,6 +127,18 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 	}
 	if err := store.CheckRelink(id, stamped, s.tasks()); err != nil {
 		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+	}
+	for _, e := range stamped {
+		if e.Kind != store.KindParent {
+			continue
+		}
+		var d store.ParentData
+		if err := json.Unmarshal(e.Data, &d); err != nil {
+			return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+		}
+		if err := store.CheckParent(id, d.Task, s.tasks()); err != nil {
+			return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+		}
 	}
 	s.logs[id] = append(slices.Clip(log), stamped...)
 	task, _, _, _ = store.Fold(s.logs[id])

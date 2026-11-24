@@ -424,7 +424,7 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		if err != nil {
 			return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
 		}
-		if slices.ContainsFunc(stamped, func(e store.Event) bool { return e.Kind == store.KindExternal }) {
+		if slices.ContainsFunc(stamped, func(e store.Event) bool { return e.Kind == store.KindExternal || e.Kind == store.KindParent }) {
 			logs, err := s.readAll(ctx, TasksPrefix, nil)
 			if err != nil {
 				return nil, "", err
@@ -432,6 +432,18 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 			tasks, _ := fold(logs)
 			if err := store.CheckRelink(task.ID, stamped, tasks); err != nil {
 				return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+			}
+			for _, e := range stamped {
+				if e.Kind != store.KindParent {
+					continue
+				}
+				var d store.ParentData
+				if err := json.Unmarshal(e.Data, &d); err != nil {
+					return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+				}
+				if err := store.CheckParent(task.ID, d.Task, tasks); err != nil {
+					return nil, "", fmt.Errorf("update %s: %w", task.Short, err)
+				}
 			}
 		}
 		if len(stamped) == 0 {

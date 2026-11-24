@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit ..."
+	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit|parent|link|unlink ..."
 
 	// maxBodyFile is the most `rig task new --body-file` reads.
 	maxBodyFile = 64 << 10
@@ -61,6 +61,12 @@ func (a *app) task(ctx context.Context, args []string) int {
 		return a.taskLog(ctx, rest)
 	case "edit":
 		return a.taskEdit(ctx, rest)
+	case "parent":
+		return a.taskParent(ctx, rest)
+	case "link":
+		return a.taskLink(ctx, rest)
+	case "unlink":
+		return a.taskUnlink(ctx, rest)
 	}
 	return a.fail("task", "unknown subcommand %q\n%s", args[0], taskUsage)
 }
@@ -154,15 +160,22 @@ func parseFieldArgs(wf *workflow.Workflow, raw []string, meta bool) (map[string]
 }
 
 func (a *app) taskNew(ctx context.Context, args []string) int {
-	args, rep, err := splitRepeated(args, []string{"--field"}, []string{"--slug", "--title", "--body", "--body-file", "--repo"})
+	args, rep, err := splitRepeated(args, []string{"--field"}, []string{"--slug", "--title", "--body", "--body-file", "--repo", "--from", "--state"})
 	if err != nil {
 		return a.fail("task new", "%v", err)
 	}
 	fs := newFlags()
 	slug, title, body, bodyFile, repo := fs.str("--slug"), fs.str("--title"), fs.str("--body"), fs.str("--body-file"), fs.str("--repo")
+	from, state := fs.str("--from"), fs.str("--state")
 	asJSON := fs.boolean("--json")
-	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
-		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]")
+	if pos, err := fs.parse(args); err != nil || len(pos) > 0 || (*from == "" && *state != "") {
+		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]\n       rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--json] [--repo <dir>]")
+	}
+	if *from != "" {
+		if *title != "" || *body != "" || *bodyFile != "" {
+			return a.fail("task new", "--from takes the title and body from the issue: drop --title, --body and --body-file")
+		}
+		return a.taskNewFrom(ctx, *repo, *from, *state, *slug, rep["--field"], *asJSON)
 	}
 	if len(*slug) > maxSlug || !slugRE.MatchString(*slug) {
 		return a.fail("task new", "--slug must be 1 to %d characters of a-z, 0-9 and -", maxSlug)
@@ -231,10 +244,10 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 	fs := newFlags()
 	repo := fs.str("--repo")
 	ff := addFormatFlags(fs)
-	findings, notes, history := fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history")
+	findings, notes, history, children := fs.boolean("--findings"), fs.boolean("--notes"), fs.boolean("--history"), fs.boolean("--children")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 {
-		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--format text|markdown|json] [--repo <dir>]")
+		return a.fail("task show", "usage: rig task show <task> [--findings] [--notes] [--history] [--children] [--format text|markdown|json] [--repo <dir>]")
 	}
 	format, err := ff.resolveArgs(args)
 	if err != nil {
@@ -248,11 +261,24 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail("task show", err)
 	}
+	var kids []workflow.TaskView
+	if *children {
+		if kids, err = a.childViews(ctx, w, t); err != nil {
+			return a.storeFail("task show", err)
+		}
+	}
 	if format == formatJSON {
+		if *children {
+			return a.printJSON(showChildren{v, kids})
+		}
 		return a.printJSON(v)
 	}
 	if format == formatMarkdown {
-		return a.taskShowMarkdown(ctx, w, t, v, *findings, *notes, *history)
+		code := a.taskShowMarkdown(ctx, w, t, v, *findings, *notes, *history)
+		if code == 0 && *children {
+			fmt.Fprint(a.stdout, "\n"+renderChildrenMD(kids))
+		}
+		return code
 	}
 	out := a.stdout
 	fmt.Fprintf(out, "# %s\n\n", v.Title)
@@ -356,6 +382,9 @@ func (a *app) taskShow(ctx context.Context, args []string) int {
 			fmt.Fprintln(out, "none")
 		}
 	}
+	if *children {
+		fmt.Fprint(out, "\n"+renderChildrenMD(kids))
+	}
 	return 0
 }
 
@@ -406,7 +435,7 @@ func sortedNames[V any](m map[string]V) []string {
 }
 
 func (a *app) taskList(ctx context.Context, args []string) int {
-	args, rep, err := splitRepeated(args, []string{"--state"}, []string{"--repo"})
+	args, rep, err := splitRepeated(args, []string{"--state"}, []string{"--repo", "--parent"})
 	if err != nil {
 		return a.fail("task list", "%v", err)
 	}
@@ -414,8 +443,9 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 	repo := fs.str("--repo")
 	ff := addFormatFlags(fs)
 	all := fs.boolean("--all")
-	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
-		return a.fail("task list", "usage: rig task list [--state <s>]... [--all] [--format text|markdown|json] [--repo <dir>]")
+	shape := addListShape(fs)
+	if pos, err := fs.parse(args); err != nil || len(pos) > 0 || shape.count(args) > 1 {
+		return a.fail("task list", "usage: rig task list [--state <s>]... [--all] [--parent <task> | --roots | --tree] [--format text|markdown|json] [--repo <dir>]")
 	}
 	format, err := ff.resolveArgs(args)
 	if err != nil {
@@ -444,10 +474,20 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 		}
 		views = append(views, v)
 	}
+	var depths []int
+	if shape.active(args) {
+		if views, depths, err = a.shapeViews(ctx, w, shape, views); err != nil {
+			return a.storeFail("task list", err)
+		}
+	}
 	switch format {
 	case formatJSON:
 		return a.printJSON(views)
 	case formatMarkdown:
+		if *shape.tree {
+			fmt.Fprint(a.stdout, renderTreeMD(views, depths))
+			return 0
+		}
 		shorts := make(map[string]string, len(tasks))
 		for _, t := range tasks {
 			shorts[t.ID] = t.Short
@@ -455,8 +495,12 @@ func (a *app) taskList(ctx context.Context, args []string) int {
 		fmt.Fprint(a.stdout, renderListMD(views, shorts))
 		return 0
 	}
-	for _, v := range views {
-		fmt.Fprintf(a.stdout, "%s  %-10s  %s  %s\n", v.Short, v.State, v.Slug, v.Title)
+	for i, v := range views {
+		indent := ""
+		if depths != nil {
+			indent = strings.Repeat("  ", depths[i])
+		}
+		fmt.Fprintf(a.stdout, "%s%s  %-10s  %s  %s\n", indent, v.Short, v.State, v.Slug, v.Title)
 	}
 	return 0
 }
@@ -573,11 +617,18 @@ func (w *work) updateFields(ctx context.Context, t store.Task, changed map[strin
 	if len(changed) == 0 {
 		return t, nil
 	}
+	if err := ownedRefusal(t, changed); err != nil {
+		return store.Task{}, err
+	}
 	evs, err := fieldEvents(changed)
 	if err != nil {
 		return store.Task{}, err
 	}
 	return w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		// Again on the task as it is now: a link may have landed since t was read.
+		if err := ownedRefusal(cur, changed); err != nil {
+			return nil, err
+		}
 		var moved []string
 		for _, n := range sortedNames(changed) {
 			if !sameValue(currentValue(cur, n), currentValue(t, n)) {

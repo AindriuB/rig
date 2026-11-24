@@ -38,6 +38,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"TrackerSyncNeedsLink", testTrackerSyncNeedsLink},
 		{"ParentedTask", testParentedTask},
 		{"ParentUpdates", testParentUpdates},
+		{"ParentCycleUpdate", testParentCycleUpdate},
 		{"BranchStamped", testBranchStamped},
 		{"BranchStampedUnlinked", testBranchStampedUnlinked},
 		{"ResolveByKey", testResolveByKey},

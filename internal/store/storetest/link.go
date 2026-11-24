@@ -120,6 +120,31 @@ func testParentUpdates(t *testing.T, s store.Store) {
 	}
 }
 
+// Update refuses a parent event that would make a cycle with the tasks as they
+// are now: two Updates that each pass a stale check cannot both land.
+func testParentCycleUpdate(t *testing.T, s store.Store) {
+	a, b := create(t, s, "a"), create(t, s, "b")
+	set := func(id, parent string) error {
+		_, err := s.Update(context.Background(), id, func(store.Task, []store.Finding) ([]store.Event, error) {
+			e, err := store.NewEvent(store.KindParent, store.ParentData{Task: parent})
+			return []store.Event{e}, err
+		})
+		return err
+	}
+	if err := set(a.ID, b.ID); err != nil {
+		t.Fatalf("a under b: %v", err)
+	}
+	if err := set(b.ID, a.ID); err == nil {
+		t.Fatal("b under a made a cycle and was written")
+	}
+	if got, _ := s.Task(context.Background(), b.ID); got.Parent != "" {
+		t.Fatalf("b parent = %q", got.Parent)
+	}
+	if err := set(b.ID, "no-such-task"); err == nil {
+		t.Fatal("a missing parent was written")
+	}
+}
+
 func mustTasks(t *testing.T, s store.Store) []store.Task {
 	t.Helper()
 	all, err := s.Tasks(context.Background(), store.TaskFilter{})
