@@ -45,6 +45,15 @@ func TestBranchFor(t *testing.T) {
 	if got := w.BranchFor(task); got != "01ABC/t-1a" {
 		t.Fatalf("BranchFor = %q", got)
 	}
+	w.Branch = "rig/{key}-{slug}"
+	if got := w.BranchFor(task); got != "rig/t-1a-fix-it" {
+		t.Fatalf("BranchFor {key} unlinked = %q, want the short id", got)
+	}
+	linked := task
+	linked.External = &store.External{Kind: "jira", Key: "PROJ-12"}
+	if got := w.BranchFor(linked); got != "rig/proj-12-fix-it" {
+		t.Fatalf("BranchFor {key} linked = %q", got)
+	}
 	w.Branch = ""
 	if got := w.BranchFor(task); got != "" {
 		t.Fatalf("BranchFor with no template = %q", got)

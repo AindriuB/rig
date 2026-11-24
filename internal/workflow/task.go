@@ -16,12 +16,18 @@ type Args struct {
 }
 
 // BranchFor returns the task's branch name from the workflow's template, or
-// "" when the workflow has none.
+// "" when the workflow has none. {key} is the linked issue's key as
+// store.BranchKey gives it, or the short id when the task has no link, as
+// store.ExpandBranch does when a branch is stamped.
 func (w *Workflow) BranchFor(t store.Task) string {
 	if w.Branch == "" {
 		return ""
 	}
-	return strings.NewReplacer("{short}", t.Short, "{slug}", t.Slug, "{id}", t.ID).Replace(w.Branch)
+	key := ""
+	if t.External != nil {
+		key = t.External.Key
+	}
+	return store.ExpandBranch(w.Branch, t.Short, t.Slug, t.ID, key)
 }
 
 // Effective returns the task's state after the sha-bound check: when the

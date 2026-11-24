@@ -95,6 +95,13 @@ func TestValidate(t *testing.T) {
 	if ps := base.Validate(); len(ps) != 0 {
 		t.Fatalf("valid workflow has problems: %v", ps)
 	}
+	keyed, err := Parse([]byte(strings.Replace(valid, `t/{short}`, `t/{key}-{slug}`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := keyed.Validate(); len(ps) != 0 {
+		t.Fatalf("branch template with {key} has problems: %v", ps)
+	}
 	cases := []struct {
 		name     string
 		old, new string // a replacement in valid
