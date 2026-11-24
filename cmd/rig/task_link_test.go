@@ -151,4 +151,96 @@ func TestTaskParent(t *testing.T) {
 	}
 }
 
+// AC3: task link writes the link and does one refresh; an issue linked to
+// another task is exit 1; a malformed ref never reaches the store or the
+// tracker; a failed refresh says the link stands.
+func TestTaskLink(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	c := &counting{Tracker: fake.New(allCaps, []tracker.Issue{issue("12", "Remote Title")}, nil)}
+	e.tr = c
+	x, y := e.mkTask("x"), e.mkTask("y")
+
+	// A malformed ref, or one of another kind, stops before the store and the tracker.
+	before := e.eventCount(x.ID)
+	for _, ref := range []string{"a/b", "12#3", "a..b", "jira:12", "github:", ":12", "ba d"} {
+		if code := e.run("task", "link", x.Short, ref); code != 2 {
+			t.Fatalf("%q: exit %d, stderr %q", ref, code, e.err.String())
+		}
+	}
+	if c.n != 0 || e.eventCount(x.ID) != before {
+		t.Fatalf("a malformed ref reached the tracker (%d calls) or the store", c.n)
+	}
+
+	var v workflow.TaskView
+	if code := e.json(&v, "task", "link", x.Short, "github:12"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if v.ID != x.ID || v.External == nil || v.External.Key != "12" || v.External.Kind != "github" || v.External.Host != "github.com" ||
+		strings.Join(v.External.Owned, ",") != "body,title" || v.Title != "Remote Title" || v.Body != "about Remote Title" ||
+		len(v.External.Drift) != 0 || v.External.SyncedAt.IsZero() {
+		t.Fatalf("%+v", v)
+	}
+	if c.n != 1 {
+		t.Fatalf("%d tracker calls, want one refresh", c.n)
+	}
+	if ts := e.snapshotOf(x.Short); ts["title"] != "Remote Title" || ts["body"] != "about Remote Title" {
+		t.Fatalf("snapshot %v", ts)
+	}
+
+	// The same issue from another task is refused; the same task may repeat.
+	before = e.eventCount(y.ID)
+	if code := e.run("task", "link", y.Short, "12"); code != 1 || !strings.Contains(e.err.String(), x.Short) {
+		t.Fatalf("exit %d, stderr %q", code, e.err.String())
+	}
+	if e.eventCount(y.ID) != before {
+		t.Fatal("a refused link wrote an event")
+	}
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
+		t.Fatalf("relink: exit %d: %s", code, e.err.String())
+	}
+
+	// A refresh that fails after the link is written is exit 2, and says so.
+	if code := e.run("task", "link", y.Short, "99"); code != 2 || !strings.Contains(e.err.String(), "link stands") {
+		t.Fatalf("exit %d, stderr %q", code, e.err.String())
+	}
+	if task, _ := e.st().Task(ctx, y.ID); task.External == nil || task.External.Key != "99" {
+		t.Fatalf("the link did not stand: %+v", task.External)
+	}
+	if code := e.run("task", "link", y.Short); code != 2 {
+		t.Fatalf("usage: exit %d", code)
+	}
+}
+
+// AC4: task unlink removes the link, the fields keep their values and are the
+// task's own; an unlinked task is exit 1.
+func TestTaskUnlink(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("12", "Remote Title")}, nil)
+	x := e.mkTask("x")
+	if code := e.run("task", "unlink", x.Short); code != 1 {
+		t.Fatalf("unlinked: exit %d", code)
+	}
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
+		t.Fatalf("link: exit %d: %s", code, e.err.String())
+	}
+	var v workflow.TaskView
+	if code := e.json(&v, "task", "unlink", x.Short); code != 0 || v.ID != x.ID || v.External != nil || v.Title != "Remote Title" || v.Body != "about Remote Title" {
+		t.Fatalf("exit %d %+v (%s)", code, v, e.err.String())
+	}
+	if task, _ := e.st().Task(ctx, x.ID); task.External != nil {
+		t.Fatalf("still linked: %+v", task.External)
+	}
+	if code := e.run("task", "set", x.Short, "--field", "title=Mine"); code != 0 {
+		t.Fatalf("set after unlink: exit %d: %s", code, e.err.String())
+	}
+	if code := e.run("task", "unlink", x.Short); code != 1 {
+		t.Fatalf("second unlink: exit %d", code)
+	}
+	// The issue is free again.
+	z := e.mkTask("z")
+	if code := e.run("task", "link", z.Short, "12"); code != 0 {
+		t.Fatalf("relink elsewhere: exit %d: %s", code, e.err.String())
+	}
+}
+
 // END-OF-TESTS
