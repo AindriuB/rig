@@ -568,3 +568,17 @@ func TestReportForgeFailure(t *testing.T) {
 		}
 	})
 }
+
+// R2: a pre-asked event records only `to`; the requested name matches it
+// ignoring case and surrounding spaces.
+func TestSameStatusIgnoresCaseAndSpaces(t *testing.T) {
+	if !sameStatus(" In Progress ", "IN PROGRESS", "") {
+		t.Fatal("case or spaces defeated the match against to")
+	}
+	if !sameStatus("In Progress", " in progress ", "") {
+		t.Fatal("spaces in the recorded name defeated the match")
+	}
+	if sameStatus("In Review", "IN PROGRESS", "") {
+		t.Fatal("a different status matched")
+	}
+}
