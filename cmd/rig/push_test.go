@@ -230,3 +230,70 @@ func TestPushOptionErrorNeverEchoesValue(t *testing.T) {
 		t.Errorf("known option name not shown: %q", r.errOut)
 	}
 }
+
+// globalHome writes body as a fresh home's ~/.rig/config.json and returns the
+// environment that points rig at it.
+func globalHome(t *testing.T, body string) map[string]string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".rig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".rig", "config.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"HOME": home, "USERPROFILE": home}
+}
+
+func TestPushPrefixesReadThroughTheLayers(t *testing.T) {
+	repo, remote := newRepo(t)
+	gitc(t, repo, "branch", "record/x")
+	gitc(t, repo, "branch", "task/x")
+	before := gitc(t, remote, "for-each-ref")
+
+	// The global file narrows the prefixes to record.
+	env := globalHome(t, `{"push":{"prefixes":["record"]}}`)
+	ran := hook(t, repo)
+	if r := rig(t, repo, nil, env, "push", "task/x"); r.code != 2 {
+		t.Fatalf("global narrowing ignored: %+v", r)
+	}
+	if ran() || gitc(t, remote, "for-each-ref") != before {
+		t.Fatal("task/x reached the remote")
+	}
+	if r := rig(t, repo, nil, env, "push", "record/x"); r.code != 0 {
+		t.Fatalf("record/x: %+v", r)
+	}
+
+	// A per-repository section narrows it too. The origin is a URL with a repo
+	// key; pushInsteadOf sends the push to the local bare remote.
+	gitc(t, repo, "remote", "set-url", "origin", "https://example.com/o/r.git")
+	gitc(t, repo, "config", "url."+remote+".pushInsteadOf", "https://example.com/o/r.git")
+	env = globalHome(t, `{"repos":{"example.com/o/r":{"push":{"prefixes":["record"]}}}}`)
+	if r := rig(t, repo, nil, env, "push", "task/x"); r.code != 2 {
+		t.Fatalf("repos narrowing ignored: %+v", r)
+	}
+	if got := gitc(t, remote, "for-each-ref"); strings.Contains(got, "refs/heads/task/x") {
+		t.Fatal("task/x reached the remote")
+	}
+
+	// rig.json still wins over the global file.
+	os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(repo, ".claude", "rig.json"), []byte(`{"pushPrefixes":["task"]}`), 0o644)
+	if r := rig(t, repo, nil, env, "push", "task/x"); r.code != 0 {
+		t.Fatalf("rig.json should win: %+v", r)
+	}
+}
+
+func TestPushPrefixesNeverFromTheLocalFileAndDefaultStays(t *testing.T) {
+	repo, _ := newRepo(t)
+	gitc(t, repo, "branch", "record/x")
+	gitc(t, repo, "branch", "task/x")
+	env := globalHome(t, `{}`)
+	os.MkdirAll(filepath.Join(repo, ".rig"), 0o755)
+	os.WriteFile(filepath.Join(repo, ".rig", "config.json"), []byte(`{"push":{"prefixes":["codex"]}}`), 0o644)
+	for _, b := range []string{"task/x", "record/x"} {
+		if r := rig(t, repo, nil, env, "push", b); r.code != 0 {
+			t.Fatalf("%s: %+v", b, r)
+		}
+	}
+}
