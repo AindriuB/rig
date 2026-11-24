@@ -115,7 +115,6 @@ func main() {
 	a.store = a.openStore
 	a.stdin, a.secrets, a.interactive = os.Stdin, a.openSecrets, proc.Interactive
 	a.httpClient = &http.Client{Timeout: 15 * time.Second}
-	cleanupOld(a.executable)
 	os.Exit(a.run(ctx, os.Args[1:]))
 }
 
@@ -123,6 +122,7 @@ func (a *app) run(ctx context.Context, args []string) int {
 	// --actor belongs to this run only; a reused app (tests) must not
 	// stamp one run's events with another run's flag.
 	a.actorFlag = ""
+	cleanupOld(a.executable)
 	if len(args) == 0 {
 		fmt.Fprint(a.stderr, usage)
 		return 2

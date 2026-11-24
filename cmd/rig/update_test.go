@@ -150,3 +150,20 @@ func TestUpdateCleanupOldIsQuiet(t *testing.T) {
 	}
 	cleanupOld(func() (string, error) { return "", errors.New("no exe") }) // must not panic
 }
+
+func TestUpdateEveryRunCleansOld(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "rig")
+	os.WriteFile(exe, []byte("x"), 0o755)
+	os.WriteFile(exe+".old", []byte("x"), 0o644)
+	a, out, _ := updApp(t, exe, selfupdate.Result{}, nil)
+	if a.run(context.Background(), []string{"help"}) != 0 || !strings.Contains(out.String(), "rig update") {
+		t.Fatal("help output or exit changed")
+	}
+	if _, err := os.Stat(exe + ".old"); !os.IsNotExist(err) {
+		t.Fatal(".old left after a run")
+	}
+	a.exe = func() (string, error) { return "", errors.New("no exe") }
+	if a.run(context.Background(), []string{"help"}) != 0 {
+		t.Fatal("cleanup error changed the exit code")
+	}
+}

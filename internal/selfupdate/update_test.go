@@ -166,6 +166,18 @@ func TestUpdateOutcomeTable(t *testing.T) {
 			}
 			unchanged(t, exe, old)
 		}
+		for _, c := range []struct{ cur, to, latest string }{
+			{"0.6.0", "", "v0.5.3"}, {"0.5.3", "", "v0.5.2"}, {"0.6.0", "", "v0.5.1"}, {"0.6.0", "v0.5.1", "v0.5.1"}, {"0.6.0", "v0.5.3", "v0.5.3"},
+		} {
+			exe, old := installed(t)
+			o := opts(exe, c.cur, c.to, fakeRelease(c.latest, "new", "sig"))
+			o.Check = true
+			r := Update(ctx, o)
+			if r.Action != ActionUpToDate || r.ExitCode() != 0 || r.Message != "rig "+c.cur+" is up to date" {
+				t.Fatalf("%+v: %+v", c, r)
+			}
+			unchanged(t, exe, old)
+		}
 		exe, old := installed(t)
 		o := opts(exe, "0.5.2", "", rt(func(*http.Request) (*http.Response, error) { return resp(500, "x"), nil }))
 		o.Check = true

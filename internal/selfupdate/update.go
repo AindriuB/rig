@@ -73,6 +73,16 @@ func Update(ctx context.Context, o Options) Result {
 		res.Action, res.Message = ActionRefused, fmt.Sprintf(format, a...)
 		return res
 	}
+	upToDate := func() Result {
+		res.Action, res.Message = ActionUpToDate, fmt.Sprintf("rig %s is up to date", o.Current)
+		return res
+	}
+	unsigned := func() Result {
+		if o.Check {
+			return upToDate() // not an available update
+		}
+		return refuse("rig %s is before 0.5.2 and is not signed; it cannot be installed", res.Target)
+	}
 	tag := ""
 	if o.To != "" {
 		tag = "v" + trimV(o.To)
@@ -82,7 +92,7 @@ func Update(ctx context.Context, o Options) Result {
 			return refuse("%s is not a valid version: %v", o.To, err)
 		}
 		if !ok {
-			return refuse("rig %s is before 0.5.2 and is not signed; it cannot be installed", res.Target)
+			return unsigned()
 		}
 	}
 	rel, err := o.Client.Lookup(ctx, tag)
@@ -95,16 +105,15 @@ func Update(ctx context.Context, o Options) Result {
 		return fail("", "release tag %s: %v", rel.Tag, err)
 	}
 	if !ok {
-		return refuse("rig %s is before 0.5.2 and is not signed; it cannot be installed", res.Target)
+		return unsigned()
 	}
 	cmp, err := CompareVersions(res.Target, o.Current)
 	if err != nil {
 		return fail("", "%v", err)
 	}
 	switch {
-	case cmp == 0:
-		res.Action, res.Message = ActionUpToDate, fmt.Sprintf("rig %s is up to date", o.Current)
-		return res
+	case cmp == 0, cmp < 0 && o.Check:
+		return upToDate()
 	case cmp < 0 && o.To == "":
 		return refuse("latest release %s is older than the running rig %s; use --to to install it anyway", res.Target, o.Current)
 	}

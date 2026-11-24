@@ -12,13 +12,6 @@ import (
 
 const updateUsage = "usage: rig update [--check] [--to <version>] [--json]"
 
-// --check and --to belong to rig update only; args.go lists the options every
-// command defines, and its owner has not added these yet.
-func init() {
-	knownOptions["--check"] = true
-	knownOptions["--to"] = true
-}
-
 // updateJSON is the --json shape; check is the failed check, else omitted.
 type updateJSON struct {
 	Current string `json:"current"`
