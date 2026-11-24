@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +183,48 @@ func TestStatusStoreOnlyAndEmpty(t *testing.T) {
 	}
 }
 
+// The store view makes no network call: the only forge call is phase-1's
+// ListPRs, the tracker seam is never built, PATH holds no gh or glab, and an
+// unreachable forge costs the PR line only.
+func TestStatusStoreViewNeedsNoNetwork(t *testing.T) {
+	e := newTaskEnv(t)
+	e.newTask("alpha")
+	for _, args := range [][]string{nil, {"--json"}} {
+		f := &fake.Forge{Err: errors.New("network is down")}
+		r := e.statusRun(f, e.repo, args...)
+		if r.code != 0 || !strings.Contains(r.out, "alpha") {
+			t.Fatalf("%v: %+v", args, r)
+		}
+		if len(f.Calls) != 1 || !strings.HasPrefix(f.Calls[0], "ListPRs ") {
+			t.Fatalf("%v: forge calls = %q", args, f.Calls)
+		}
+	}
+}
+
+// With a handoff, task files and a store, the phase-1 lines come out exactly
+// as before and the store section follows them.
+func TestStatusGoldenPhase1ThenStore(t *testing.T) {
+	e := newTaskEnv(t)
+	task := e.newTask("alpha")
+	note := filepath.Join(e.repo, ".git", handoffFile)
+	if err := os.WriteFile(note, []byte("Next: verify 07\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.statusRun(&fake.Forge{}, e.repo)
+	want := "HANDOFF from the last session (" + fi.ModTime().Format("2006-01-02 15:04") + "):\n" +
+		"  Next: verify 07\n" +
+		"OPEN TASKS (1):\n  07-foo\n" +
+		"OPEN PRS: none\n" +
+		"STORE TASKS (1):\n  " + task["short"].(string) + "  open        alpha  Title alpha\n"
+	if r.code != 0 || r.out != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", r.out, want)
+	}
+}
+
 func TestStatusOpenTasksStatesAndFindings(t *testing.T) {
 	e := newTaskEnv(t)
 	run := func(args ...string) {
@@ -240,7 +283,9 @@ func TestStatusOpenTasksStatesAndFindings(t *testing.T) {
 		t.Fatalf("findings = %+v", fi)
 	}
 	r = e.statusRun(f, e.repo)
-	if !strings.Contains(r.out, "STORE TASKS (3):\n") || !strings.Contains(r.out, "STORE FINDINGS: 3 open ("+as+": 1, "+bs+": 2)\n") ||
+	parts := []string{as + ": 1", bs + ": 2"}
+	sort.Strings(parts) // by short id
+	if !strings.Contains(r.out, "STORE TASKS (3):\n") || !strings.Contains(r.out, "STORE FINDINGS: 3 open ("+strings.Join(parts, ", ")+")\n") ||
 		strings.Contains(r.out, cs+"  ") {
 		t.Fatalf("text:\n%s", r.out)
 	}
