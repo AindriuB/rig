@@ -329,6 +329,26 @@ func renderChildrenMD(kids []workflow.TaskView) string {
 	return b.String()
 }
 
+// ownedRefusal is the refusal for a change to a field the tracker owns on a
+// linked task, or nil when t is not linked or no owned field is in changed.
+func ownedRefusal(wf *workflow.Workflow, t store.Task, changed map[string]any) error {
+	if t.External == nil {
+		return nil
+	}
+	owned := wf.OwnedFields()
+	var hit []string
+	for _, n := range sortedNames(changed) {
+		if slices.Contains(owned, n) {
+			hit = append(hit, n)
+		}
+	}
+	if len(hit) == 0 {
+		return nil
+	}
+	return &refusal{reason: fmt.Sprintf("%s: owned by the %s issue %s; change it there, or run `rig task unlink %s` to make it the task's own",
+		strings.Join(hit, ", "), t.External.Kind, t.External.Key, t.Short)}
+}
+
 // taskUnlink is `rig task unlink <task>`: it removes the link. The owned
 // fields keep their last values and become the task's own.
 func (a *app) taskUnlink(ctx context.Context, args []string) int {

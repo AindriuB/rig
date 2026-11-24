@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -361,6 +363,139 @@ func TestTaskShowChildren(t *testing.T) {
 	}
 	if code := e.run("task", "show", c.Short, "--children", "--markdown"); code != 0 || !strings.HasSuffix(e.out.String(), "\n## Children\n\nnone\n") {
 		t.Fatalf("markdown leaf: exit %d\n%s", code, e.out.String())
+	}
+}
+
+// ownedEnv is a trkEnv whose workflow has non-owned fields (owner, tags, ...)
+// and one linked task, x, whose issue is 12.
+func ownedEnv(t *testing.T) (*trkEnv, workflow.TaskView) {
+	t.Helper()
+	e := newTrkEnv(t, ghCfg())
+	e.envVars["RIG_WORKFLOW"] = taskWorkflow(t)
+	e.tr = fake.New(allCaps, []tracker.Issue{{Key: "12", Title: "Title x"}}, nil)
+	x := e.mkTask("x")
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
+		t.Fatalf("link: exit %d: %s", code, e.err.String())
+	}
+	return e, x
+}
+
+func (e *trkEnv) fieldsOf(ref string) (title, body, owner string) {
+	e.t.Helper()
+	task, err := e.st().Task(ctx, ref)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	owner, _ = task.Fields["owner"].(string)
+	return task.Title, task.Body, owner
+}
+
+// AC6: task set refuses a change to an owned field of a linked task, names
+// the tracker and `rig task unlink`, writes nothing; other fields work.
+func TestTaskSetRefusesOwnedFields(t *testing.T) {
+	e, x := ownedEnv(t)
+	n := e.eventCount(x.ID)
+	for _, f := range []string{"title=Mine", "body=Mine"} {
+		if code := e.run("task", "set", x.Short, "--field", f); code != 1 ||
+			!strings.Contains(e.err.String(), "rig task unlink") || !strings.Contains(e.err.String(), "github") {
+			t.Fatalf("%s: exit %d, stderr %q", f, code, e.err.String())
+		}
+	}
+	// One owned field among others refuses all of them.
+	if code := e.run("task", "set", x.Short, "--field", "owner=ann", "--field", "title=Mine"); code != 1 {
+		t.Fatalf("mixed: exit %d", code)
+	}
+	if e.eventCount(x.ID) != n {
+		t.Fatal("a refused set wrote an event")
+	}
+	// A value the field already has is not a change.
+	if code := e.run("task", "set", x.Short, "--field", "title=Title x"); code != 0 {
+		t.Fatalf("same value: exit %d: %s", code, e.err.String())
+	}
+	if code := e.run("task", "set", x.Short, "--field", "owner=ann"); code != 0 {
+		t.Fatalf("non-owned: exit %d: %s", code, e.err.String())
+	}
+	if title, _, owner := e.fieldsOf(x.ID); title != "Title x" || owner != "ann" {
+		t.Fatalf("title %q owner %q", title, owner)
+	}
+	// An unlinked task is free to change them.
+	y := e.mkTask("y")
+	if code := e.run("task", "set", y.Short, "--field", "title=Mine"); code != 0 {
+		t.Fatalf("unlinked: exit %d", code)
+	}
+}
+
+// AC6: task edit refuses an owned field of a linked task too, and keeps the
+// user's copy.
+func TestTaskEditRefusesOwnedFields(t *testing.T) {
+	e, x := ownedEnv(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_TASK_EDIT_HELPER", "1")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TEMP", tmp)
+	t.Setenv("TMP", tmp)
+	e.envVars["EDITOR"] = exe
+	e.envVars["RIG_EDITOR_NO_TTY"] = "1"
+
+	t.Setenv("RIG_EDIT_FROM", "# Title x")
+	t.Setenv("RIG_EDIT_TO", "# Changed")
+	n := e.eventCount(x.ID)
+	if code := e.run("task", "edit", x.Short); code != 1 ||
+		!strings.Contains(e.err.String(), "rig task unlink") || !strings.Contains(e.err.String(), "your copy is at") {
+		t.Fatalf("exit %d, stderr %q", code, e.err.String())
+	}
+	if e.eventCount(x.ID) != n {
+		t.Fatal("a refused edit wrote an event")
+	}
+
+	// A non-owned field edits as before.
+	t.Setenv("RIG_EDIT_FROM", "## owner\n\n")
+	t.Setenv("RIG_EDIT_TO", "## owner\n\nann")
+	if code := e.run("task", "edit", x.Short); code != 0 {
+		t.Fatalf("non-owned: exit %d: %s", code, e.err.String())
+	}
+	if _, _, owner := e.fieldsOf(x.ID); owner != "ann" {
+		t.Fatalf("owner %q", owner)
+	}
+}
+
+// AC6: the owned-field check is repeated inside the store's Update, so an
+// edit that read the task before it was linked cannot slip through. This is
+// run on the git-ref store.
+func TestTaskUpdateRefusesOwnedFieldsAfterLinkRace(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = fake.New(allCaps, []tracker.Issue{{Key: "12", Title: "Title x"}}, nil)
+	x := e.mkTask("x")
+	w, err := e.a.openWork(ctx, e.repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := w.st.Task(ctx, x.ID) // an edit reads the task here, unlinked
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run("task", "link", x.Short, "12"); code != 0 { // a link lands before its write
+		t.Fatalf("link: exit %d: %s", code, e.err.String())
+	}
+	n := e.eventCount(x.ID)
+	_, err = w.updateFields(ctx, stale, map[string]any{"title": "Sneaky"})
+	var r *refusal
+	if !errors.As(err, &r) || !strings.Contains(r.reason, "rig task unlink") || strings.Contains(r.reason, "changed since") {
+		t.Fatalf("err %v", err)
+	}
+	if e.eventCount(x.ID) != n {
+		t.Fatal("the racing edit was written")
+	}
+	if title, _, _ := e.fieldsOf(x.ID); title != "Title x" {
+		t.Fatalf("title %q", title)
+	}
+	// A non-owned field still goes through on the same stale read.
+	if _, err := w.updateFields(ctx, stale, map[string]any{"owner": "ann"}); err != nil {
+		t.Fatalf("non-owned: %v", err)
 	}
 }
 
