@@ -110,6 +110,9 @@ func main() {
 }
 
 func (a *app) run(ctx context.Context, args []string) int {
+	// --actor belongs to this run only; a reused app (tests) must not
+	// stamp one run's events with another run's flag.
+	a.actorFlag = ""
 	if len(args) == 0 {
 		fmt.Fprint(a.stderr, usage)
 		return 2
