@@ -25,7 +25,14 @@ const (
 	// KeyTrackerJiraAcceptanceField is the id of the Jira field that holds an
 	// issue's acceptance criteria. Unset, the issue has none.
 	KeyTrackerJiraAcceptanceField = "tracker.jira.acceptanceField"
+
+	// KeyWorktreesRoot is where `rig task start` puts worktrees: relative to
+	// the repository's top level, or absolute.
+	KeyWorktreesRoot = "worktrees.root"
 )
+
+// DefaultWorktreesRoot is the worktrees.root used when none is configured.
+const DefaultWorktreesRoot = ".worktrees"
 
 // Tracker kinds.
 const (
@@ -46,7 +53,15 @@ const DefaultWorkflow = "basic"
 var keys = []string{
 	KeyForgeHost, KeyForgeKind, KeyPushPrefixes,
 	KeyTrackerCommand, KeyTrackerJiraAcceptanceField, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
-	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow,
+	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow, KeyWorktreesRoot,
+}
+
+// WorktreesRoot is worktrees.root, DefaultWorktreesRoot when unset.
+func (l *Layers) WorktreesRoot() string {
+	if s := l.str(KeyWorktreesRoot); s != "" {
+		return s
+	}
+	return DefaultWorktreesRoot
 }
 
 // Keys returns the allow-list, sorted.
@@ -193,6 +208,10 @@ func checkValue(key, v string) error {
 	case KeyWorkflow:
 		if !presetRE.MatchString(v) && !filepath.IsAbs(v) {
 			return bad("a preset name or an absolute path")
+		}
+	case KeyWorktreesRoot:
+		if v == "" || strings.ContainsRune(v, 0) {
+			return bad("a non-empty directory path")
 		}
 	default:
 		return checkKey(key)

@@ -140,3 +140,33 @@ func TestJiraAcceptanceFieldKey(t *testing.T) {
 		t.Error("bad id set")
 	}
 }
+
+// 3.15 AC3: worktrees.root is a non-empty path, default ".worktrees", settable
+// in every scope.
+func TestWorktreesRootKey(t *testing.T) {
+	for _, v := range []string{".worktrees", "wt", "/abs/path", `C:\wt`} {
+		if err := checkValue(KeyWorktreesRoot, v); err != nil {
+			t.Errorf("worktrees.root %q: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "a\x00b"} {
+		if err := checkValue(KeyWorktreesRoot, v); err == nil {
+			t.Errorf("worktrees.root %q accepted", v)
+		}
+	}
+	if !slices.Contains(Keys(), KeyWorktreesRoot) || !slices.IsSorted(Keys()) {
+		t.Error("key not on the sorted allow-list")
+	}
+	l := open(t, repoEnv(t))
+	if got := l.WorktreesRoot(); got != DefaultWorktreesRoot {
+		t.Errorf("default = %q", got)
+	}
+	for _, scope := range []string{ScopeGlobal, ScopeRepo, ScopeLocal} {
+		if err := l.Set(scope, KeyWorktreesRoot, "wt-"+scope); err != nil {
+			t.Fatalf("Set(%s): %v", scope, err)
+		}
+	}
+	if got := l.WorktreesRoot(); got != "wt-local" {
+		t.Errorf("WorktreesRoot = %q", got)
+	}
+}
