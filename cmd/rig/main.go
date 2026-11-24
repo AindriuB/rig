@@ -146,6 +146,10 @@ func (a *app) run(ctx context.Context, args []string) int {
 	case "logout":
 		return a.logout(ctx, args[1:])
 	case "version", "--version":
+		if len(args) > 1 {
+			fmt.Fprintln(a.stderr, "usage: rig version")
+			return 2
+		}
 		fmt.Fprintln(a.stdout, version)
 		return 0
 	case "help", "-h", "--help":
