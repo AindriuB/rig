@@ -82,7 +82,7 @@ func TestUsage(t *testing.T) {
 		t.Fatalf("unknown command: exit %d", r.code)
 	}
 	for _, arg := range []string{"version", "--version"} {
-		if r := rig(t, t.TempDir(), nil, nil, arg); r.code != 0 || r.out != "0.5.0\n" || r.errOut != "" {
+		if r := rig(t, t.TempDir(), nil, nil, arg); r.code != 0 || r.out != version+"\n" || r.errOut != "" {
 			t.Fatalf("%s: %+v", arg, r)
 		}
 	}

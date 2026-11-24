@@ -26,8 +26,11 @@ It exists for two reasons:
 rig needs Go 1.24 or later, `git`, and `gh` (GitHub) or `glab` (GitLab).
 
 ```bash
-go install github.com/AindriuB/rig/cmd/rig@v0.4.0
+go install github.com/AindriuB/rig/cmd/rig@latest
 ```
+
+Release binaries for five platforms, with a `SHA256SUMS` file, are on the
+project's GitHub release page.
 
 ## Commands
 
@@ -102,7 +105,7 @@ is trimmed; an empty one, one with a control character, or `--actor` and
 | `rig tracker pull` | Creates linked tasks from one issue, a search or a label, and with `--children` the issue's sub-issues. | 0; 1 `--state` refused; 2 on any error, or if any issue failed |
 | `rig tracker refresh` | Re-reads linked issues and overwrites the owned fields of their tasks with the tracker's values. `--dry-run` writes nothing. | 0; 2 on any error, or if any task failed |
 | `rig tracker report` | Sends a linked task's progress to its issue: a status from the workflow's `tracker.report.status`, then a comment (`pr`, `state` or `summary`; findings and notes only with `--include`). With neither `--status` nor `--comment` it sends the status and a `state` comment. Each send is recorded in a `tracker-report` event (the status as `from`, `to` and the requested `asked`). A repeat that changes nothing is skipped; `--dry-run` prints what would be sent. | 0; 1 no status mapped for the state, no such transition, or no pull request for `--comment pr`, with nothing sent; 2 on any other error |
-| `rig tracker show`, `rig tracker status` | Prints one issue; or prints the tracker kind, whether its configuration is trusted, what it supports and whether the login works. Neither writes. | 0; 2 on any error |
+| `rig tracker show`, `rig tracker status` | Prints one issue; or prints the tracker kind, whether its configuration is trusted, what it supports and whether the login works, and, for Jira, whether the configured project exists. Neither writes. | 0; 2 on any error |
 | `rig workflow` | Shows the workflow in effect, or checks a workflow file. | 0; `validate` 1 invalid; 2 on any error |
 | `rig next`, `rig context` | List what each open task needs, and print a size-limited brief for one task. They never call the forge. | 0; 2 on any error |
 | `rig config` | Reads and writes settings in `~/.rig/config.json` (`--global`, `--repo`) or `<repo>/.rig/config.json` (`--local`). `rig config set` needs a scope. | 0; `get` 1 not set; 2 on any error |

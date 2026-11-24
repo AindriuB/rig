@@ -724,6 +724,31 @@ func TestTaskFinishRefusesATrackedEditInTheMainCheckout(t *testing.T) {
 	}
 }
 
+// 051 item 6: a cherry-pick (a file) and a rebase (a directory) in progress in
+// the main checkout refuse finish too, and change nothing.
+func TestTaskFinishRefusesCherryPickAndRebase(t *testing.T) {
+	for _, name := range []string{"CHERRY_PICK_HEAD", "rebase-merge"} {
+		repo, wt, sha := finishDirtyEnv(t)
+		p := filepath.Join(repo, ".git", name)
+		var err error
+		if name == "rebase-merge" {
+			err = os.Mkdir(p, 0o755)
+		} else {
+			err = os.WriteFile(p, []byte(gitc(t, repo, "rev-parse", "HEAD")+"\n"), 0o644)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha)
+		if r.code != 1 || !strings.Contains(r.errOut, "in progress") {
+			t.Fatalf("%s: finish: %+v", name, r)
+		}
+		if !exists(p) || !exists(wt) {
+			t.Fatalf("%s: state changed", name)
+		}
+	}
+}
+
 // A merge in progress in the main checkout refuses finish; an untracked file does not.
 func TestTaskFinishRefusesAnOperationInProgress(t *testing.T) {
 	repo, wt, sha := finishDirtyEnv(t)

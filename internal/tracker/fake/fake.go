@@ -24,6 +24,13 @@ type Tracker struct {
 	// transient error to test how a caller handles a failing tracker.
 	Err error
 
+	// Project is what CheckProject returns; nil means the fake cannot check.
+	Project *tracker.ProjectInfo
+
+	// ProjectErr, when set, is returned by CheckProject alone; every other
+	// method works.
+	ProjectErr error
+
 	// Comments records every successful Comment call.
 	Comments []CommentCall
 	// StatusCalls records every successful SetStatus call.
@@ -41,7 +48,10 @@ type StatusCall struct {
 	Key, Status string
 }
 
-var _ tracker.Tracker = (*Tracker)(nil)
+var (
+	_ tracker.Tracker        = (*Tracker)(nil)
+	_ tracker.ProjectChecker = (*Tracker)(nil)
+)
 
 // New returns a fake with the given capabilities, issues and known statuses.
 func New(caps tracker.Caps, issues []tracker.Issue, statuses []string) *Tracker {
@@ -68,6 +78,20 @@ func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
 		return tracker.Caps{}, t.Err
 	}
 	return t.caps, nil
+}
+
+// CheckProject returns Project, or ErrUnsupported when it is nil.
+func (t *Tracker) CheckProject(ctx context.Context) (tracker.ProjectInfo, error) {
+	if t.Err != nil {
+		return tracker.ProjectInfo{}, t.Err
+	}
+	if t.ProjectErr != nil {
+		return tracker.ProjectInfo{}, t.ProjectErr
+	}
+	if t.Project == nil {
+		return tracker.ProjectInfo{}, tracker.ErrUnsupported
+	}
+	return *t.Project, nil
 }
 
 func ref(is *tracker.Issue) tracker.IssueRef {

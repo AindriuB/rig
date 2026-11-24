@@ -136,6 +136,13 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		var v any
 		readJSON(s.t, "myself.json", &v)
 		s.reply(w, 200, v)
+	case r.Method == "GET" && strings.HasPrefix(path, prefix+"/project/"):
+		key := strings.TrimPrefix(path, prefix+"/project/")
+		if key != "RIG" && key != "EMPTY" {
+			s.reply(w, 404, map[string]any{"errorMessages": []string{"No project could be found with key '" + key + "'."}})
+			return
+		}
+		s.reply(w, 200, map[string]any{"key": key})
 	case r.Method == "GET" && (path == prefix+"/search" || path == prefix+"/search/jql"):
 		s.search(w, r)
 	case strings.HasPrefix(path, prefix+"/issue/"):

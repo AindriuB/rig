@@ -273,13 +273,14 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 		wantComment = false
 	}
 	last := lastReports(log, ext.Kind, ext.Key, kind)
+	repeat := false // the repeat check dropped a part
 	if wantStatus && last.status != nil && sameStatus(status, last.status.To, last.status.Asked) {
-		wantStatus = false
+		wantStatus, repeat = false, true
 	}
 	if wantComment && last.comment != nil && last.comment.Digest == digest(body) {
-		wantComment = false
+		wantComment, repeat = false, true
 	}
-	if !wantStatus && !wantComment {
+	if !wantStatus && !wantComment && repeat {
 		out.Skipped = true
 		return a.reportDone(out, warnings, *asJSON, "already reported; nothing sent", 0)
 	}

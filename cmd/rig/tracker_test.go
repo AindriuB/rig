@@ -682,6 +682,53 @@ func TestTrackerShowAndStatus(t *testing.T) {
 	}
 }
 
+// 051 item 4: status reports the configured project when the tracker can
+// check it, and says nothing new when it cannot. A missing project does not
+// change the exit code.
+func TestTrackerStatusProject(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		info *tracker.ProjectInfo
+		line string
+	}{
+		{"ok", &tracker.ProjectInfo{Key: "RIG", Exists: true}, "project: RIG ok\n"},
+		{"empty", &tracker.ProjectInfo{Key: "RIG", Exists: true, Empty: true}, "project: RIG ok (no issues yet)\n"},
+		{"missing", &tracker.ProjectInfo{Key: "RIG"}, "project: RIG not found\n"},
+		{"cannot", nil, ""},
+	} {
+		e := newTrkEnv(t, ghCfg())
+		f := fake.New(allCaps, nil, nil)
+		f.Project = c.info
+		e.tr = f
+		if code := e.run("tracker", "status"); code != 0 {
+			t.Fatalf("%s: exit %d", c.name, code)
+		}
+		if got := e.out.String(); strings.Contains(got, "project:") != (c.line != "") || !strings.Contains(got, c.line) {
+			t.Errorf("%s: %q", c.name, got)
+		}
+		var st struct{ Project *tracker.ProjectInfo }
+		if code := e.json(&st, "tracker", "status"); code != 0 || (st.Project == nil) != (c.info == nil) || (c.info != nil && *st.Project != *c.info) {
+			t.Errorf("%s: json exit %d %+v", c.name, code, st.Project)
+		}
+	}
+}
+
+// A project check that fails with a real error is reported in both forms:
+// `project: not checked: ...` and project.error in the JSON.
+func TestTrackerStatusProjectError(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	f := fake.New(allCaps, nil, nil)
+	f.ProjectErr = errors.New("jira is down")
+	e.tr = f
+	if code := e.run("tracker", "status"); code != 0 || !strings.Contains(e.out.String(), "project: not checked: jira is down\n") {
+		t.Fatalf("text: exit %d %q", code, e.out.String())
+	}
+	var st struct{ Project struct{ Error string } }
+	if code := e.json(&st, "tracker", "status"); code != 0 || st.Project.Error != "jira is down" {
+		t.Errorf("json: exit %d %+v", code, st)
+	}
+}
+
 // A key the tracker moved is an error on that task with the way out.
 func TestTrackerRefreshMovedKey(t *testing.T) {
 	e := newTrkEnv(t, ghCfg())

@@ -46,6 +46,23 @@ type Tracker interface {
 	SetStatus(ctx context.Context, key, status string) (StatusResult, error)
 }
 
+// ProjectChecker is an optional interface: a tracker that can check the
+// project it is configured for. Callers type-assert for it; a tracker that
+// lacks it, or returns ErrUnsupported, has nothing to report.
+type ProjectChecker interface {
+	// CheckProject reports whether the configured project exists and whether
+	// it has no issues yet. A missing project is Exists false with no error.
+	CheckProject(ctx context.Context) (ProjectInfo, error)
+}
+
+// ProjectInfo is the outcome of CheckProject.
+type ProjectInfo struct {
+	Key    string `json:"key"`
+	Exists bool   `json:"exists"`
+	// Empty is true when the project exists and holds no issue.
+	Empty bool `json:"empty"`
+}
+
 var (
 	// ErrUnsupported reports that the tracker lacks the method called.
 	ErrUnsupported = errors.New("tracker does not support this")

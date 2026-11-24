@@ -293,7 +293,12 @@ there is none) and `external` (absent when the task is not linked):
   acceptance, priority, assignee, labels, type, status, parent, rev}`.
 - `rig tracker status --json` is `{kind, trusted, capabilities, login}`;
   `capabilities` is `{parent, children, types, search, comment, setStatus,
-  levels}` or `null`, and `login` is `{ok, error?}`.
+  levels}` or `null`, and `login` is `{ok, error?}`. For a tracker that can
+  check its configured project (Jira) there is also `project`, `{key, exists,
+  empty}`, and the text output gains `project: RIG ok`, `project: RIG not found`
+  or `project: RIG ok (no issues yet)`; a missing project does not change the
+  exit code. When the check fails with an error, `project` is `{error}` and the
+  text output says `project: not checked: <error>`.
 
 **Tracker report.** `rig tracker report` sends a task's progress to the issue
 it is linked to (the task must be linked to an issue of the configured tracker,
@@ -333,7 +338,9 @@ state`.
   of the same kind has the same digest. Two report runs at once can both send:
   there is no lock. When every requested part is
   skipped nothing is sent, no event is written, and the output says `skipped`
-  (`"skipped": true` in JSON).
+  (`"skipped": true` in JSON). `skipped` means the repeat check dropped a part:
+  when the tracker's capabilities alone empty the request, the run exits 0 with
+  the warnings and the normal (or dry-run) line, and `skipped` is false.
 - `--dry-run` calls no tracker method that writes, and writes nothing; it prints
   `status: <name>` and `comment (<kind>):` followed by the exact body a real run
   would send, with the same skip rules and warnings applied (a tracker that

@@ -583,6 +583,25 @@ func TestSameStatusIgnoresCaseAndSpaces(t *testing.T) {
 	}
 }
 
+// 051 item 1: a first-ever --status on a tracker that cannot set one is not
+// "already reported": it exits 0 with the warning and skipped false.
+func TestReportCapabilityOnlyEmptyIsNotSkipped(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{Comment: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task, "--status"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if out.Skipped || len(out.Warnings) != 1 || len(e.rec.log) != 0 {
+		t.Fatalf("%+v calls %v", out, e.rec.log)
+	}
+	e.out.Reset()
+	e.mustRun("tracker", "report", e.task, "--status")
+	if s := e.out.String(); strings.Contains(s, "skipped") || !strings.Contains(s, "warning: this tracker cannot set a status") {
+		t.Fatalf("text: %q", s)
+	}
+}
+
 // R3: a comment a tracker cannot send is dropped before the skip check, so a
 // repeat whose status part is skipped reports skipped.
 func TestReportUnsupportedCommentRepeatIsSkipped(t *testing.T) {

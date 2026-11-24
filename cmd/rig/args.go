@@ -31,6 +31,36 @@ func (f *flagSet) boolean(name string) *bool {
 	return v
 }
 
+// knownOptions is every option any rig command defines. An unknown option is
+// named in an error only when it is one of these (a real flag used on a
+// command that lacks it): any other argument may be a secret typed in the
+// wrong place, typos included. A test fails when a flag a command registers
+// is missing here.
+var knownOptions = map[string]bool{
+	"--actor": true, "--all": true, "--base": true, "--blocking": true, "--body": true,
+	"--body-file": true, "--budget": true, "--children": true, "--comment": true,
+	"--draft": true, "--dry-run": true, "--findings": true, "--format": true,
+	"--from": true, "--global": true, "--head": true, "--help": true, "--history": true,
+	"--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
+	"--local": true, "--markdown": true, "--mine": true, "--notes": true, "--parent": true,
+	"--pat": true, "--path": true, "--pr": true, "--query": true, "--reason": true,
+	"--repo": true, "--role": true, "--roots": true, "--run": true, "--severity": true,
+	"--sha": true, "--show-origin": true, "--slug": true, "--state": true, "--status": true,
+	"--store": true, "--summary": true, "--task": true, "--task-file": true, "--text": true,
+	"--title": true, "--token": true, "--tree": true, "--url": true, "--user": true,
+	"--version": true, "--who": true, "-h": true,
+}
+
+// shownOption is how an unknown option appears in an error. The value after
+// "=" is never shown, and neither is a name that is not a known rig option:
+// the argument may be a secret typed in the wrong place.
+func shownOption(name string) string {
+	if knownOptions[name] {
+		return fmt.Sprintf("%q", name)
+	}
+	return "(not shown)"
+}
+
 // parse accepts `--name value`, `--name=value` and `--flag`, and returns the
 // positionals. Anything else that starts with "-" is an error.
 func (f *flagSet) parse(args []string) ([]string, error) {
@@ -58,7 +88,7 @@ func (f *flagSet) parse(args []string) ([]string, error) {
 			*b = true
 			continue
 		}
-		return nil, fmt.Errorf("unknown option %q", arg)
+		return nil, fmt.Errorf("unknown option %s", shownOption(name))
 	}
 	return pos, nil
 }

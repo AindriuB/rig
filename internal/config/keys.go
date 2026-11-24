@@ -99,7 +99,7 @@ var (
 	hostRE       = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
 	fieldRE      = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 	presetRE     = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-	jiraRE       = regexp.MustCompile(`^[A-Z][A-Z0-9]+$`)
+	jiraRE       = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
 	segmentRE    = `[A-Za-z0-9_.][A-Za-z0-9_.-]*`
 	githubRE     = regexp.MustCompile(`^` + segmentRE + `/` + segmentRE + `$`)
 	gitlabRE     = regexp.MustCompile(`^` + segmentRE + `(/` + segmentRE + `)+$`)
