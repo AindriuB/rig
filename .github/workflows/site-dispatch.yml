@@ -1,0 +1,27 @@
+# Tell rig-site a release was published so it rebuilds. Releases are created as
+# drafts by release.yml, so the trigger is publication, not the tag push.
+# Without the RIG_SITE_DISPATCH_TOKEN secret the job skips with a notice.
+name: site-dispatch
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch rig-release to rig-site
+        env:
+          GH_TOKEN: ${{ secrets.RIG_SITE_DISPATCH_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::RIG_SITE_DISPATCH_TOKEN is not set; skipping rig-site dispatch"
+            exit 0
+          fi
+          gh api --method POST repos/AindriuB/rig-site/dispatches \
+            -f event_type=rig-release \
+            -f "client_payload[tag]=$TAG"
