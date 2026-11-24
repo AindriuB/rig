@@ -226,14 +226,14 @@ func TestStatusOpenTasksStatesAndFindings(t *testing.T) {
 		order = append(order, tk.Short)
 		states[tk.Short] = tk.State
 	}
-	// By state order (open, back, stopped), newest first within one.
-	if want := []string{as, bs, ds}; strings.Join(order, ",") != strings.Join(want, ",") {
+	// By state order (distance from the initial state: open, stopped, back), newest first within one.
+	if want := []string{as, ds, bs}; strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Fatalf("order = %v, want %v\n%s", order, want, r.out)
 	}
 	if states[as] != "open" || states[bs] != "back" || states[ds] != "stopped" {
 		t.Fatalf("states = %v", states)
 	}
-	if got.Store.Tasks[1].Parent != as {
+	if got.Store.Tasks[2].Parent != as {
 		t.Fatalf("parent = %q, want %q", got.Store.Tasks[1].Parent, as)
 	}
 	if fi := got.Store.Findings; fi.Open != 3 || fi.ByTask[bs] != 2 || fi.ByTask[as] != 1 || len(fi.ByTask) != 2 {

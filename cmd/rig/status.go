@@ -10,10 +10,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/git"
 	"github.com/AindriuB/rig/internal/store"
+	"github.com/AindriuB/rig/internal/workflow"
 )
 
 const (
@@ -22,6 +24,8 @@ const (
 	handoffMaxLines = 20
 	maxTasksShown   = 12
 	maxPRs          = 15
+	// maxStoreTasksShown caps the store section of the text output.
+	maxStoreTasksShown = 50
 )
 
 type statusOut struct {
@@ -185,13 +189,97 @@ func (a *app) storeView(ctx context.Context) storeView {
 		v.Error = err.Error()
 		return v
 	}
+	shorts := make(map[string]string, len(tasks))
 	for _, t := range tasks {
-		if w.wf.States[t.State].Final {
+		shorts[t.ID] = t.Short
+	}
+	type openTask struct {
+		t       store.Task
+		view    storeTask
+		created time.Time
+	}
+	var open []openTask
+	for _, t := range tasks {
+		state := t.State
+		if st := w.wf.States[state]; st.ShaBound {
+			// Only a sha-bound state can differ from the recorded one, and
+			// only it needs the branch head.
+			head, err := w.head(ctx, t)
+			if err != nil {
+				v.Error = err.Error()
+				v.Tasks = []storeTask{}
+				return v
+			}
+			state = w.wf.Effective(t, head)
+		}
+		if w.wf.States[state].Final {
 			continue
 		}
-		v.Tasks = append(v.Tasks, storeTask{ID: t.ID, Short: t.Short, Slug: t.Slug, Title: t.Title, State: t.State})
+		st := storeTask{ID: t.ID, Short: t.Short, Slug: t.Slug, Title: t.Title, State: state}
+		if t.Parent != "" {
+			if st.Parent = shorts[t.Parent]; st.Parent == "" {
+				st.Parent = t.Parent
+			}
+		}
+		if e := t.External; e != nil {
+			st.External = &storeExternal{Kind: e.Kind, Key: e.Key}
+		}
+		open = append(open, openTask{t, st, t.Created})
+	}
+	order := stateOrder(w.wf)
+	rank := func(state string) int {
+		if r, ok := order[state]; ok {
+			return r
+		}
+		return len(order)
+	}
+	sort.SliceStable(open, func(i, j int) bool {
+		x, y := open[i], open[j]
+		if rx, ry := rank(x.view.State), rank(y.view.State); rx != ry {
+			return rx < ry
+		}
+		if x.view.State != y.view.State {
+			return x.view.State < y.view.State
+		}
+		if !x.created.Equal(y.created) {
+			return x.created.After(y.created)
+		}
+		return x.t.ID > y.t.ID
+	})
+	for _, o := range open {
+		v.Tasks = append(v.Tasks, o.view)
+		if n := o.t.OpenFindings; n > 0 {
+			v.Findings.Open += n
+			v.Findings.ByTask[o.t.Short] = n
+		}
 	}
 	return v
+}
+
+// stateOrder numbers the workflow's states by their shortest distance from
+// the initial state along its transitions: the order a task moves through
+// them. A state no transition reaches is left out and sorts last.
+func stateOrder(wf *workflow.Workflow) map[string]int {
+	dist := map[string]int{}
+	if _, ok := wf.States[wf.Initial]; !ok {
+		return dist
+	}
+	dist[wf.Initial] = 0
+	queue := []string{wf.Initial}
+	for len(queue) > 0 {
+		s := queue[0]
+		queue = queue[1:]
+		for _, tr := range wf.Transitions(s) {
+			if _, ok := wf.States[tr.To]; !ok {
+				continue
+			}
+			if _, seen := dist[tr.To]; !seen {
+				dist[tr.To] = dist[s] + 1
+				queue = append(queue, tr.To)
+			}
+		}
+	}
+	return dist
 }
 
 // printStoreView writes the store section of the text output.
@@ -205,9 +293,38 @@ func printStoreView(w io.Writer, v storeView) {
 		return
 	}
 	fmt.Fprintf(w, "STORE TASKS (%d):\n", len(v.Tasks))
-	for _, t := range v.Tasks {
-		fmt.Fprintf(w, "  %s  %-10s  %s  %s\n", t.Short, t.State, t.Slug, t.Title)
+	for i, t := range v.Tasks {
+		if i == maxStoreTasksShown {
+			fmt.Fprintf(w, "  … and %d more\n", len(v.Tasks)-maxStoreTasksShown)
+			break
+		}
+		fmt.Fprintf(w, "  %s  %-10s  %s  %s\n", t.Short, t.State, t.Slug, escapeControl(t.Title))
 	}
+	if v.Findings.Open > 0 {
+		shorts := sortedNames(v.Findings.ByTask)
+		parts := make([]string, len(shorts))
+		for i, s := range shorts {
+			parts[i] = fmt.Sprintf("%s: %d", s, v.Findings.ByTask[s])
+		}
+		fmt.Fprintf(w, "STORE FINDINGS: %d open (%s)\n", v.Findings.Open, strings.Join(parts, ", "))
+	}
+}
+
+// escapeControl writes control characters as \xNN (or \uNNNN), so a title
+// cannot move the cursor or recolour the terminal.
+func escapeControl(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r < 0x100 && unicode.IsControl(r):
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.IsControl(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // readHandoff reads the note /handoff leaves in the git common directory,
