@@ -617,7 +617,7 @@ func (w *work) updateFields(ctx context.Context, t store.Task, changed map[strin
 	if len(changed) == 0 {
 		return t, nil
 	}
-	if err := ownedRefusal(w.wf, t, changed); err != nil {
+	if err := ownedRefusal(t, changed); err != nil {
 		return store.Task{}, err
 	}
 	evs, err := fieldEvents(changed)
@@ -626,7 +626,7 @@ func (w *work) updateFields(ctx context.Context, t store.Task, changed map[strin
 	}
 	return w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
 		// Again on the task as it is now: a link may have landed since t was read.
-		if err := ownedRefusal(w.wf, cur, changed); err != nil {
+		if err := ownedRefusal(cur, changed); err != nil {
 			return nil, err
 		}
 		var moved []string

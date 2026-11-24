@@ -331,11 +331,11 @@ func renderChildrenMD(kids []workflow.TaskView) string {
 
 // ownedRefusal is the refusal for a change to a field the tracker owns on a
 // linked task, or nil when t is not linked or no owned field is in changed.
-func ownedRefusal(wf *workflow.Workflow, t store.Task, changed map[string]any) error {
+func ownedRefusal(t store.Task, changed map[string]any) error {
 	if t.External == nil {
 		return nil
 	}
-	owned := wf.OwnedFields()
+	owned := t.External.Owned
 	var hit []string
 	for _, n := range sortedNames(changed) {
 		if slices.Contains(owned, n) {

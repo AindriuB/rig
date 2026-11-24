@@ -498,3 +498,24 @@ func TestTaskUpdateRefusesOwnedFieldsAfterLinkRace(t *testing.T) {
 		t.Fatalf("non-owned: %v", err)
 	}
 }
+
+// A link written with a narrower Owned list than the workflow's current one
+// refuses only what that link owns: the task's own External.Owned decides.
+func TestTaskSetUsesLinkOwnedFields(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.envVars["RIG_WORKFLOW"] = taskWorkflow(t)
+	x := e.mkTask("x")
+	ev, err := store.NewEvent(store.KindExternal, store.ExternalData{Kind: "github", Host: "github.com", Key: "12", Owned: []string{"title"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st().Update(ctx, x.ID, func(store.Task, []store.Finding) ([]store.Event, error) { return []store.Event{ev}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run("task", "set", x.Short, "--field", "title=Mine"); code != 1 || !strings.Contains(e.err.String(), "rig task unlink") {
+		t.Fatalf("title: exit %d, stderr %q", code, e.err.String())
+	}
+	if code := e.run("task", "set", x.Short, "--field", "body=Mine"); code != 0 {
+		t.Fatalf("body is not owned by this link: exit %d: %s", code, e.err.String())
+	}
+}
