@@ -89,7 +89,8 @@ An event line:
   read a store a newer rig wrote. It reports how many it skipped.
 - `seq` counts from 1 within the task. `id` is a ULID, unique across writers.
   Events are ordered by `(seq, id)`.
-- `actor` is `$RIG_ACTOR`, else git's `user.name`, else `unknown`.
+- `actor` is the `--actor` (or `--role`) flag, else `$RIG_ACTOR`, else git's
+  `user.name`, else `unknown`.
 
 Plumbing only, each an argument vector through `internal/proc`:
 `hash-object -w --stdin`, `mktree`, `commit-tree`, `update-ref`,

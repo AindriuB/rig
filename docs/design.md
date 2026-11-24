@@ -5,7 +5,7 @@ Status: phase 1 was released as 0.1.0. Phases 2 and 2.5 ship together as
 [phase-2.5.md](phase-2.5.md); [workflows.md](workflows.md) documents the
 workflow file. Phase 3 (views and trackers) ships as 0.4.0 and 0.5.0: 0.4.0 is
 built and is described in [phase-3.md](phase-3.md); `rig tracker report` is
-planned for 0.5.0. Later phases are outlines, each planned separately before
+built in 0.5.0. Later phases are outlines, each planned separately before
 it is built.
 
 **Direction.** rig provides generic actions (tasks, findings, notes,
@@ -168,7 +168,7 @@ anything in the tables below raises the major version.
 | `rig tracker show <key> [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig tracker status [--json] [--repo <dir>]` | 0, also when the login does not work (it says so); 2 on any other error |
 | `rig login` | 0; 1 a login failed; 2 on any error |
-| `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
+| `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--pat] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
 | `rig login status [--json]` | 0; 2 on any error |
 | `rig logout jira [--url <site>] [--repo]` | 0, also when already logged out; 2 on any error, including a store that could not be checked when the entry was found nowhere |
 | `rig logout github\|gitlab` | 2: prints the `gh`/`glab` command that does it |
@@ -304,7 +304,8 @@ state`.
   effective state, sent with the tracker's set-status call. It is sent before
   the comment, so a refusal means nothing has left the machine. A tracker that
   cannot set a status (or cannot comment) gives a warning and the other part is
-  still sent.
+  still sent; an unsupported status is dropped before the skip check, so a
+  repeat whose other part is skipped reports `skipped`.
 - The comment is one of three fixed templates, and nothing else of the task
   (title, body, fields) is ever sent:
   - `pr`: `rig: pull request for task <short>: <url>`. The URL comes from the
@@ -320,19 +321,23 @@ state`.
     `- <kind>: <text>` line per note, oldest first. Line breaks inside a
     summary or note are folded to a space.
 - Each real run that sends something writes one `tracker-report` event
-  `{kind, key, status?: {from, to}, comment?: {kind, id, digest}, at}`, recording
+  `{kind, key, status?: {from, to, asked?}, comment?: {kind, id, digest}, at}`, recording
   only what was sent; `digest` is the hex SHA-256 of the comment body, and the
-  body itself is not stored. An older rig skips the kind.
+  body itself is not stored. `asked` is the status name the report requested
+  (`to` is the one the tracker reached, which may be spelled differently, as
+  GitLab's `open` becomes `opened`). An older rig skips the kind.
 - A part is skipped when the latest earlier report for the same issue, written
-  since the task's latest link event, sent the same thing: the status when its
-  last sent `to` is the same (case ignored), the comment when the latest comment
+  since the task's latest link event, sent the same thing: the status when the
+  requested name equals its last sent `asked` or `to` (case and surrounding
+  spaces ignored), the comment when the latest comment
   of the same kind has the same digest. Two report runs at once can both send:
   there is no lock. When every requested part is
   skipped nothing is sent, no event is written, and the output says `skipped`
   (`"skipped": true` in JSON).
 - `--dry-run` calls no tracker method that writes, and writes nothing; it prints
   `status: <name>` and `comment (<kind>):` followed by the exact body a real run
-  would send, with the same skip rules applied.
+  would send, with the same skip rules and warnings applied (a tracker that
+  cannot set a status or comment, or whose capabilities cannot be read).
 - It never writes planning fields. A comment that fails after the status was
   sent leaves the status recorded and exits 2; the next run sends the comment.
 
@@ -491,7 +496,7 @@ an example workflow file, shown in phase-2.md as the worked example.
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history |
 | 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
-| 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0, planned**: `rig tracker report` |
+| 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0**: `rig tracker report` |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
