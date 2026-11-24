@@ -39,7 +39,8 @@ func (a *app) push(ctx context.Context, args []string) int {
 		case strings.HasPrefix(arg, "--worktree="):
 			wt = strings.TrimPrefix(arg, "--worktree=")
 		case strings.HasPrefix(arg, "-"):
-			return refuse("option %q is not allowed; rig push takes one task id or branch, and --worktree <path>", arg)
+			name, _, _ := strings.Cut(arg, "=")
+			return refuse("option %s is not allowed; rig push takes one task id or branch, and --worktree <path>", shownOption(name))
 		default:
 			target = arg
 			targets++

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -723,8 +724,8 @@ func TestTrackerStatusProjectError(t *testing.T) {
 	if code := e.run("tracker", "status"); code != 0 || !strings.Contains(e.out.String(), "project: not checked: jira is down\n") {
 		t.Fatalf("text: exit %d %q", code, e.out.String())
 	}
-	var st struct{ Project struct{ Error string } }
-	if code := e.json(&st, "tracker", "status"); code != 0 || st.Project.Error != "jira is down" {
+	var st struct{ Project map[string]any }
+	if code := e.json(&st, "tracker", "status"); code != 0 || !reflect.DeepEqual(st.Project, map[string]any{"error": "jira is down"}) {
 		t.Errorf("json: exit %d %+v", code, st)
 	}
 }
