@@ -582,3 +582,19 @@ func TestSameStatusIgnoresCaseAndSpaces(t *testing.T) {
 		t.Fatal("a different status matched")
 	}
 }
+
+// R3: a comment a tracker cannot send is dropped before the skip check, so a
+// repeat whose status part is skipped reports skipped.
+func TestReportUnsupportedCommentRepeatIsSkipped(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{SetStatus: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task)
+	e.rec.log = nil
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if !out.Skipped || len(e.rec.log) != 0 || len(e.reports()) != 1 {
+		t.Fatalf("%+v calls %v events %d", out, e.rec.log, len(e.reports()))
+	}
+}

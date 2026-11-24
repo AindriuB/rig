@@ -255,7 +255,7 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	// the skip check, so a repeat whose other part is skipped reports skipped.
 	var caps tracker.Caps
 	haveCaps := false
-	if wantStatus || *dry {
+	if wantStatus || wantComment || *dry {
 		c, err := tr.Capabilities(ctx)
 		switch {
 		case err == nil:
@@ -267,6 +267,10 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	if wantStatus && haveCaps && !caps.SetStatus {
 		warnings = append(warnings, "this tracker cannot set a status")
 		wantStatus = false
+	}
+	if wantComment && haveCaps && !caps.Comment {
+		warnings = append(warnings, "this tracker cannot comment")
+		wantComment = false
 	}
 	last := lastReports(log, ext.Kind, ext.Key, kind)
 	if wantStatus && last.status != nil && sameStatus(status, last.status.To, last.status.Asked) {
@@ -281,10 +285,6 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	}
 
 	if *dry {
-		if wantComment && haveCaps && !caps.Comment {
-			warnings = append(warnings, "this tracker cannot comment")
-			wantComment = false
-		}
 		if wantStatus {
 			out.Status = &store.ReportStatus{To: status}
 		}
