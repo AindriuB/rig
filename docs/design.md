@@ -312,7 +312,8 @@ state`.
   - `state`: `rig: task <short> is now in state <state>.`
   - `summary`: the `state` line, then `Counters: <name>=<n>, ...` (names sorted;
     left out when the task has none), then `Pull request: <url>` (left out when
-    the task has none).
+    the task has none). If the forge read fails, the comment is sent without
+    the `Pull request:` line and the run warns.
   - `--include findings` appends a blank line, `Open findings:` and one
     `- <short> <severity> <summary>` line per open finding (nothing when there
     are none). `--include notes` appends a blank line, `Notes:` and one
@@ -322,12 +323,14 @@ state`.
   `{kind, key, status?: {from, to}, comment?: {kind, id, digest}, at}`, recording
   only what was sent; `digest` is the hex SHA-256 of the comment body, and the
   body itself is not stored. An older rig skips the kind.
-- A part is skipped when the latest earlier report for the same issue sent the
-  same thing: the status when its last sent `to` is the same, the comment when
-  its last sent kind and digest are the same. When every requested part is
+- A part is skipped when the latest earlier report for the same issue, written
+  since the task's latest link event, sent the same thing: the status when its
+  last sent `to` is the same (case ignored), the comment when the latest comment
+  of the same kind has the same digest. Two report runs at once can both send:
+  there is no lock. When every requested part is
   skipped nothing is sent, no event is written, and the output says `skipped`
   (`"skipped": true` in JSON).
-- `--dry-run` calls no tracker method and writes nothing; it prints
+- `--dry-run` calls no tracker method that writes, and writes nothing; it prints
   `status: <name>` and `comment (<kind>):` followed by the exact body a real run
   would send, with the same skip rules applied.
 - It never writes planning fields. A comment that fails after the status was
