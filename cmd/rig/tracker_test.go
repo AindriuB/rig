@@ -838,6 +838,29 @@ func TestTrackerRepoHostForgeHostOtherKind(t *testing.T) {
 	}
 }
 
+// With forge.kind unset, a forge.host that names the other forge is not this
+// tracker's host, with or without an origin on it.
+func TestTrackerRepoHostForgeHostOfOtherForge(t *testing.T) {
+	e := newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{
+		"forge":   map[string]any{"host": "github.com"},
+		"tracker": map[string]any{"kind": "gitlab", "project": "acme/rig"},
+	})
+	gitc(t, e.repo, "remote", "remove", "origin")
+	if spec, err := e.a.trackerSpec(ctx, e.repo); err != nil || spec.GitLab.Host != "" || spec.Link.Host != "gitlab.com" {
+		t.Fatalf("no origin: spec %+v, %v", spec, err)
+	}
+	e = newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{
+		"forge":   map[string]any{"kind": "gitlab", "host": "git.corp.example"},
+		"tracker": map[string]any{"kind": "github"},
+	})
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@git.corp.example:acme/rig.git")
+	if _, err := e.a.trackerSpec(ctx, e.repo); err == nil || !strings.Contains(err.Error(), "tracker.url") {
+		t.Fatalf("origin on another kind's forge.host: %v", err)
+	}
+}
+
 type parentRefresh struct {
 	Tasks []struct {
 		Task, Key, Status string

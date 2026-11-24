@@ -12,6 +12,7 @@ import (
 
 	authjira "github.com/AindriuB/rig/internal/auth/jira"
 	"github.com/AindriuB/rig/internal/config"
+	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/secret"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
@@ -176,8 +177,17 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 			forgeHost, _ = v.Value.(string)
 			forgeHost = strings.ToLower(forgeHost)
 		}
+		cfgKind := ""
 		if v, ok := layers.Get(config.KeyForgeKind); ok {
-			if k, _ := v.Value.(string); k != "" && k != spec.Kind {
+			cfgKind, _ = v.Value.(string)
+		}
+		switch {
+		case cfgKind != "" && cfgKind != spec.Kind:
+			forgeHost = ""
+		case cfgKind == "" && forgeHost != "":
+			// As rig login does: with no forge.kind, a forge.host that
+			// names the other forge is not this tracker's server.
+			if k, ok := forge.KindForHost(forgeHost); ok && string(k) != spec.Kind {
 				forgeHost = ""
 			}
 		}
