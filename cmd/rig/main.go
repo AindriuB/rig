@@ -40,6 +40,8 @@ type app struct {
 	interactive func(ctx context.Context, o proc.Options, name string, args ...string) (int, error)
 	// httpClient makes rig's own HTTP calls (the Jira check).
 	httpClient *http.Client
+	// tracker builds the tracker adapter for a resolved spec; nil is the real one.
+	tracker trackerBuilder
 }
 
 const usage = `usage: rig <command>
@@ -73,6 +75,10 @@ const usage = `usage: rig <command>
   rig config set <key> <value> --global|--repo|--local
   rig config unset <key> --global|--repo|--local
   rig config list [--global|--repo|--local] [--show-origin] [--json]
+  rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]
+  rig tracker refresh [<task> | --all] [--dry-run] [--json] [--repo <dir>]
+  rig tracker show <key> [--json] [--repo <dir>]
+  rig tracker status [--json] [--repo <dir>]
   rig login                                  (the forge, then Jira when tracker.kind is jira)
   rig login <service> [--url <site>] [--user <email>] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
   rig login status [--json]
@@ -121,6 +127,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.context(ctx, args[1:])
 	case "config":
 		return a.config(ctx, args[1:])
+	case "tracker":
+		return a.trackerCmd(ctx, args[1:])
 	case "login":
 		return a.login(ctx, args[1:])
 	case "logout":

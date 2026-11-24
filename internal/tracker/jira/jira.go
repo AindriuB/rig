@@ -426,9 +426,17 @@ func (a *Adapter) Issue(ctx context.Context, key string) (tracker.Issue, error) 
 		return tracker.Issue{}, err
 	}
 	if r.Key != key {
-		return tracker.Issue{}, fmt.Errorf("jira: asked for %s, got %q", key, r.Key)
+		return tracker.Issue{}, &MovedError{Asked: key, Got: r.Key}
 	}
 	return a.toIssue(r, d, epicID)
+}
+
+// MovedError reports that the site answered an issue request with another
+// key, as it does for an issue that was moved or renamed.
+type MovedError struct{ Asked, Got string }
+
+func (e *MovedError) Error() string {
+	return fmt.Sprintf("jira: asked for %s, got %q", e.Asked, e.Got)
 }
 
 func (a *Adapter) toIssue(r issueResp, d dialect, epicID string) (tracker.Issue, error) {
