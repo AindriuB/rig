@@ -436,3 +436,17 @@ func TestReportStatusSkipIgnoresCase(t *testing.T) {
 		t.Fatalf("repeat sent %v, events %d", e.rec.log, len(e.reports()))
 	}
 }
+
+// F3: the comment skip is per comment kind, so alternating kinds still skip a
+// repeat of each.
+func TestReportCommentSkipPerKind(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task, "--comment", "state")
+	e.mustRun("tracker", "report", e.task, "--comment", "summary")
+	e.rec.log = nil
+	e.mustRun("tracker", "report", e.task, "--comment", "state")
+	if len(e.rec.log) != 0 || len(e.reports()) != 2 {
+		t.Fatalf("state repeat sent %v, events %d", e.rec.log, len(e.reports()))
+	}
+}

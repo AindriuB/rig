@@ -46,8 +46,8 @@ type reportHistory struct {
 
 // lastReports reads what earlier reports sent to the issue (kind, key). Only
 // reports written after the task's latest link event count: a relink starts
-// the history fresh.
-func lastReports(log []store.Event, kind, key string) reportHistory {
+// the history fresh. The comment is the latest one of commentKind.
+func lastReports(log []store.Event, kind, key, commentKind string) reportHistory {
 	var h reportHistory
 	for i := len(log) - 1; i >= 0 && (h.status == nil || h.comment == nil); i-- {
 		if log[i].Kind == store.KindExternal {
@@ -63,7 +63,7 @@ func lastReports(log []store.Event, kind, key string) reportHistory {
 		if h.status == nil {
 			h.status = d.Status
 		}
-		if h.comment == nil {
+		if h.comment == nil && d.Comment != nil && d.Comment.Kind == commentKind {
 			h.comment = d.Comment
 		}
 	}
@@ -239,7 +239,7 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}
-	last := lastReports(log, ext.Kind, ext.Key)
+	last := lastReports(log, ext.Kind, ext.Key, kind)
 	if wantStatus && last.status != nil && strings.EqualFold(last.status.To, status) {
 		wantStatus = false
 	}
