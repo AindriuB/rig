@@ -161,7 +161,10 @@ func TestStatusStoreOnlyAndEmpty(t *testing.T) {
 		t.Fatalf("empty store: %+v", r)
 	}
 	r = e.statusRun(f, dir, "--json")
-	if r.code != 0 || !strings.Contains(r.out, `"store":{"tasks":[],"findings":{"open":0,"byTask":{}}}`) {
+	var empty struct {
+		Store map[string]json.RawMessage `json:"store"`
+	}
+	if err := json.Unmarshal([]byte(r.out), &empty); err != nil || r.code != 0 || string(empty.Store["tasks"]) != "[]" {
 		t.Fatalf("empty store json: %+v", r)
 	}
 

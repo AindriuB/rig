@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/git"
+	"github.com/AindriuB/rig/internal/store"
 )
 
 const (
@@ -118,6 +120,9 @@ func (a *app) status(ctx context.Context, args []string) int {
 			out.PRs = append(out.PRs, prOut{pr, forge.Rollup(pr.Checks)})
 		}
 	}
+	if inRepo {
+		out.Store = a.storeView(ctx)
+	}
 	if *jsonOut {
 		return a.printJSON(out)
 	}
@@ -161,7 +166,48 @@ func (a *app) status(ctx context.Context, args []string) int {
 			fmt.Fprintf(w, "  %s\n", prLine(pr.PullRequest))
 		}
 	}
+	printStoreView(w, out.Store)
 	return 0
+}
+
+// storeView reads the task store once and returns the open tasks. It reads
+// the store and the local branch heads of sha-bound tasks only: no tracker,
+// forge or fetch. A store that cannot be read costs this view, not the rest.
+func (a *app) storeView(ctx context.Context) storeView {
+	v := storeView{Tasks: []storeTask{}, Findings: storeFinding{ByTask: map[string]int{}}}
+	w, err := a.openWork(ctx, "", true)
+	if err != nil {
+		v.Error = err.Error()
+		return v
+	}
+	tasks, err := w.st.Tasks(ctx, store.TaskFilter{})
+	if err != nil {
+		v.Error = err.Error()
+		return v
+	}
+	for _, t := range tasks {
+		if w.wf.States[t.State].Final {
+			continue
+		}
+		v.Tasks = append(v.Tasks, storeTask{ID: t.ID, Short: t.Short, Slug: t.Slug, Title: t.Title, State: t.State})
+	}
+	return v
+}
+
+// printStoreView writes the store section of the text output.
+func printStoreView(w io.Writer, v storeView) {
+	switch {
+	case v.Error != "":
+		fmt.Fprintf(w, "STORE: unavailable (%s)\n", v.Error)
+		return
+	case len(v.Tasks) == 0:
+		fmt.Fprintln(w, "STORE: no tasks")
+		return
+	}
+	fmt.Fprintf(w, "STORE TASKS (%d):\n", len(v.Tasks))
+	for _, t := range v.Tasks {
+		fmt.Fprintf(w, "  %s  %-10s  %s  %s\n", t.Short, t.State, t.Slug, t.Title)
+	}
 }
 
 // readHandoff reads the note /handoff leaves in the git common directory,
