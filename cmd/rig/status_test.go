@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,5 +179,97 @@ func TestStatusStoreOnlyAndEmpty(t *testing.T) {
 	}
 	if len(f.Calls) != 3 { // phase-1 ListPRs only, once per run
 		t.Fatalf("forge calls = %q", f.Calls)
+	}
+}
+
+func TestStatusOpenTasksStatesAndFindings(t *testing.T) {
+	e := newTaskEnv(t)
+	run := func(args ...string) {
+		t.Helper()
+		if r := e.rig(args...); r.code != 0 {
+			t.Fatalf("%v: %+v", args, r)
+		}
+	}
+	a := e.newTask("aa")
+	b := e.newTask("bb")
+	c := e.newTask("cc", "--field", "owner=x")
+	d := e.newTask("dd")
+	as, bs, cs, ds := a["short"].(string), b["short"].(string), c["short"].(string), d["short"].(string)
+	run("task", "move", cs, "done")
+	run("task", "move", ds, "stopped", "--reason", "why")
+	run("task", "parent", bs, as)
+
+	// bb goes sha-bound, then a commit moves its branch: effective "back".
+	branch := "task/" + bs + "-bb"
+	gitc(t, e.repo, "branch", branch)
+	run("task", "move", bs, "bound", "--sha", gitc(t, e.repo, "rev-parse", branch))
+	gitc(t, e.repo, "checkout", "-q", branch)
+	gitc(t, e.repo, "commit", "-q", "--allow-empty", "-m", "more")
+	gitc(t, e.repo, "checkout", "-q", "main")
+
+	run("finding", "add", bs, "--severity", "P1", "--summary", "one")
+	run("finding", "add", bs, "--severity", "P1", "--summary", "two")
+	run("finding", "add", as, "--severity", "P1", "--summary", "three")
+	run("finding", "add", cs, "--severity", "P1", "--summary", "on a done task")
+
+	f := &fake.Forge{}
+	r := e.statusRun(f, e.repo, "--json")
+	var got struct {
+		Store storeView `json:"store"`
+	}
+	if err := json.Unmarshal([]byte(r.out), &got); err != nil || r.code != 0 {
+		t.Fatalf("%v: %+v", err, r)
+	}
+	var order []string
+	states := map[string]string{}
+	for _, tk := range got.Store.Tasks {
+		order = append(order, tk.Short)
+		states[tk.Short] = tk.State
+	}
+	// By state order (open, back, stopped), newest first within one.
+	if want := []string{as, bs, ds}; strings.Join(order, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v\n%s", order, want, r.out)
+	}
+	if states[as] != "open" || states[bs] != "back" || states[ds] != "stopped" {
+		t.Fatalf("states = %v", states)
+	}
+	if got.Store.Tasks[1].Parent != as {
+		t.Fatalf("parent = %q, want %q", got.Store.Tasks[1].Parent, as)
+	}
+	if fi := got.Store.Findings; fi.Open != 3 || fi.ByTask[bs] != 2 || fi.ByTask[as] != 1 || len(fi.ByTask) != 2 {
+		t.Fatalf("findings = %+v", fi)
+	}
+	r = e.statusRun(f, e.repo)
+	if !strings.Contains(r.out, "STORE TASKS (3):\n") || !strings.Contains(r.out, "STORE FINDINGS: 3 open ("+as+": 1, "+bs+": 2)\n") ||
+		strings.Contains(r.out, cs+"  ") {
+		t.Fatalf("text:\n%s", r.out)
+	}
+}
+
+func TestStatusStoreTextCapAndEscapes(t *testing.T) {
+	e := newTaskEnv(t)
+	for i := range 52 {
+		title := fmt.Sprintf("T%02d", i)
+		if i == 51 {
+			title = "evil\x1b[31m\rline"
+		}
+		if r := e.rig("task", "new", "--slug", fmt.Sprintf("s%02d", i), "--title", title); r.code != 0 {
+			t.Fatalf("%+v", r)
+		}
+	}
+	r := e.statusRun(&fake.Forge{}, e.repo)
+	if !strings.Contains(r.out, "STORE TASKS (52):\n") || !strings.Contains(r.out, "  … and 2 more\n") ||
+		strings.Count(r.out, "  t-") != 50 {
+		t.Fatalf("cap:\n%s", r.out)
+	}
+	if strings.ContainsAny(r.out, "\x1b\r") || !strings.Contains(r.out, `evil\x1b[31m\x0dline`) {
+		t.Fatalf("control bytes in text output:\n%q", r.out)
+	}
+	var got struct {
+		Store storeView `json:"store"`
+	}
+	r = e.statusRun(&fake.Forge{}, e.repo, "--json")
+	if err := json.Unmarshal([]byte(r.out), &got); err != nil || len(got.Store.Tasks) != 52 {
+		t.Fatalf("json is uncapped: %v, %d", err, len(got.Store.Tasks))
 	}
 }
