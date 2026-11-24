@@ -61,3 +61,20 @@ func TestHelpListsPhase2Commands(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpUsageShowsFormatFlags: the commands that take --format name it, and
+// --markdown, in their usage line.
+func TestHelpUsageShowsFormatFlags(t *testing.T) {
+	r := rig(t, t.TempDir(), nil, nil, "help")
+	for _, prefix := range []string{"  rig task show ", "  rig task list ", "  rig context "} {
+		var line string
+		for _, l := range strings.Split(r.out, "\n") {
+			if strings.HasPrefix(l, prefix) {
+				line = l
+			}
+		}
+		if !strings.Contains(line, "--format <text|json|markdown>") || !strings.Contains(line, "--markdown") {
+			t.Errorf("usage line %q lacks --format and --markdown: %q", prefix, line)
+		}
+	}
+}
