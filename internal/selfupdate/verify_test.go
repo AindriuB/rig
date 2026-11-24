@@ -13,8 +13,7 @@ import (
 // vectorSig is task 01's committed signature over vectorMsg (seed 0x01..0x20).
 const vectorSig = "23aa8a6bb7d7a3f3fc482ef3b7a0f51d2bd035d2e8f7f6aa01f587d87c51bb6a63a7a064b5f7936eec223f970dcf8ba9bc5c9c7e49680c049f8e8ba9e7e40506"
 
-const vectorMsg = "abc  rig-linux-amd64
-"
+const vectorMsg = "abc  rig-linux-amd64\n"
 
 func vector() (ed25519.PublicKey, ed25519.PrivateKey) {
 	seed := make([]byte, 32)
