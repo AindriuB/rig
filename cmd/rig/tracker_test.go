@@ -713,6 +713,22 @@ func TestTrackerStatusProject(t *testing.T) {
 	}
 }
 
+// A project check that fails with a real error is reported in both forms:
+// `project: not checked: ...` and project.error in the JSON.
+func TestTrackerStatusProjectError(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	f := fake.New(allCaps, nil, nil)
+	f.ProjectErr = errors.New("jira is down")
+	e.tr = f
+	if code := e.run("tracker", "status"); code != 0 || !strings.Contains(e.out.String(), "project: not checked: jira is down\n") {
+		t.Fatalf("text: exit %d %q", code, e.out.String())
+	}
+	var st struct{ Project struct{ Error string } }
+	if code := e.json(&st, "tracker", "status"); code != 0 || st.Project.Error != "jira is down" {
+		t.Errorf("json: exit %d %+v", code, st)
+	}
+}
+
 // A key the tracker moved is an error on that task with the way out.
 func TestTrackerRefreshMovedKey(t *testing.T) {
 	e := newTrkEnv(t, ghCfg())

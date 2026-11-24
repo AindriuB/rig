@@ -297,7 +297,8 @@ there is none) and `external` (absent when the task is not linked):
   check its configured project (Jira) there is also `project`, `{key, exists,
   empty}`, and the text output gains `project: RIG ok`, `project: RIG not found`
   or `project: RIG ok (no issues yet)`; a missing project does not change the
-  exit code.
+  exit code. When the check fails with an error, `project` is `{error}` and the
+  text output says `project: not checked: <error>`.
 
 **Tracker report.** `rig tracker report` sends a task's progress to the issue
 it is linked to (the task must be linked to an issue of the configured tracker,

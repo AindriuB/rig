@@ -861,7 +861,14 @@ type trackerStatusOut struct {
 	Capabilities *tracker.Caps `json:"capabilities"`
 	Login        trackerLogin  `json:"login"`
 	// Project is the configured project's check, for a tracker that can.
-	Project *tracker.ProjectInfo `json:"project,omitempty"`
+	Project *trackerProject `json:"project,omitempty"`
+}
+
+// trackerProject is the project part of `rig tracker status --json`: the
+// check's result, or Error when the check itself failed.
+type trackerProject struct {
+	tracker.ProjectInfo
+	Error string `json:"error,omitempty"`
 }
 
 func (a *app) trackerStatus(ctx context.Context, args []string) int {
@@ -896,9 +903,10 @@ func (a *app) trackerStatus(ctx context.Context, args []string) int {
 				info, perr := pc.CheckProject(ctx)
 				switch {
 				case perr == nil:
-					out.Project = &info
+					out.Project = &trackerProject{ProjectInfo: info}
 				case !errors.Is(perr, tracker.ErrUnsupported):
 					projectErr = perr
+					out.Project = &trackerProject{Error: perr.Error()}
 				}
 			}
 		}
@@ -917,14 +925,14 @@ func (a *app) trackerStatus(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.stdout, "login: failed: %s\n", out.Login.Error)
 	}
 	switch p := out.Project; {
+	case projectErr != nil:
+		fmt.Fprintf(a.stdout, "project: not checked: %v\n", projectErr)
 	case p != nil && !p.Exists:
 		fmt.Fprintf(a.stdout, "project: %s not found\n", p.Key)
 	case p != nil && p.Empty:
 		fmt.Fprintf(a.stdout, "project: %s ok (no issues yet)\n", p.Key)
 	case p != nil:
 		fmt.Fprintf(a.stdout, "project: %s ok\n", p.Key)
-	case projectErr != nil:
-		fmt.Fprintf(a.stdout, "project: not checked: %v\n", projectErr)
 	}
 	return 0
 }
