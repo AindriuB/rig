@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -29,6 +30,19 @@ func (f *flagSet) boolean(name string) *bool {
 	v := new(bool)
 	f.bools[name] = v
 	return v
+}
+
+// optionName is what an argument must look like for an error to show it.
+var optionName = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9-]*$`)
+
+// shownOption is how an unknown option appears in an error. The value after
+// "=" is never shown, and neither is a name that does not look like an option
+// name: the argument may be a secret typed in the wrong place.
+func shownOption(name string) string {
+	if optionName.MatchString(name) {
+		return fmt.Sprintf("%q", name)
+	}
+	return "(not shown)"
 }
 
 // parse accepts `--name value`, `--name=value` and `--flag`, and returns the
@@ -58,7 +72,7 @@ func (f *flagSet) parse(args []string) ([]string, error) {
 			*b = true
 			continue
 		}
-		return nil, fmt.Errorf("unknown option %q", arg)
+		return nil, fmt.Errorf("unknown option %s", shownOption(name))
 	}
 	return pos, nil
 }

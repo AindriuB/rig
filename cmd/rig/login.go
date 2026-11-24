@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,11 +89,19 @@ func refuseTokenValue(args []string) error {
 			continue
 		}
 		stray := hasVal
-		if !hasVal && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-			switch args[i+1] {
-			case "github", "gitlab", "jira", "status":
+		if !hasVal && i+1 < len(args) {
+			next, _, _ := strings.Cut(args[i+1], "=")
+			switch {
+			case strings.HasPrefix(next, "-"):
+				// A flag of login or logout is not a value; anything else
+				// that starts with "-" may be a token typed after the switch.
+				stray = !slices.Contains([]string{"--url", "--user", "--store", "--repo", "--json", "--token", "--pat"}, next)
 			default:
-				stray = true
+				switch args[i+1] {
+				case "github", "gitlab", "jira", "status":
+				default:
+					stray = true
+				}
 			}
 		}
 		if stray {
@@ -122,7 +131,7 @@ func (a *app) login(ctx context.Context, args []string) int {
 	switch service {
 	case "", "github", "gitlab", "jira", "status":
 	default:
-		return a.fail("login", "unknown service %q: use github, gitlab, jira or status", service)
+		return a.fail("login", "unknown service: use github, gitlab, jira or status")
 	}
 	jiraFlags := *o.url != "" || *o.user != "" || *o.store != "" || *o.repo || *o.pat
 	if (service == "github" || service == "gitlab" || service == "status") && jiraFlags {
@@ -194,7 +203,7 @@ func (a *app) logout(ctx context.Context, args []string) int {
 		return a.fail("logout", "that login belongs to %s and every other tool that uses it; run: %s auth logout --hostname %s", t.tool, t.tool, t.host)
 	case "jira":
 	default:
-		return a.fail("logout", "unknown service %q: use jira, github or gitlab", pos[0])
+		return a.fail("logout", "unknown service: use jira, github or gitlab")
 	}
 
 	layers, root, _, err := a.openConfig(ctx)

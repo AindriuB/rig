@@ -244,6 +244,44 @@ func TestLoginTokenNeverTakesAValue(t *testing.T) {
 	}
 }
 
+// 051 item 2: no argument error echoes a possible secret.
+func TestArgumentErrorsNeverEchoSecret(t *testing.T) {
+	e := newLoginEnv(t)
+	for _, args := range [][]string{
+		{"login", "SECRETX", "--token"},
+		{"login", "jira", "--token", "-SECRETX"},
+		{"login", "jira", "--Token=SECRETX"},
+		{"login", "jira", "--SECRETX!=1"},
+		{"login", "jira", "-SECRETX!"},
+		{"logout", "SECRETX"},
+		{"logout", "jira", "--Token=SECRETX"},
+	} {
+		e.out.Reset()
+		e.err.Reset()
+		if code := e.run(args...); code == 0 {
+			t.Errorf("%v: exit 0", args)
+		}
+		if got := e.out.String() + e.err.String(); strings.Contains(got, "SECRETX") {
+			t.Errorf("%v: secret echoed: %q", args, got)
+		}
+	}
+	e.err.Reset()
+	e.run("login", "jira", "--Token=SECRETX")
+	if got := e.err.String(); !strings.Contains(got, `"--Token"`) {
+		t.Errorf("option name not shown: %q", got)
+	}
+	e.err.Reset()
+	e.run("login", "jira", "-SECRETX!")
+	if got := e.err.String(); !strings.Contains(got, "unknown option (not shown)") {
+		t.Errorf("odd option shown: %q", got)
+	}
+	e.err.Reset()
+	e.run("login", "SECRETX")
+	if got := e.err.String(); !strings.Contains(got, "github, gitlab, jira or status") {
+		t.Errorf("services not listed: %q", got)
+	}
+}
+
 func TestLoginTokenMessagesNameToken(t *testing.T) {
 	srv, _ := patServer(t)
 	e := newLoginEnv(t)
