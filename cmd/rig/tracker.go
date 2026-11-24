@@ -729,6 +729,9 @@ func (a *app) trackerRefresh(ctx context.Context, args []string) int {
 				line += "  replaced " + x.Field
 			}
 			fmt.Fprintln(a.stdout, line)
+			for _, w := range r.Warnings {
+				fmt.Fprintf(a.stdout, "  warning: %s\n", w)
+			}
 		}
 	}
 	if failed {

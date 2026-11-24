@@ -849,6 +849,14 @@ func TestTrackerRefreshParentCycle(t *testing.T) {
 	if len(out.Tasks[0].Warnings) != 1 || !strings.Contains(out.Tasks[0].Warnings[0], "cycle") {
 		t.Fatalf("%+v", out)
 	}
+	// Plain-text output shows the warning too.
+	e.out.Reset()
+	if code := e.run("tracker", "refresh", cs.Short); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(e.out.String(), "warning: ") || !strings.Contains(e.out.String(), "cycle") {
+		t.Fatalf("text output has no cycle warning:\n%s", e.out.String())
+	}
 }
 
 // Round 2: issue 7 in acme/a and issue 7 in acme/b are two tasks.
