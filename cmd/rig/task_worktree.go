@@ -21,6 +21,10 @@ const (
 	markerName = "kit-task"
 )
 
+// beforeWorktreeAdd runs just before git is asked to add the worktree. Tests
+// use it to make another start win the race.
+var beforeWorktreeAdd = func() {}
+
 // writeMarker writes the marker file. Tests replace it to make it fail.
 var writeMarker = os.WriteFile
 
@@ -58,6 +62,35 @@ func baseBranch(ctx context.Context, repo git.Repo) (string, error) {
 		b = "HEAD"
 	}
 	return b, nil
+}
+
+// underRealPath refuses a target whose nearest existing ancestor, with
+// symlinks resolved, is not under the real path of the main checkout.
+func underRealPath(main, target string) error {
+	realMain, err := filepath.EvalSymlinks(main)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", main, err)
+	}
+	p := target
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			break
+		}
+		next := filepath.Dir(p)
+		if next == p {
+			return fmt.Errorf("no existing ancestor of %s", target)
+		}
+		p = next
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", p, err)
+	}
+	rel, err := filepath.Rel(realMain, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("worktrees.root resolves to %s, outside the checkout %s: a project file may not point outside the checkout; set it in the global config", real, realMain)
+	}
+	return nil
 }
 
 // taskStart implements `rig task start`: it makes the task's worktree and
@@ -102,6 +135,11 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(main, root)
 	}
+	if v, ok := layers.Get(config.KeyWorktreesRoot); !ok || v.Scope == config.ScopeLocal || v.Scope == config.ScopeRigJSON || v.Scope == config.ScopeDefault {
+		if err := underRealPath(main, filepath.Join(root, filepath.Base(main), slug)); err != nil {
+			return a.fail(cmd, "%v", err)
+		}
+	}
 	wt := filepath.Join(root, filepath.Base(main), slug)
 	branch := "task/" + slug
 
@@ -122,16 +160,21 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
+	beforeWorktreeAdd()
+	// What existed before the add is not ours to take back.
+	_, statErr := os.Lstat(wt)
+	pathExisted := statErr == nil
+	branchExisted, _ := repo.BranchExists(ctx, branch)
 	if err := repo.WorktreeAdd(ctx, wt, branch, base); err != nil {
 		// git may have made the branch and worktree before it failed (a
 		// post-checkout hook, a timeout): take back only what is ours.
-		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, err))
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, branchExisted, pathExisted, err))
 	}
 
 	marked := filepath.ToSlash(taskFile)
 	if err := a.mark(ctx, wt, marked); err != nil {
 		// Never leave a worktree that owns-guard would treat as unguarded.
-		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, err))
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, false, false, err))
 	}
 
 	if *asJSON {
@@ -143,24 +186,39 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 
 // rollBack removes what a failed start made: the worktree if it exists (never
 // with --force), then the branch if it exists and still points at base. It
-// returns the message to print.
-func rollBack(ctx context.Context, repo git.Repo, wt, branch, base string, cause error) string {
+// takes back nothing that existed before the add (branchExisted, pathExisted),
+// and nothing at all when git says the branch or path already exists: another
+// start won the race. It returns the message to print, which states only what
+// was removed.
+func rollBack(ctx context.Context, repo git.Repo, wt, branch, base string, branchExisted, pathExisted bool, cause error) string {
+	if branchExisted || pathExisted || strings.Contains(cause.Error(), "already exists") {
+		return fmt.Sprintf("%v (another start holds %s or %s: nothing was removed)", cause, wt, branch)
+	}
+	var removed []string
+	done := func(note string) string {
+		if len(removed) == 0 {
+			return fmt.Sprintf("%v%s (nothing was removed)", cause, note)
+		}
+		return fmt.Sprintf("%v%s (removed again: %s)", cause, note, strings.Join(removed, " and "))
+	}
 	if _, err := os.Lstat(wt); err == nil {
 		if rerr := repo.WorktreeRemove(ctx, wt); rerr != nil {
 			return fmt.Sprintf("%v; and the worktree %s could not be removed again: %v", cause, wt, rerr)
 		}
+		removed = append(removed, "the worktree")
 	}
 	if ok, _ := repo.BranchExists(ctx, branch); ok {
 		tip, _, _ := repo.ResolveRef(ctx, "refs/heads/"+branch)
 		want, _, _ := repo.ResolveRef(ctx, base+"^{commit}")
 		if tip == "" || tip != want {
-			return fmt.Sprintf("%v; the branch %s was left: it is not at %s", cause, branch, base)
+			return done(fmt.Sprintf("; the branch %s was left: it is not at %s", branch, base))
 		}
 		if derr := repo.DeleteBranch(ctx, branch, true); derr != nil {
-			return fmt.Sprintf("%v; and the branch %s could not be removed again: %v", cause, branch, derr)
+			return done(fmt.Sprintf("; and the branch %s could not be removed again: %v", branch, derr))
 		}
+		removed = append(removed, "the branch")
 	}
-	return fmt.Sprintf("%v (the worktree and branch were removed again)", cause)
+	return done("")
 }
 
 // startTaskFile finds the task file for slug: --task-file, else the exact

@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/AindriuB/rig/internal/git"
 )
 
 // isolate gives the process a git identity, no user git config and an empty
@@ -588,5 +592,67 @@ func TestTaskStartRefusesAProjectRootOutsideTheCheckout(t *testing.T) {
 	writeGlobalConfig(t, home, `{"worktrees":{"root":`+jsonString(outside)+`}}`)
 	if r := rig(t, repo, nil, nil, "task", "start", "08-bar"); r.code != 0 {
 		t.Fatalf("global absolute root: %+v", r)
+	}
+}
+
+// G1: a start that loses the race for the same slug must not undo the winner.
+func TestTaskStartLosingARaceLeavesTheWinnersWorktreeAndBranch(t *testing.T) {
+	isolate(t)
+	repo, _ := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	wt := filepath.Join(repo, ".worktrees", "repo", "08-bar")
+	beforeWorktreeAdd = func() {
+		beforeWorktreeAdd = func() {}
+		gitc(t, repo, "worktree", "add", "-q", "-b", "task/08-bar", wt, "main")
+	}
+	t.Cleanup(func() { beforeWorktreeAdd = func() {} })
+
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	if r.code != 2 {
+		t.Fatalf("start: %+v", r)
+	}
+	if !exists(wt) || gitc(t, repo, "branch", "--list", "task/08-bar") == "" {
+		t.Fatalf("the winner's worktree or branch was removed: %+v", r)
+	}
+	if strings.Contains(r.errOut, "removed again") {
+		t.Fatalf("message claims a removal: %s", r.errOut)
+	}
+}
+
+// G2: a project root that reaches outside through a symlink is refused.
+func TestTaskStartRefusesAProjectRootThroughASymlink(t *testing.T) {
+	isolate(t)
+	repo, _ := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "wt")); err != nil {
+		t.Skipf("cannot make symlinks: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".rig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".rig", "config.json"), []byte(`{"worktrees":{"root":"wt"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	if r.code != 2 || r.out != "" {
+		t.Fatalf("start: %+v", r)
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("something was created outside: %v", ents)
+	}
+	if gitc(t, repo, "branch", "--list", "task/08-bar") != "" {
+		t.Fatal("the branch was created")
+	}
+}
+
+// G3: the rollback message states only what it removed.
+func TestRollBackMessageStatesOnlyWhatItRemoved(t *testing.T) {
+	isolate(t)
+	repo, _ := newRepo(t)
+	g := git.Repo{Dir: repo}
+	cause := errors.New("boom")
+	if got := rollBack(context.Background(), g, filepath.Join(repo, "nope"), "task/none", "main", false, false, cause); strings.Contains(got, "removed again") {
+		t.Fatalf("nothing was removed, but: %s", got)
 	}
 }
