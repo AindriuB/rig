@@ -403,3 +403,17 @@ func TestReportUsageErrors(t *testing.T) {
 		t.Fatalf("calls %v", r.rec.log)
 	}
 }
+
+// F1: a relink starts the skip history fresh, so the same report is sent again.
+func TestReportRelinkResetsSkipHistory(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task)
+	e.mustRun("task", "unlink", e.task)
+	e.mustRun("task", "link", e.task, "12")
+	e.rec.log = nil
+	e.mustRun("tracker", "report", e.task)
+	if !slices.Equal(e.rec.log, []string{"status In Progress", "comment"}) {
+		t.Fatalf("after relink sent %v", e.rec.log)
+	}
+}

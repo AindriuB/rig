@@ -44,10 +44,15 @@ type reportHistory struct {
 	comment *store.ReportComment
 }
 
-// lastReports reads what earlier reports sent to the issue (kind, key).
+// lastReports reads what earlier reports sent to the issue (kind, key). Only
+// reports written after the task's latest link event count: a relink starts
+// the history fresh.
 func lastReports(log []store.Event, kind, key string) reportHistory {
 	var h reportHistory
 	for i := len(log) - 1; i >= 0 && (h.status == nil || h.comment == nil); i-- {
+		if log[i].Kind == store.KindExternal {
+			break
+		}
 		if log[i].Kind != store.KindTrackerReport || log[i].V != store.Version {
 			continue
 		}
