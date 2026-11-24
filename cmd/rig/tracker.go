@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"slices"
 	"strconv"
@@ -167,10 +168,24 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		if spec.Kind == config.TrackerGitLab {
 			def = "gitlab.com"
 		}
-		forgeHost := ""
+		// forge.host stands for this tracker's server only when forge.kind
+		// is unset or names the same kind. It may carry a port, which the
+		// origin's repo key does not, so the two are compared by host name.
+		forgeHost, forgeName := "", ""
 		if v, ok := layers.Get(config.KeyForgeHost); ok {
 			forgeHost, _ = v.Value.(string)
 			forgeHost = strings.ToLower(forgeHost)
+		}
+		if v, ok := layers.Get(config.KeyForgeKind); ok {
+			if k, _ := v.Value.(string); k != "" && k != spec.Kind {
+				forgeHost = ""
+			}
+		}
+		if forgeHost != "" {
+			forgeName = forgeHost
+			if h, _, err := net.SplitHostPort(forgeHost); err == nil {
+				forgeName = h
+			}
 		}
 		if key := layers.RepoKey(); key != "" {
 			h, path, _ := strings.Cut(key, "/")
@@ -179,10 +194,14 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 			// server nobody configured) is refused rather than guessed:
 			// a guess could read and link an issue on the wrong server.
 			if lh := strings.ToLower(h); host == "" {
-				if lh != def && (forgeHost == "" || lh != forgeHost) {
+				switch {
+				case lh == def:
+					host = lh
+				case forgeName != "" && lh == forgeName:
+					host = forgeHost
+				default:
 					return spec, fmt.Errorf("origin host %q is not %s or the configured forge.host: set tracker.url to the tracker's address", h, def)
 				}
-				host = lh
 			}
 			if project == "" {
 				project = path

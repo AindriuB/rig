@@ -809,6 +809,35 @@ func TestTrackerRepoHostConfiguredForgeHost(t *testing.T) {
 	}
 }
 
+// A forge.host with a port matches an origin on that host and port; the
+// host keeps its port for the adapter.
+func TestTrackerRepoHostForgeHostWithPort(t *testing.T) {
+	e := newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{
+		"forge":   map[string]any{"kind": "gitlab", "host": "git.corp.example:8443"},
+		"tracker": map[string]any{"kind": "gitlab"},
+	})
+	gitc(t, e.repo, "remote", "set-url", "origin", "https://git.corp.example:8443/acme/rig.git")
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.GitLab.Host != "git.corp.example:8443" || spec.Link.Host != "git.corp.example:8443" {
+		t.Fatalf("spec %+v, %v", spec, err)
+	}
+}
+
+// forge.host counts for the tracker only when forge.kind is the tracker's kind.
+func TestTrackerRepoHostForgeHostOtherKind(t *testing.T) {
+	e := newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{
+		"forge":   map[string]any{"kind": "gitlab", "host": "git.corp.example"},
+		"tracker": map[string]any{"kind": "github", "project": "acme/rig"},
+	})
+	gitc(t, e.repo, "remote", "remove", "origin")
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.GitHub.Host != "" || spec.Link.Host != "github.com" {
+		t.Fatalf("spec %+v, %v", spec, err)
+	}
+}
+
 type parentRefresh struct {
 	Tasks []struct {
 		Task, Key, Status string
