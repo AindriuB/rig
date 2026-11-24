@@ -266,8 +266,8 @@ func TestArgumentErrorsNeverEchoSecret(t *testing.T) {
 		}
 	}
 	e.err.Reset()
-	e.run("login", "jira", "--Token=SECRETX")
-	if got := e.err.String(); !strings.Contains(got, `"--Token"`) {
+	e.run("login", "jira", "--task=SECRETX")
+	if got := e.err.String(); !strings.Contains(got, `"--task"`) {
 		t.Errorf("option name not shown: %q", got)
 	}
 	e.err.Reset()
