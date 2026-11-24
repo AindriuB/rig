@@ -33,8 +33,13 @@ func (r Repo) Fetch(ctx context.Context, remote, branch string) error {
 
 // WorktreeAdd creates a worktree at path on a new branch started at base.
 func (r Repo) WorktreeAdd(ctx context.Context, path, branch, base string) error {
-	_, err := r.out(ctx, "worktree", "add", "-b", branch, "--", path, base)
-	return err
+	// No timeout: the checkout runs the post-checkout hook, as wt-new.sh allows.
+	args := []string{"worktree", "add", "-b", branch, "--", path, base}
+	res, err := r.run(ctx, 0, args...)
+	if err != nil {
+		return wrap(args, res, err)
+	}
+	return nil
 }
 
 // WorktreeRemove removes the worktree at path, never with --force. The error
@@ -79,24 +84,44 @@ func (r Repo) Checkout(ctx context.Context, branch string) error {
 }
 
 // MergeNoFF merges the commit sha into the checked-out branch with a merge
-// commit and the given message. On a conflict it aborts the merge and returns
-// ErrMergeConflict.
+// commit and the given message. No timeout applies: a merge runs hooks, as
+// the kit's wt-merge.sh does. On any failure it aborts a merge left under way.
+// A conflict returns ErrMergeConflict; any other failure returns an error that
+// carries git's own reason, and says so if the abort itself failed.
 func (r Repo) MergeNoFF(ctx context.Context, message, sha string) error {
 	if strings.HasPrefix(sha, "-") {
 		return fmt.Errorf("git merge: invalid commit %q", sha)
 	}
 	args := []string{"merge", "--no-ff", "-m", message, sha}
-	res, err := r.run(ctx, queryTimeout, args...)
+	res, err := r.run(ctx, 0, args...)
 	if err == nil {
 		return nil
 	}
 	var ee *proc.ExitError
-	if errors.As(err, &ee) {
-		// Best effort: if no merge is under way, there is nothing to abort.
-		_, _ = r.run(ctx, queryTimeout, "merge", "--abort")
+	if !errors.As(err, &ee) {
+		return wrap(args, res, err)
+	}
+	conflict := false
+	if unmerged, uerr := r.out(ctx, "diff", "--name-only", "--diff-filter=U"); uerr == nil && unmerged != "" {
+		conflict = true
+	}
+	var abortErr error
+	if _, ok, _ := r.ResolveRef(ctx, "MERGE_HEAD"); ok {
+		if _, aerr := r.run(ctx, 0, "merge", "--abort"); aerr != nil {
+			abortErr = aerr
+		}
+	}
+	reason := tail(res.Stderr, 3)
+	if reason == "" {
+		reason = tail(res.Stdout, 3)
+	}
+	switch {
+	case abortErr != nil:
+		return fmt.Errorf("git merge failed (%s) and git merge --abort failed too (%v): the main checkout may be mid-merge", reason, abortErr)
+	case conflict:
 		return ErrMergeConflict
 	}
-	return wrap(args, res, err)
+	return fmt.Errorf("git merge: %s: %w", reason, err)
 }
 
 // DeleteBranch deletes a local branch: with -d, which refuses an unmerged
@@ -111,4 +136,18 @@ func (r Repo) DeleteBranch(ctx context.Context, branch string, force bool) error
 	}
 	_, err := r.out(ctx, "branch", flag, "--", branch)
 	return err
+}
+
+// tail is the last n non-empty lines of b, joined on one line.
+func tail(b []byte, n int) string {
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "; ")
 }

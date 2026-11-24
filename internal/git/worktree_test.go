@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -125,5 +126,40 @@ func TestWorktreeRemoveReasonIsTheFirstLine(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "\n") {
 		t.Fatalf("reason is more than one line: %q", err)
+	}
+}
+
+// A merge that fails for a reason other than a conflict (here a hook) leaves
+// MERGE_HEAD behind: it is aborted, and the error carries git's own reason.
+func TestMergeNoFFOtherFailureIsAbortedAndReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a /bin/sh hook")
+	}
+	gitIdentity(t)
+	repo, _ := newRepo(t)
+	r := Repo{Dir: repo}
+	sh(t, repo, "checkout", "-q", "-b", "side")
+	sh(t, repo, "commit", "-q", "--allow-empty", "-m", "side")
+	sha := sh(t, repo, "rev-parse", "HEAD")
+	sh(t, repo, "checkout", "-q", "main")
+	sh(t, repo, "commit", "-q", "--allow-empty", "-m", "main")
+	before := sh(t, repo, "rev-parse", "HEAD")
+	hook := filepath.Join(repo, ".git", "hooks", "pre-merge-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho boom-from-hook >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.MergeNoFF(ctx, "m", sha)
+	if err == nil || errors.Is(err, ErrMergeConflict) || !strings.Contains(err.Error(), "boom-from-hook") {
+		t.Fatalf("err = %v, want the hook's reason and not a conflict", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD")); statErr == nil {
+		t.Fatal("MERGE_HEAD left behind")
+	}
+	if got := sh(t, repo, "rev-parse", "HEAD"); got != before {
+		t.Fatal("HEAD moved")
+	}
+	if out := sh(t, repo, "status", "--porcelain"); out != "" {
+		t.Fatalf("tree left dirty: %q", out)
 	}
 }
