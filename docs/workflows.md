@@ -202,8 +202,9 @@ repository cannot change it.
   `text` field. Each attribute is mapped from at most one field. With no `map`,
   the owned fields are `title` and `body`.
 - `report.status` goes from a rig state to the name of a tracker status. rig
-  checks that the states are declared and the names are not empty. Nothing in
-  0.4.0 sends a status; `rig tracker report` is planned for 0.5.0.
+  checks that the states are declared and the names are not empty. `rig tracker report` sends the entry
+  for the task's current state as the issue's status; a state with no entry
+  sends no status (exit 1).
 
 `rig workflow validate` reports each broken rule with its JSON path, for
 example `tracker.map.priority`.
