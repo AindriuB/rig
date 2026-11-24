@@ -232,7 +232,8 @@ These config keys (set with `rig config`) say which tracker and where:
 **Trust.** `tracker.url` decides where a login token is sent, so a repository
 cannot supply it. If `.rig/config.json` is tracked by git (or is a symlink, or
 rig cannot tell), rig ignores a `tracker.url` in it and the tracker commands
-stop with an error. Set it in the global file or an untracked local file.
+stop with an error; `rig tracker status` still exits 0 and reports
+`trusted: false`. Set it in the global file or an untracked local file.
 `tracker.command` is a program rig would run, so it is read only from the
 global file.
 
@@ -247,8 +248,10 @@ purpose: a guessed host could read or link an issue on the wrong server.
 
 A task is unique by its link: one issue is linked from one task. The link is
 identified by the tracker kind, the host, the key and, for GitHub and GitLab,
-the project. Keys match whatever their case. A second attempt to link the same
-issue returns the task that already has it.
+the project. Keys match whatever their case. Creating a task from an issue
+that is already linked (`rig task new --from`, `rig tracker pull`) returns the
+task that has it; `rig task link` on an issue another task has is refused
+(exit 1).
 
 A worked example, with a GitHub repository:
 

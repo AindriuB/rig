@@ -54,8 +54,8 @@ Limits:
 
 - A task links to **one** issue. An issue is linked from **one** task per
   (kind, host, project, key). The project counts only for GitHub and GitLab,
-  where it is part of the repository; for Jira and `exec` it is empty. Host and
-  key match in any case.
+  where it is part of the repository; for Jira and `exec` it is empty. Host,
+  project and key match in any case.
 - Tracker text is untrusted input and is treated as such (see "Security and
   trust").
 - Tracker adapters are read-mostly. Phase 3 writes to a tracker only through
@@ -429,8 +429,10 @@ states and open findings) and keeps its phase-1 reads for projects that have
 not moved. The view makes no network call and works with no
 `claude-handoff.md` and no `docs/plan`; `rig status` as a whole still lists
 open pull requests from the forge, as in phase 1. The output is in
-[design.md](design.md): `store` in `--json`, and the `STORE TASKS` and
-`STORE FINDINGS` lines in text.
+[design.md](design.md) (`store` in `--json`). In text it is a section after
+the phase-1 output: `STORE TASKS (<n>):` with one line per open task (at most
+50, then `… and <n> more`) and `STORE FINDINGS: <n> open (...)`, or
+`STORE: no tasks`, or `STORE: unavailable (<reason>)`.
 
 ## Markdown format
 

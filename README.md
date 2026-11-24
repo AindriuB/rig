@@ -94,15 +94,15 @@ rig version
 | `rig tracker pull` | Creates linked tasks from one issue, a search or a label, and with `--children` the issue's sub-issues. | 0; 1 `--state` refused; 2 on any error, or if any issue failed |
 | `rig tracker refresh` | Re-reads linked issues and overwrites the owned fields of their tasks with the tracker's values. `--dry-run` writes nothing. | 0; 2 on any error, or if any task failed |
 | `rig tracker show`, `rig tracker status` | Prints one issue; or prints the tracker kind, whether its configuration is trusted, what it supports and whether the login works. Neither writes. | 0; 2 on any error |
+| `rig workflow` | Shows the workflow in effect, or checks a workflow file. | 0; `validate` 1 invalid; 2 on any error |
+| `rig next`, `rig context` | List what each open task needs, and print a size-limited brief for one task. They never call the forge. | 0; 2 on any error |
+| `rig config` | Reads and writes settings in `~/.rig/config.json` (`--global`, `--repo`) or `<repo>/.rig/config.json` (`--local`). `rig config set` needs a scope. | 0; `get` 1 not set; 2 on any error |
+| `rig login`, `rig logout` | `login` hands over to `gh` or `glab` for GitHub and GitLab, and stores a Jira token in the keychain. `rig login status` shows where you are logged in, never a token. | 0; 1 a login failed; 2 on any error |
 
 `--format markdown` (or `--markdown`) prints `rig task show`, `rig task list`
 and `rig context` as Markdown, for people and for agents that read prose;
 `--format json` is the same as `--json`, and `--format text` is the default.
 Naming two different formats, or an unknown one, is exit 2.
-| `rig workflow` | Shows the workflow in effect, or checks a workflow file. | 0; `validate` 1 invalid; 2 on any error |
-| `rig next`, `rig context` | List what each open task needs, and print a size-limited brief for one task. They never call the forge. | 0; 2 on any error |
-| `rig config` | Reads and writes settings in `~/.rig/config.json` (`--global`, `--repo`) or `<repo>/.rig/config.json` (`--local`). `rig config set` needs a scope. | 0; `get` 1 not set; 2 on any error |
-| `rig login`, `rig logout` | `login` hands over to `gh` or `glab` for GitHub and GitLab, and stores a Jira token in the keychain. `rig login status` shows where you are logged in, never a token. | 0; 1 a login failed; 2 on any error |
 
 An unknown flag always exits 2. `--json` output and the exit codes are a
 stable contract, described in [docs/design.md](docs/design.md). The store and
@@ -148,7 +148,7 @@ The keys of `rig config` (see `rig config list`) are:
 | Key | Meaning | Default |
 |---|---|---|
 | `forge.kind`, `forge.host` | The forge, and its host for a self-hosted instance | detected from the origin host |
-| `push.prefixes` | Branch prefixes `rig push` may push. Global file only | `["task", "record"]` |
+| `push.prefixes` | Branch prefixes `rig push` may push. Never from `.rig/config.json` | `["task", "record"]` |
 | `workflow` | A workflow preset name or an absolute path. Global file only | `basic` |
 | `tracker.kind` | `local`, `jira`, `github`, `gitlab` or `exec` | `local` (no tracker) |
 | `tracker.url` | The tracker's `https://` address. A tracked `.rig/config.json` cannot supply it | none |
@@ -164,8 +164,8 @@ A value that comes from the repository's own `.rig/config.json` (or the
 default) must be a relative path without a `..` element, and after symlinks
 are resolved the worktree must still be under the checkout; otherwise `rig task
 start` stops with an error. Only the global file may point outside the
-checkout, with an absolute path. `tracker.url` is trusted the same way: see
-[docs/workflows.md](docs/workflows.md#linking-tasks-to-a-tracker).
+checkout, with an absolute path. `tracker.url` has a trust rule of its own:
+see [docs/workflows.md](docs/workflows.md#linking-tasks-to-a-tracker).
 
 ## Development
 
