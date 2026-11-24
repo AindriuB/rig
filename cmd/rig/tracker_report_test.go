@@ -450,3 +450,17 @@ func TestReportCommentSkipPerKind(t *testing.T) {
 		t.Fatalf("state repeat sent %v, events %d", e.rec.log, len(e.reports()))
 	}
 }
+
+// F4: a dry run on a tracker that cannot set a status warns and prints no
+// status line, as a real run does.
+func TestReportDryRunUnsupportedStatus(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{Comment: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task, "--dry-run"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if out.Status != nil || out.Comment == nil || len(out.Warnings) != 1 || len(e.rec.log) != 0 {
+		t.Fatalf("%+v calls %v", out, e.rec.log)
+	}
+}

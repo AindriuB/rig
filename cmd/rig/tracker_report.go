@@ -253,6 +253,13 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 
 	if *dry {
 		if wantStatus {
+			// Capabilities is a read: a dry run warns as a real run would.
+			if caps, err := tr.Capabilities(ctx); err == nil && !caps.SetStatus {
+				warnings = append(warnings, "this tracker cannot set a status")
+				wantStatus = false
+			}
+		}
+		if wantStatus {
 			out.Status = &store.ReportStatus{To: status}
 		}
 		if wantComment {
