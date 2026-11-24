@@ -498,5 +498,3 @@ func TestTaskUpdateRefusesOwnedFieldsAfterLinkRace(t *testing.T) {
 		t.Fatalf("non-owned: %v", err)
 	}
 }
-
-// END-OF-TESTS

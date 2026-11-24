@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit ..."
+	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit|parent|link|unlink ..."
 
 	// maxBodyFile is the most `rig task new --body-file` reads.
 	maxBodyFile = 64 << 10
