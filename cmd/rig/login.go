@@ -70,15 +70,44 @@ type loginOpts struct {
 
 func newLoginFlags() (*flagSet, loginOpts) {
 	f := newFlags()
-	return f, loginOpts{
+	o := loginOpts{
 		url: f.str("--url"), user: f.str("--user"), store: f.str("--store"),
-		repo: f.boolean("--repo"), asJSON: f.boolean("--json"), pat: f.boolean("--pat"),
+		repo: f.boolean("--repo"), asJSON: f.boolean("--json"), pat: f.boolean("--token"),
 	}
+	f.bools["--pat"] = o.pat // the 0.4.0 name of --token, still accepted
+	return f, o
+}
+
+// refuseTokenValue rejects a token given on the command line: --token and its
+// alias --pat are switches, rig prompts for the token. It catches --token=x and
+// a stray argument right after the switch, before anything is read or stored.
+func refuseTokenValue(args []string) error {
+	for i, arg := range args {
+		name, _, hasVal := strings.Cut(arg, "=")
+		if name != "--token" && name != "--pat" {
+			continue
+		}
+		stray := hasVal
+		if !hasVal && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			switch args[i+1] {
+			case "github", "gitlab", "jira", "status":
+			default:
+				stray = true
+			}
+		}
+		if stray {
+			return fmt.Errorf("%s takes no value: rig prompts for the token, and a token must not be put on the command line", name)
+		}
+	}
+	return nil
 }
 
 // login implements `rig login [github|gitlab|jira|status]`.
 func (a *app) login(ctx context.Context, args []string) int {
 	f, o := newLoginFlags()
+	if err := refuseTokenValue(args); err != nil {
+		return a.fail("login", "%v", err)
+	}
 	pos, err := f.parse(args)
 	if err != nil {
 		return a.fail("login", "%v", err)
@@ -97,10 +126,10 @@ func (a *app) login(ctx context.Context, args []string) int {
 	}
 	jiraFlags := *o.url != "" || *o.user != "" || *o.store != "" || *o.repo || *o.pat
 	if (service == "github" || service == "gitlab" || service == "status") && jiraFlags {
-		return a.fail("login", "--url, --user, --repo, --store and --pat apply to jira only")
+		return a.fail("login", "--url, --user, --repo, --store and --token apply to jira only")
 	}
 	if *o.pat && *o.user != "" {
-		return a.fail("login", "--pat stores a token with no user; drop --user")
+		return a.fail("login", "--token stores a token with no user; drop --user")
 	}
 	if *o.asJSON && service != "status" {
 		return a.fail("login", "--json applies to `rig login status` only")
@@ -124,7 +153,7 @@ func (a *app) login(ctx context.Context, args []string) int {
 	if v, _ := layers.Get(config.KeyTrackerKind); v.Value == config.TrackerJira {
 		withJira = true
 	} else if jiraFlags {
-		return a.fail("login", "--url, --user, --repo, --store and --pat apply to jira, which tracker.kind does not select")
+		return a.fail("login", "--url, --user, --repo, --store and --token apply to jira, which tracker.kind does not select")
 	}
 	failed := a.loginForge(ctx, layers, remote, "") != 0
 	if withJira && a.loginJira(ctx, layers, root, o) != 0 {
@@ -139,6 +168,9 @@ func (a *app) login(ctx context.Context, args []string) int {
 // logout implements `rig logout jira|github|gitlab`.
 func (a *app) logout(ctx context.Context, args []string) int {
 	f, o := newLoginFlags()
+	if err := refuseTokenValue(args); err != nil {
+		return a.fail("logout", "%v", err)
+	}
 	pos, err := f.parse(args)
 	if err != nil {
 		return a.fail("logout", "%v", err)

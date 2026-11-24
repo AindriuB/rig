@@ -195,3 +195,68 @@ func TestLoginStatusEnvTokenWithNothingStoredIsAnError(t *testing.T) {
 		t.Fatalf("requests %v", p)
 	}
 }
+
+// Round 3: --token is the documented switch; --pat stays as an alias.
+func TestLoginJiraTokenStoresWithoutUser(t *testing.T) {
+	srv, paths := patServer(t)
+	e := newLoginEnv(t)
+	e.stdin(marker + "\n")
+	if code := e.run("login", "jira", "--token", "--pat", "--url", srv.URL); code != 0 {
+		t.Fatalf("exit %d\n%s", code, e.err.String())
+	}
+	host := strings.TrimPrefix(srv.URL, "https://")
+	got, err := e.stores[storeKeychain].Get(ctx, "jira:"+host)
+	if err != nil || got.User != "" || got.Token != marker {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+	if p := paths(); len(p) != 1 || p[0] != "/rest/api/2/myself Bearer" {
+		t.Fatalf("requests %v", p)
+	}
+}
+
+func TestLoginTokenNeverTakesAValue(t *testing.T) {
+	srv, paths := patServer(t)
+	e := newLoginEnv(t)
+	for _, args := range [][]string{
+		{"login", "jira", "--token=" + marker, "--url", srv.URL},
+		{"login", "jira", "--token", marker, "--url", srv.URL},
+		{"login", "jira", "--url", srv.URL, "--token", marker},
+		{"login", "jira", "--pat=" + marker, "--url", srv.URL},
+		{"login", "jira", "--pat", marker, "--url", srv.URL},
+		{"logout", "jira", "--token=" + marker, "--url", srv.URL},
+	} {
+		e.out.Reset()
+		e.err.Reset()
+		e.stdin(marker + "\n")
+		if code := e.run(args...); code != 2 {
+			t.Errorf("%v: exit %d", args, code)
+		}
+		msg := e.err.String()
+		if !strings.Contains(msg, "prompts for the token") || !strings.Contains(msg, "command line") {
+			t.Errorf("%v: message %q", args, msg)
+		}
+		if strings.Contains(msg+e.out.String(), marker) {
+			t.Errorf("%v: token echoed", args)
+		}
+	}
+	if len(paths()) != 0 || len(e.stores[storeKeychain].m)+len(e.stores[storeFile].m) != 0 {
+		t.Fatal("a refused command reached the network or the store")
+	}
+}
+
+func TestLoginTokenMessagesNameToken(t *testing.T) {
+	srv, _ := patServer(t)
+	e := newLoginEnv(t)
+	for _, args := range [][]string{
+		{"login", "jira", "--token", "--user", "me@x.io", "--url", srv.URL},
+		{"login", "github", "--token"},
+	} {
+		e.err.Reset()
+		if code := e.run(args...); code != 2 {
+			t.Errorf("%v: exit %d", args, code)
+		}
+		if msg := e.err.String(); !strings.Contains(msg, "--token") || strings.Contains(msg, "--pat") {
+			t.Errorf("%v: message %q", args, msg)
+		}
+	}
+}

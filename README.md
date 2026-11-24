@@ -73,7 +73,7 @@ rig tracker report <task> [--status] [--comment pr|state|summary] [--include fin
 rig tracker show <key> [--json] [--repo <dir>]
 rig tracker status [--json] [--repo <dir>]
 rig login                                  (the forge, then Jira when tracker.kind is jira)
-rig login <service> [--url <site>] [--user <email>] [--pat] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira; --pat stores a personal access token, with no user)
+rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira; --token stores a personal access token, with no user; --pat is the 0.4.0 name and still works)
 rig login status [--json]
 rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
 rig version

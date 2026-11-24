@@ -168,7 +168,7 @@ anything in the tables below raises the major version.
 | `rig tracker show <key> [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig tracker status [--json] [--repo <dir>]` | 0, also when the login does not work (it says so); 2 on any other error |
 | `rig login` | 0; 1 a login failed; 2 on any error |
-| `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--pat] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
+| `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--token] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
 | `rig login status [--json]` | 0; 2 on any error |
 | `rig logout jira [--url <site>] [--repo]` | 0, also when already logged out; 2 on any error, including a store that could not be checked when the entry was found nowhere |
 | `rig logout github\|gitlab` | 2: prints the `gh`/`glab` command that does it |
