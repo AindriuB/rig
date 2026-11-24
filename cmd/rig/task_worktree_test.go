@@ -365,6 +365,36 @@ func TestTaskFinishJSON(t *testing.T) {
 	}
 }
 
+// C1/C3: finish refuses while the main checkout is in the middle of a bisect
+// or a cherry-pick/revert sequence, and changes nothing.
+func TestTaskFinishRefusesBisectAndSequencer(t *testing.T) {
+	isolate(t)
+	repo, _ := newRepo(t)
+	wt := started(t, repo, "08-bar")
+	sha := commitIn(t, wt, "a.txt", "a\n")
+	mainHead := gitc(t, repo, "rev-parse", "main")
+	for _, c := range []struct{ name, why string }{{"BISECT_LOG", "bisect"}, {"sequencer", "sequence"}} {
+		p := filepath.Join(repo, ".git", c.name)
+		var err error
+		if c.name == "sequencer" {
+			err = os.Mkdir(p, 0o755)
+		} else {
+			err = os.WriteFile(p, []byte("x\n"), 0o644)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha)
+		if r.code != 1 || !strings.Contains(r.errOut, c.why) {
+			t.Fatalf("%s: %+v", c.name, r)
+		}
+		if gitc(t, repo, "rev-parse", "main") != mainHead || !exists(wt) {
+			t.Fatalf("%s: finish changed something", c.name)
+		}
+		os.RemoveAll(p)
+	}
+}
+
 // AC5: every refusal is exit 1 and changes nothing.
 func TestTaskFinishRefusals(t *testing.T) {
 	isolate(t)
