@@ -36,6 +36,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"UnlinkTask", testUnlinkTask},
 		{"RelinkRefusedWhenHeld", testRelinkRefusedWhenHeld},
 		{"TrackerSyncNeedsLink", testTrackerSyncNeedsLink},
+		{"TrackerReport", testTrackerReport},
 		{"ParentedTask", testParentedTask},
 		{"ParentUpdates", testParentUpdates},
 		{"ParentCycleUpdate", testParentCycleUpdate},
