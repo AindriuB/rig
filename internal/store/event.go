@@ -22,6 +22,7 @@ const (
 	KindParent        = "parent"
 	KindExternal      = "external"
 	KindTrackerSync   = "tracker-sync"
+	KindTrackerReport = "tracker-report"
 )
 
 // knownKind reports whether this rig understands kind.
@@ -29,7 +30,7 @@ func knownKind(kind string) bool {
 	switch kind {
 	case KindCreated, KindTransition, KindField, KindCount,
 		KindFinding, KindFindingStatus, KindNote,
-		KindParent, KindExternal, KindTrackerSync:
+		KindParent, KindExternal, KindTrackerSync, KindTrackerReport:
 		return true
 	}
 	return false
@@ -103,6 +104,31 @@ type TrackerSyncData struct {
 	At     time.Time      `json:"at"`
 	Rev    string         `json:"rev,omitempty"`
 	Values map[string]any `json:"values,omitempty"`
+}
+
+// TrackerReportData records what `rig tracker report` sent to the issue Key of
+// a tracker of Kind. Status and Comment are set only for a part that was sent;
+// the comment is recorded by a digest of its body, never the body itself.
+type TrackerReportData struct {
+	Kind    string         `json:"kind"`
+	Key     string         `json:"key"`
+	Status  *ReportStatus  `json:"status,omitempty"`
+	Comment *ReportComment `json:"comment,omitempty"`
+	At      time.Time      `json:"at"`
+}
+
+// ReportStatus is a status change a report sent.
+type ReportStatus struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// ReportComment is a comment a report sent: its template kind (pr, state or
+// summary), the id the tracker gave it, and the hex SHA-256 of its body.
+type ReportComment struct {
+	Kind   string `json:"kind"`
+	ID     string `json:"id"`
+	Digest string `json:"digest"`
 }
 
 // TransitionData moves a task from one state to another. Sha, PR and Reason

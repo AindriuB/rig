@@ -85,6 +85,7 @@ const usage = `usage: rig <command>
   rig config list [--global|--repo|--local] [--show-origin] [--json]
   rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--actor <name>] [--json] [--repo <dir>]
   rig tracker refresh [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
+  rig tracker report <task> [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run] [--actor <name>] [--json] [--repo <dir>]
   rig tracker show <key> [--json] [--repo <dir>]
   rig tracker status [--json] [--repo <dir>]
   rig login                                  (the forge, then Jira when tracker.kind is jira)

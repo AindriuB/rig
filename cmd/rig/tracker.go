@@ -23,7 +23,7 @@ import (
 	"github.com/AindriuB/rig/internal/workflow"
 )
 
-const trackerUsage = "usage: rig tracker pull|refresh|show|status ..."
+const trackerUsage = "usage: rig tracker pull|refresh|report|show|status ..."
 
 // Why a tracker cannot be used. Each is exit 2; `rig tracker status` reports
 // the last two instead.
@@ -289,7 +289,7 @@ search:
 	return user, token, nil
 }
 
-// trackerCmd implements `rig tracker`: pull, refresh, show and status. Exit
+// trackerCmd implements `rig tracker`: pull, refresh, report, show and status. Exit
 // codes: 0 done; 1 refused (a state outside the intake states); 2 usage, no
 // tracker, a failed read, or any item that failed.
 func (a *app) trackerCmd(ctx context.Context, args []string) int {
@@ -302,6 +302,8 @@ func (a *app) trackerCmd(ctx context.Context, args []string) int {
 		return a.trackerPull(ctx, rest)
 	case "refresh":
 		return a.trackerRefresh(ctx, rest)
+	case "report":
+		return a.trackerReport(ctx, rest)
 	case "show":
 		return a.trackerShow(ctx, rest)
 	case "status":

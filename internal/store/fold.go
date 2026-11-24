@@ -105,6 +105,13 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 			return false
 		}
 		applySync(task, d)
+	case KindTrackerReport:
+		// A report changes nothing a task shows; `rig tracker report` reads
+		// the log for it. It is applied only to count it as understood.
+		var d TrackerReportData
+		if !decode(e, &d) || task.ID == "" || !validReport(d) {
+			return false
+		}
 	case KindTransition:
 		var d TransitionData
 		if !decode(e, &d) || task.ID == "" || d.To == "" {
@@ -183,6 +190,11 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 		return false
 	}
 	return true
+}
+
+// validReport reports whether d names an issue and at least one thing sent.
+func validReport(d TrackerReportData) bool {
+	return d.Kind != "" && d.Key != "" && (d.Status != nil || d.Comment != nil)
 }
 
 // applyExternal links task to d. A link written again keeps the snapshot

@@ -141,6 +141,19 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 				}
 				return nil
 			})
+		case KindTrackerReport:
+			e.Data, err = rewrite(e, func(d *TrackerReportData) error {
+				if !linked {
+					return errors.New("task is not linked")
+				}
+				if !validReport(*d) {
+					return errors.New("no kind or key, or nothing sent")
+				}
+				if d.At.IsZero() {
+					d.At = now
+				}
+				return nil
+			})
 		case KindFinding:
 			e.Data, err = rewrite(e, func(d *FindingData) error {
 				if d.Summary == "" {

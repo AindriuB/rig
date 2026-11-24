@@ -164,6 +164,7 @@ anything in the tables below raises the major version.
 | `rig config list [--global\|--repo\|--local] [--show-origin] [--json]` | 0; 2 on any error |
 | `rig tracker pull <key> \| --query <q> \| --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]` | 0; 1 `--state` is not an intake state, before anything is read; 2 on any error, and at the end if any issue failed (the others are still made) |
 | `rig tracker refresh [<task> \| --all] [--dry-run] [--json] [--repo <dir>]` | 0; 2 on any error, and at the end if any task failed (the others are still refreshed) |
+| `rig tracker report <task> [--status] [--comment pr\|state\|summary] [--include findings\|notes]… [--dry-run] [--actor <name>] [--json] [--repo <dir>]` | 0, also when an earlier report already sent the same (skipped); 1 the task's state has no `tracker.report.status` entry, the tracker has no transition to that status, or `--comment pr` and the task has no pull request, with nothing sent; 2 on any other error, including no tracker, an unlinked task, and a comment that failed after the status was sent (the status is recorded) |
 | `rig tracker show <key> [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig tracker status [--json] [--repo <dir>]` | 0, also when the login does not work (it says so); 2 on any other error |
 | `rig login` | 0; 1 a login failed; 2 on any error |
@@ -181,7 +182,7 @@ flags and behaviour are described in [phase-2.md](phase-2.md) and
 [workflows.md](workflows.md). `RIG_ACTOR` names who acted and `RIG_WORKFLOW`
 the workflow to use. The commands that write the store (`task new`, `edit`,
 `move`, `set`, `count`, `parent`, `link`, `unlink`; `finding add`, `set`;
-`note add`; `tracker pull`, `refresh`) also take `--actor <name>`, or its alias
+`note add`; `tracker pull`, `refresh`, `report`) also take `--actor <name>`, or its alias
 `--role <name>`, which beats `RIG_ACTOR` and git's `user.name` for the actor
 stamped on the events; an empty or control-character value, or the two flags
 with different values, is exit 2 with nothing written, and every other command
@@ -284,11 +285,56 @@ there is none) and `external` (absent when the task is not linked):
   changed, replaced, error?, warnings?}`. `status` is `unchanged`, `updated`,
   `gone` or `error`; `changed` lists the fields that changed; `replaced` is a
   list of `{field, lost}` for each local edit the refresh overwrote.
+- `rig tracker report --json` is `{task, key, status, comment, skipped?,
+  dryRun?, warnings?}`; `status` is `{from, to}` and `comment` is `{kind, id}`,
+  each `null` when that part was not sent. With `--dry-run` nothing is sent:
+  `status` has only `to`, and `comment` has no id but a `body`.
 - `rig tracker show --json` is the issue: `{key, url, title, description,
   acceptance, priority, assignee, labels, type, status, parent, rev}`.
 - `rig tracker status --json` is `{kind, trusted, capabilities, login}`;
   `capabilities` is `{parent, children, types, search, comment, setStatus,
   levels}` or `null`, and `login` is `{ok, error?}`.
+
+**Tracker report.** `rig tracker report` sends a task's progress to the issue
+it is linked to (the task must be linked to an issue of the configured tracker,
+else exit 2). With neither `--status` nor `--comment` it is `--status --comment
+state`.
+
+- The status is the workflow's `tracker.report.status` entry for the task's
+  effective state, sent with the tracker's set-status call. It is sent before
+  the comment, so a refusal means nothing has left the machine. A tracker that
+  cannot set a status (or cannot comment) gives a warning and the other part is
+  still sent.
+- The comment is one of three fixed templates, and nothing else of the task
+  (title, body, fields) is ever sent:
+  - `pr`: `rig: pull request for task <short>: <url>`. The URL comes from the
+    forge, by the task's recorded pull request number.
+  - `state`: `rig: task <short> is now in state <state>.`
+  - `summary`: the `state` line, then `Counters: <name>=<n>, ...` (names sorted;
+    left out when the task has none), then `Pull request: <url>` (left out when
+    the task has none). If the forge read fails, the comment is sent without
+    the `Pull request:` line and the run warns.
+  - `--include findings` appends a blank line, `Open findings:` and one
+    `- <short> <severity> <summary>` line per open finding (nothing when there
+    are none). `--include notes` appends a blank line, `Notes:` and one
+    `- <kind>: <text>` line per note, oldest first. Line breaks inside a
+    summary or note are folded to a space.
+- Each real run that sends something writes one `tracker-report` event
+  `{kind, key, status?: {from, to}, comment?: {kind, id, digest}, at}`, recording
+  only what was sent; `digest` is the hex SHA-256 of the comment body, and the
+  body itself is not stored. An older rig skips the kind.
+- A part is skipped when the latest earlier report for the same issue, written
+  since the task's latest link event, sent the same thing: the status when its
+  last sent `to` is the same (case ignored), the comment when the latest comment
+  of the same kind has the same digest. Two report runs at once can both send:
+  there is no lock. When every requested part is
+  skipped nothing is sent, no event is written, and the output says `skipped`
+  (`"skipped": true` in JSON).
+- `--dry-run` calls no tracker method that writes, and writes nothing; it prints
+  `status: <name>` and `comment (<kind>):` followed by the exact body a real run
+  would send, with the same skip rules applied.
+- It never writes planning fields. A comment that fails after the status was
+  sent leaves the status recorded and exits 2; the next run sends the comment.
 
 **Markdown format.** `--format markdown` (alias `--markdown`) is stable like
 JSON: sections and fields are only added; removing or reordering one is a major
