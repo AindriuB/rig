@@ -110,3 +110,15 @@ func TestPushByTaskIDInAWorkspace(t *testing.T) {
 	}
 	gitc(t, remote, "rev-parse", "task/07-foo")
 }
+
+func TestTaskBranchIgnoresAWorkspaceTaskWithNoLocalBranch(t *testing.T) {
+	// The workspace still has docs/plan/tasks/07-foo.md, but this repository
+	// has only task/07-bar, which the branch fallback must find.
+	_, child, _ := newWorkspace(t)
+	gitc(t, child, "branch", "-D", "task/07-foo", "task/07-other")
+	gitc(t, child, "branch", "task/07-bar")
+	got, err := taskBranch(ctx, git.Repo{Dir: child}, "07")
+	if err != nil || got != "task/07-bar" {
+		t.Fatalf("taskBranch = %q, %v; want task/07-bar", got, err)
+	}
+}

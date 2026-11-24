@@ -66,7 +66,9 @@ func prefixList(prefixes []string) string {
 // after /record, the one local branch task/<id>-* is used instead. In a
 // multi-repo workspace the task files live in the enclosing workspace
 // repository, so that repository's main checkout is read after the code
-// repository's own.
+// repository's own; a branch named there is taken only when it exists
+// locally. A code repository reached through a symlink is not handled: the
+// walk up starts from git's resolved path.
 func taskBranch(ctx context.Context, repo git.Repo, id string) (string, error) {
 	if !taskIDRE.MatchString(id) || strings.Contains(id, "..") {
 		return "", fmt.Errorf("%q is not a task id", id)
@@ -80,7 +82,9 @@ func taskBranch(ctx context.Context, repo git.Repo, id string) (string, error) {
 			return b, nil
 		}
 		if ws, ok := workspaceMain(ctx, wts[0].Path); ok {
-			if b, ok := taskFileBranch(ws, id); ok {
+			// The workspace may plan for other repositories too, so its
+			// task file counts only when its branch exists here.
+			if b, ok := taskFileBranch(ws, id); ok && hasBranch(ctx, repo, b) {
 				return b, nil
 			}
 		}
@@ -124,4 +128,10 @@ func workspaceMain(ctx context.Context, top string) (string, bool) {
 		return "", false
 	}
 	return filepath.FromSlash(wts[0].Path), true
+}
+
+// hasBranch says whether the local branch exists. Errors count as no.
+func hasBranch(ctx context.Context, repo git.Repo, branch string) bool {
+	got, err := repo.Branches(ctx, branch)
+	return err == nil && len(got) == 1 && got[0] == branch
 }
