@@ -99,24 +99,12 @@ func forgeValue(l *config.Layers, key string) (config.Value, bool) {
 }
 
 // openLayersAt opens the layered config for the repository whose working tree
-// is at top: the main checkout is the project root, and origin's URL picks the
-// repos[] section of the global file. A bare main checkout gives no project
-// root. home nil means os.UserHomeDir.
+// is at top, through the opener rig config uses: the main checkout is the
+// project root (in a bare layout, the worktree's own top), and origin's URL
+// picks the repos[] section of the global file. home nil means os.UserHomeDir.
 func openLayersAt(ctx context.Context, top string, home func() (string, error)) (*config.Layers, error) {
-	o := config.Options{Home: home, Root: top}
-	r := git.Repo{Dir: top}
-	if wts, err := r.Worktrees(ctx); err == nil && len(wts) > 0 {
-		// A bare main checkout has no project files to trust: a linked
-		// worktree's own copy must not supply policy, so no root.
-		o.Root = wts[0].Path
-		if wts[0].Bare {
-			o.Root = ""
-		}
-	}
-	if url, err := r.RemoteURL(ctx, "origin"); err == nil {
-		o.Remote = url
-	}
-	return config.Open(o)
+	layers, _, _, err := openLayers(ctx, top, home)
+	return layers, err
 }
 
 // selectForge picks the adapter for dir, reading the user's real home.

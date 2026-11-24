@@ -400,6 +400,7 @@ Two things sit outside that guarantee.
 - **`.claude/rig.json` is the user's file.** Its `pushPrefixes` decide which
   prefixes count, so whoever can write it can widen the pushes: to
   `release/x`, say, though still never to a bare branch, a tag or a force.
+  In a bare layout the worktree's own files apply, as for `rig config`.
   An agent must not edit it. The project settings template makes any Edit or
   Write of `.claude/rig.json`, in the project or in a worktree below it, and any shell
   command that names `rig.json`, ask first (`tests/rig-settings.bats` pins

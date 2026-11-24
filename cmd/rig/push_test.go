@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AindriuB/rig/internal/forge"
 )
 
 // hook installs a pre-push hook that leaves a marker, so a test can tell that
@@ -277,24 +280,27 @@ func TestPushPrefixesReadFromTheMainCheckout(t *testing.T) {
 	}
 }
 
-// With a bare main checkout there is no main root to trust: a linked
-// worktree's own rig.json never supplies pushPrefixes.
-func TestPushPrefixesNotFromAWorktreeOfABareRepo(t *testing.T) {
+// In a bare layout the worktree's own top is the project root, as for rig
+// config (0.5.0): its rig.json narrows pushPrefixes and selects the forge.
+func TestPushPrefixesFromAWorktreeOfABareRepo(t *testing.T) {
 	repo, remote := newRepo(t)
 	bare := filepath.Join(filepath.Dir(repo), "bare.git")
 	gitc(t, filepath.Dir(repo), "clone", "-q", "--bare", repo, bare)
 	gitc(t, bare, "remote", "set-url", "origin", remote)
-	gitc(t, bare, "branch", "release/x", "main")
+	gitc(t, bare, "branch", "record/x", "main")
 	wt := filepath.Join(filepath.Dir(repo), "wt-bare")
 	gitc(t, bare, "worktree", "add", "-q", wt, "task/07-foo")
-	os.MkdirAll(filepath.Join(wt, ".claude"), 0o755)
-	os.WriteFile(filepath.Join(wt, ".claude", "rig.json"), []byte(`{"pushPrefixes":["release"]}`), 0o644)
+	mustMkdir(t, filepath.Join(wt, ".claude"))
+	mustWrite(t, filepath.Join(wt, ".claude", "rig.json"), `{"pushPrefixes":["task"],"forge":"gitlab"}`)
 	before := gitc(t, remote, "for-each-ref")
-	if r := rig(t, t.TempDir(), nil, nil, "push", "release/x", "--worktree", wt); r.code != 2 {
-		t.Fatalf("the worktree's rig.json was honoured: %+v", r)
+	if r := rig(t, t.TempDir(), nil, nil, "push", "record/x", "--worktree", wt); r.code != 2 {
+		t.Fatalf("the worktree's rig.json was not honoured: %+v", r)
 	}
 	if gitc(t, remote, "for-each-ref") != before {
-		t.Fatal("release/x reached the remote")
+		t.Fatal("record/x reached the remote")
+	}
+	if k, err := forgeKind(context.Background(), wt, func() (string, error) { return t.TempDir(), nil }); err != nil || k != forge.GitLab {
+		t.Fatalf("forge = %q, %v; want gitlab", k, err)
 	}
 }
 
