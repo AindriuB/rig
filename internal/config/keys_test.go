@@ -48,6 +48,9 @@ func TestCheckProjectByKind(t *testing.T) {
 		ok            bool
 	}{
 		{"jira", "RIG", true},
+		{"jira", "RIG_2", true},
+		{"jira", "rig", false},
+		{"jira", "R", false},
 		{"jira", "acme/rig", false},
 		{"github", "acme/rig", true},
 		{"github", "a/b/c", false},
