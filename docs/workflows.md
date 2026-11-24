@@ -44,7 +44,7 @@ an error and not a silent no-op.
 |---|---|
 | `name`, `version` | A label and a positive integer. A task records both when it is created. |
 | `initial` | The state a new task starts in. |
-| `branch` | Branch name template; `{short}`, `{slug}` and `{id}` are replaced. Optional. |
+| `branch` | Branch name template; `{short}`, `{slug}`, `{id}` and `{key}` are replaced. Optional. A task made from an issue (`rig task new --from`, `rig tracker pull`) has its branch stamped at creation, with `{key}` as the issue's key, lowercased, with every run of characters outside `a-z`, `0-9` and `-` turned into one `-`; a later change to the template or the issue does not rename it. Other tasks derive the branch from the template whenever it is read, and there `{key}` is the task's short id, even after `rig task link`, so linking never renames a branch. 0.3.0 cannot load a file whose template uses `{key}`. |
 | `states` | An object: state name to `{action, who, final, shaBound}`, all optional. |
 | `onNewCommit` | The state a sha-bound task counts as in when its branch has moved on. Needed if any state is sha-bound. |
 | `transitions` | The allowed moves, in order (see below). |
@@ -52,6 +52,7 @@ an error and not a silent no-op.
 | `findings` | `{severities: [...], fields: {...}}`. |
 | `counters` | Names of counters a task can carry. |
 | `hooks` | Programs to run after a move. |
+| `tracker` | How issues from a tracker become tasks. Optional. See "Linking tasks to a tracker": 0.3.0 cannot load a file that has this key. |
 
 ### States
 
@@ -158,6 +159,119 @@ value stays one argument whatever it contains, spaces and `;` included. A
 placeholder inside longer text, such as `--to={state}`, is refused by
 validation. In a hook `{state}` is the state entered; in a gate it is the state
 the move leaves.
+
+## Linking tasks to a tracker
+
+A **tracker** is an issue tracker: Jira, GitHub issues, GitLab issues, or any
+other that you reach through a program of your own (`exec`). A task can be
+*linked* to one issue. The tracker then owns the task's planning fields, such
+as its title and description, and rig owns everything about the work itself:
+state, findings, notes, counters, shas, branch and pull request. Nothing is
+sent back to the tracker in 0.4.0. `rig tracker pull`, `rig task new --from`
+and `rig task link` are the commands that use this; see the README for the
+list.
+
+### The `tracker` key
+
+The optional top-level `tracker` key says how an issue maps to a task. Like the
+rest of the workflow file, it comes from the global file, so a cloned
+repository cannot change it.
+
+```json
+"tracker": {
+  "intake": { "states": ["design", "ready"] },
+  "map": {
+    "title": "title", "body": "description", "acceptance": "acceptance",
+    "priority": "priority", "assignee": "assignee",
+    "labels": "labels", "type": "type"
+  },
+  "report": { "status": { "review": "In Review", "done": "Done" } }
+}
+```
+
+- `intake.states` lists the states a task may be created in from an issue. The
+  default is the workflow's `initial` state alone. `--state` outside the list
+  is refused (exit 1). A listed state must be declared and must not be final.
+- `map` goes from a rig field to one attribute of the issue. The attributes
+  are `title`, `description`, `acceptance`, `priority`, `assignee`, `labels`
+  and `type`. The mapped fields are the **owned fields**: the tracker supplies
+  them, and `rig task set` and `rig task edit` refuse to change them on a
+  linked task (exit 1). A key of `map` is a field the workflow declares, or
+  `title`, or `body`. An owned field is not `owns: true`. `labels` and
+  `acceptance` need a `list` field; every other attribute needs a `string` or
+  `text` field. Each attribute is mapped from at most one field. With no `map`,
+  the owned fields are `title` and `body`.
+- `report.status` goes from a rig state to the name of a tracker status. rig
+  checks that the states are declared and the names are not empty. Nothing in
+  0.4.0 sends a status; `rig tracker report` is planned for 0.5.0.
+
+`rig workflow validate` reports each broken rule with its JSON path, for
+example `tracker.map.priority`.
+
+**0.3.0 cannot load a workflow file that has a `tracker` key, or a `branch`
+template that uses `{key}`.** It rejects the unknown key or placeholder and
+exits 2. If one global file is shared between machines, update rig on all of
+them before you add either. Stores are not affected: 0.3.0
+still reads a store that 0.4.0 wrote, and sees the current title and body of a
+linked task; it skips the events it does not know and shows a task made from an
+issue without its link or parent.
+
+### Where the tracker is
+
+These config keys (set with `rig config`) say which tracker and where:
+
+| Key | Meaning |
+|---|---|
+| `tracker.kind` | `local` (no tracker, the default), `jira`, `github`, `gitlab` or `exec`. |
+| `tracker.url` | The tracker's address, `https://` only. Jira needs it; GitHub and GitLab need it only for a self-hosted server. |
+| `tracker.project` | The Jira project key, or `owner/name` (`group/.../name` on GitLab). For GitHub and GitLab the default is the origin remote's path. |
+| `tracker.command` | For `exec`: the program and its arguments, a list. Global file only. |
+| `tracker.jira.api` | `auto` (default), `v2` (Server or Data Center) or `v3` (Cloud). |
+| `tracker.jira.epicField` | The Server or Data Center "Epic Link" field id. Found by name when unset. |
+| `tracker.jira.acceptanceField` | The id of the Jira field that holds acceptance criteria. Without it, an issue has none. |
+
+**Trust.** `tracker.url` decides where a login token is sent, so a repository
+cannot supply it. If `.rig/config.json` is tracked by git (or is a symlink, or
+rig cannot tell), rig ignores a `tracker.url` in it and the tracker commands
+stop with an error; `rig tracker status` still exits 0 and reports
+`trusted: false`. Set it in the global file or an untracked local file.
+`tracker.command` is a program rig would run, so it is read only from the
+global file.
+
+**GitHub and GitLab hosts.** For `github` and `gitlab` rig takes the host from
+`tracker.url`. With no `tracker.url`, it takes the host from the `origin`
+remote, but only if that host is `github.com` (for GitHub), `gitlab.com` (for
+GitLab), or the host you named in `forge.host`. Any other host is refused, and
+the message says `set tracker.url to the tracker's address`. This is on
+purpose: a guessed host could read or link an issue on the wrong server.
+
+### Linking, refreshing, unlinking
+
+A task is unique by its link: one issue is linked from one task. The link is
+identified by the tracker kind, the host, the key and, for GitHub and GitLab,
+the project. Keys match whatever their case. Creating a task from an issue
+that is already linked (`rig task new --from`, `rig tracker pull`) returns the
+task that has it; `rig task link` on an issue another task has is refused
+(exit 1).
+
+A worked example, with a GitHub repository:
+
+```text
+rig config set tracker.kind github --repo        # use this repository's issues
+rig tracker pull 42                               # make a task from issue 42
+rig tracker pull --label ready --children        # make tasks from a label, and their sub-issues
+rig tracker refresh --all                         # re-read every linked issue
+rig tracker refresh --all --dry-run               # show what a refresh would change
+rig task link 07 43                               # link the existing task 07 to issue 43
+rig task unlink 07                                # drop the link; the fields stay
+```
+
+`pull` and `task new --from` copy the owned fields from the issue into a new
+task. `refresh` copies them again. The tracker wins: a refresh overwrites an
+owned field you edited locally, and lists it under `replaced` in `--json` with
+the value that was lost. A deleted issue is reported as `gone` and nothing is
+written. `task unlink` leaves the fields as they are; from then on they are the
+task's own.
 
 ## Worked example: a review loop
 

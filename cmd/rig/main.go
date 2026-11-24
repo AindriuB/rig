@@ -55,9 +55,9 @@ const usage = `usage: rig <command>
   rig status [--json]
   rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]
   rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--json] [--repo <dir>]
-  rig task show <task> [--findings] [--notes] [--history] [--children] [--json] [--repo <dir>]
+  rig task show <task> [--findings] [--notes] [--history] [--children] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
   rig task edit <task> [--json] [--repo <dir>]
-  rig task list [--state <s>]... [--all] [--parent <task> | --roots | --tree] [--json] [--repo <dir>]
+  rig task list [--state <s>]... [--all] [--parent <task> | --roots | --tree] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
   rig task parent <task> <parent|none> [--json] [--repo <dir>]
   rig task link <task> [<kind>:]<key> [--json] [--repo <dir>]
   rig task unlink <task> [--json] [--repo <dir>]
@@ -76,7 +76,7 @@ const usage = `usage: rig <command>
   rig workflow show [--json] [--repo <dir>]
   rig workflow validate [<file>] [--json] [--repo <dir>]
   rig next [--who agent|human] [--limit <n>] [--json] [--repo <dir>]
-  rig context <task> [--budget <tokens>] [--json] [--repo <dir>]
+  rig context <task> [--budget <tokens>] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
   rig config get <key> [--global|--repo|--local] [--json]
   rig config set <key> <value> --global|--repo|--local
   rig config unset <key> --global|--repo|--local

@@ -319,7 +319,7 @@ func (w *Workflow) Transitions(from string) []Transition {
 }
 
 // branchPlaceholders are the placeholders a branch template may use.
-var branchPlaceholders = []string{"{short}", "{slug}", "{id}"}
+var branchPlaceholders = []string{"{short}", "{slug}", "{id}", "{key}"}
 
 // isPlaceholderName reports whether s is made of the characters a
 // placeholder name uses.
