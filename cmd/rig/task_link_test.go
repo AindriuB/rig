@@ -243,4 +243,125 @@ func TestTaskUnlink(t *testing.T) {
 	}
 }
 
+// forest makes a -> b -> c and a lone d, and returns them.
+func (e *trkEnv) forest() (a, b, c, d workflow.TaskView) {
+	e.t.Helper()
+	a, b, c, d = e.mkTask("a"), e.mkTask("b"), e.mkTask("c"), e.mkTask("d")
+	for _, p := range [][2]string{{b.Short, a.Short}, {c.Short, b.Short}} {
+		if code := e.run("task", "parent", p[0], p[1]); code != 0 {
+			e.t.Fatalf("parent %v: exit %d: %s", p, code, e.err.String())
+		}
+	}
+	return
+}
+
+func slugsOf(vs []workflow.TaskView) string {
+	var s []string
+	for _, v := range vs {
+		s = append(s, v.Slug)
+	}
+	return strings.Join(s, ",")
+}
+
+// AC5: list --parent, --roots and --tree, text and JSON, with the empty cases;
+// two of them at once is exit 2.
+func TestTaskListHierarchy(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	a, b, _, d := e.forest()
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--parent", a.Short}, "b"},
+		{[]string{"--parent", b.Slug}, "c"},
+		{[]string{"--parent", d.Short}, ""},
+		{[]string{"--roots"}, "d,a"},
+		{[]string{"--tree"}, "d,a,b,c"},
+	} {
+		var out []workflow.TaskView
+		args := append([]string{"task", "list"}, tc.args...)
+		if code := e.json(&out, args...); code != 0 || slugsOf(out) != tc.want {
+			t.Fatalf("%v: exit %d, got %q want %q (%s)", tc.args, code, slugsOf(out), tc.want, e.err.String())
+		}
+		if tc.want == "" && strings.TrimSpace(e.out.String()) != "[]" {
+			t.Fatalf("%v: empty JSON is %q", tc.args, e.out.String())
+		}
+	}
+
+	// Text: --tree indents each child under its parent.
+	if code := e.run("task", "list", "--tree"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	lines := strings.Split(strings.TrimRight(e.out.String(), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("tree text:\n%s", e.out.String())
+	}
+	for i, depth := range []int{0, 0, 1, 2} {
+		if got := len(lines[i]) - len(strings.TrimLeft(lines[i], " ")); got != 2*depth {
+			t.Fatalf("line %d indent %d, want %d:\n%s", i, got, 2*depth, e.out.String())
+		}
+	}
+	if code := e.run("task", "list", "--parent", d.Short); code != 0 || e.out.Len() != 0 {
+		t.Fatalf("empty text: exit %d %q", code, e.out.String())
+	}
+	if code := e.run("task", "list", "--parent", a.Short); code != 0 || !strings.Contains(e.out.String(), "Title b") || strings.Contains(e.out.String(), "Title c") {
+		t.Fatalf("parent text: exit %d %q", code, e.out.String())
+	}
+
+	// Markdown.
+	if code := e.run("task", "list", "--tree", "--markdown"); code != 0 || !strings.HasPrefix(e.out.String(), "# Tasks\n\n- ") || !strings.Contains(e.out.String(), "\n    - ") {
+		t.Fatalf("tree markdown: exit %d\n%s", code, e.out.String())
+	}
+	if code := e.run("task", "list", "--parent", d.Short, "--markdown"); code != 0 || e.out.String() != "# Tasks\n\nnone\n" {
+		t.Fatalf("empty markdown: exit %d %q", code, e.out.String())
+	}
+
+	// At most one of the three; a missing parent task is an error.
+	for _, args := range [][]string{
+		{"--roots", "--tree"}, {"--parent", a.Short, "--roots"}, {"--parent", a.Short, "--tree"}, {"--parent", "nosuchtask"}, {"--parent"},
+	} {
+		if code := e.run(append([]string{"task", "list"}, args...)...); code != 2 {
+			t.Fatalf("%v: exit %d", args, code)
+		}
+	}
+}
+
+type withChildren struct {
+	workflow.TaskView
+	Children []workflow.TaskView `json:"children"`
+}
+
+// AC5: task show --children, text, Markdown and JSON, with and without any.
+func TestTaskShowChildren(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	a, b, c, _ := e.forest()
+
+	var out withChildren
+	if code := e.json(&out, "task", "show", a.Short, "--children"); code != 0 || out.ID != a.ID || slugsOf(out.Children) != "b" {
+		t.Fatalf("exit %d %+v (%s)", code, out, e.err.String())
+	}
+	var leaf withChildren
+	if code := e.json(&leaf, "task", "show", c.Short, "--children"); code != 0 || leaf.Children == nil || len(leaf.Children) != 0 || !strings.Contains(e.out.String(), `"children": []`) && !strings.Contains(e.out.String(), `"children":[]`) {
+		t.Fatalf("leaf: exit %d %s", code, e.out.String())
+	}
+	// Without the flag the JSON is the Task alone.
+	if code := e.run("task", "show", a.Short, "--json"); code != 0 || strings.Contains(e.out.String(), `"children"`) {
+		t.Fatalf("no flag: exit %d %s", code, e.out.String())
+	}
+
+	if code := e.run("task", "show", a.Short, "--children"); code != 0 || !strings.Contains(e.out.String(), "## Children\n\n- "+b.Short) {
+		t.Fatalf("text: exit %d\n%s", code, e.out.String())
+	}
+	if code := e.run("task", "show", c.Short, "--children"); code != 0 || !strings.HasSuffix(e.out.String(), "## Children\n\nnone\n") {
+		t.Fatalf("text leaf: exit %d\n%s", code, e.out.String())
+	}
+	if code := e.run("task", "show", a.Short, "--children", "--markdown"); code != 0 || !strings.HasSuffix(e.out.String(), "\n## Children\n\n- "+b.Short+" [open] Title b (b)\n") {
+		t.Fatalf("markdown: exit %d\n%s", code, e.out.String())
+	}
+	if code := e.run("task", "show", c.Short, "--children", "--markdown"); code != 0 || !strings.HasSuffix(e.out.String(), "\n## Children\n\nnone\n") {
+		t.Fatalf("markdown leaf: exit %d\n%s", code, e.out.String())
+	}
+}
+
 // END-OF-TESTS

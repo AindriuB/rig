@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
+	"github.com/AindriuB/rig/internal/workflow"
 )
 
 // splitRef splits `<key>` or `<kind>:<key>` into the kind and the key.
@@ -166,6 +168,165 @@ func (a *app) taskLink(ctx context.Context, args []string) int {
 		return a.storeFail(cmd, err)
 	}
 	return a.printTask(ctx, cmd, w, after, *asJSON)
+}
+
+// listShape is the hierarchy flags of `rig task list`: at most one is given.
+type listShape struct {
+	parent      *string
+	roots, tree *bool
+}
+
+func addListShape(fs *flagSet) listShape {
+	return listShape{parent: fs.str("--parent"), roots: fs.boolean("--roots"), tree: fs.boolean("--tree")}
+}
+
+// parentGiven reports whether --parent is in args, even with an empty value.
+func parentGiven(args []string) bool {
+	return slices.ContainsFunc(args, func(s string) bool { return s == "--parent" || strings.HasPrefix(s, "--parent=") })
+}
+
+// count is how many of --parent, --roots and --tree were given.
+func (s listShape) count(args []string) int {
+	n := 0
+	for _, on := range []bool{parentGiven(args), *s.roots, *s.tree} {
+		if on {
+			n++
+		}
+	}
+	return n
+}
+
+func (s listShape) active(args []string) bool { return s.count(args) > 0 }
+
+// shapeViews narrows and orders views, which are already filtered by state,
+// as the hierarchy flag asks. With --tree the depths of the result are
+// returned too; a view whose parent is not among views is a root.
+func (a *app) shapeViews(ctx context.Context, w *work, s listShape, views []workflow.TaskView) ([]workflow.TaskView, []int, error) {
+	out := []workflow.TaskView{}
+	switch {
+	case *s.roots:
+		for _, v := range views {
+			if v.Parent == "" {
+				out = append(out, v)
+			}
+		}
+	case *s.tree:
+		out, depths := treeViews(views)
+		return out, depths, nil
+	default:
+		p, err := w.st.Task(ctx, *s.parent)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, v := range views {
+			if v.Parent == p.ID {
+				out = append(out, v)
+			}
+		}
+	}
+	return out, nil, nil
+}
+
+// treeViews orders views parents first, each task's children right after it,
+// and returns each one's depth.
+func treeViews(views []workflow.TaskView) ([]workflow.TaskView, []int) {
+	present := make(map[string]bool, len(views))
+	kids := map[string][]int{}
+	for _, v := range views {
+		present[v.ID] = true
+	}
+	var roots []int
+	for i, v := range views {
+		if v.Parent == "" || !present[v.Parent] {
+			roots = append(roots, i)
+		} else {
+			kids[v.Parent] = append(kids[v.Parent], i)
+		}
+	}
+	out := make([]workflow.TaskView, 0, len(views))
+	depths := make([]int, 0, len(views))
+	seen := make([]bool, len(views))
+	var walk func(i, depth int)
+	walk = func(i, depth int) {
+		if seen[i] {
+			return
+		}
+		seen[i] = true
+		out, depths = append(out, views[i]), append(depths, depth)
+		for _, c := range kids[views[i].ID] {
+			walk(c, depth+1)
+		}
+	}
+	for _, i := range roots {
+		walk(i, 0)
+	}
+	// Only a corrupt log has a parent cycle with no root: show it anyway.
+	for i := range views {
+		walk(i, 0)
+	}
+	return out, depths
+}
+
+// treeLineMD is one task as a Markdown bullet, without its parent.
+func treeLineMD(v workflow.TaskView) string {
+	line := fmt.Sprintf("- %s [%s] %s (%s)", v.Short, mdLine(v.State), mdLine(v.Title), mdLine(v.Slug))
+	if v.External != nil && v.External.Key != "" {
+		line += " — " + mdLine(v.External.Key)
+	}
+	return line + "\n"
+}
+
+// renderTreeMD renders `rig task list --tree --markdown`: children indented
+// under their parent instead of marked with "←".
+func renderTreeMD(views []workflow.TaskView, depths []int) string {
+	var b strings.Builder
+	b.WriteString("# Tasks\n\n")
+	for i, v := range views {
+		b.WriteString(strings.Repeat("  ", depths[i]) + treeLineMD(v))
+	}
+	if len(views) == 0 {
+		b.WriteString("none\n")
+	}
+	return b.String()
+}
+
+// showChildren is `rig task show --children --json`: the Task and its children.
+type showChildren struct {
+	workflow.TaskView
+	Children []workflow.TaskView `json:"children"`
+}
+
+// childViews returns the tasks whose parent is t, in the store's order.
+func (a *app) childViews(ctx context.Context, w *work, t store.Task) ([]workflow.TaskView, error) {
+	tasks, err := w.st.Tasks(ctx, store.TaskFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := []workflow.TaskView{}
+	for _, c := range tasks {
+		if c.Parent != t.ID {
+			continue
+		}
+		v, err := w.view(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// renderChildrenMD is the "Children" section of `rig task show`.
+func renderChildrenMD(kids []workflow.TaskView) string {
+	var b strings.Builder
+	b.WriteString("## Children\n\n")
+	for _, v := range kids {
+		b.WriteString(treeLineMD(v))
+	}
+	if len(kids) == 0 {
+		b.WriteString("none\n")
+	}
+	return b.String()
 }
 
 // taskUnlink is `rig task unlink <task>`: it removes the link. The owned
