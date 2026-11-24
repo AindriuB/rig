@@ -3,9 +3,10 @@
 Status: phase 1 was released as 0.1.0. Phases 2 and 2.5 ship together as
 0.3.0 and are described in [phase-2.md](phase-2.md) and
 [phase-2.5.md](phase-2.5.md); [workflows.md](workflows.md) documents the
-workflow file. Phase 3 (views and trackers, planned for 0.4.0 and 0.5.0) is
-planned in [phase-3.md](phase-3.md). Later phases are outlines, each planned
-separately before it is built.
+workflow file. Phase 3 (views and trackers) ships as 0.4.0 and 0.5.0: 0.4.0 is
+built and is described in [phase-3.md](phase-3.md); `rig tracker report` is
+planned for 0.5.0. Later phases are outlines, each planned separately before
+it is built.
 
 **Direction.** rig provides generic actions (tasks, findings, notes,
 workflow transitions, push, pull requests, CI waits, context briefs, config,
@@ -74,6 +75,8 @@ Three layers. Only adapters know a technology.
   cmd/rig/              commands: policy and output
   internal/forge/       port: Forge interface, PullRequest, Check
   internal/store/       port: Store interface (phase 2)
+  internal/tracker/     port: Tracker interface (phase 3); adapters in
+                        exec/, jira/, github/, gitlab/, fake/
   internal/forge/github adapter: runs `gh … --json`
   internal/forge/gitlab adapter: runs `glab`
   internal/forge/fake   adapter: in memory, for tests
@@ -115,7 +118,7 @@ never reads the caller's. That is what lets rig live in another repository and
 be versioned on its own.
 
 `rig version` prints a semantic version (`0.1.0` for phase 1, `0.3.0` with
-phases 2 and 2.5) and exits 0. A
+phases 2 and 2.5, `0.4.0` with the first part of phase 3) and exits 0. A
 new command, flag or JSON field raises the minor version. A change to
 anything in the tables below raises the major version.
 
@@ -132,11 +135,17 @@ anything in the tables below raises the major version.
 | `rig pr wait <pr-number \| --run <run-id>> [--repo <dir>]` | 0 green; 1 red; 2 error or timeout |
 | `rig status [--json]` | 0; 2 on a usage error |
 | `rig task new --slug <s> --title <text> [--body <text> \| --body-file <path>] [--field <name>=<value>]… [--json] [--repo <dir>]` | 0; 2 on any error |
-| `rig task show <task> [--findings] [--notes] [--history] [--json] [--repo <dir>]` | 0; 2 on any error |
-| `rig task edit <task> [--json] [--repo <dir>]` | 0 saved, or nothing changed; 1 a field changed underneath the edit, nothing written; 2 on any error, including no terminal and no `$VISUAL`/`$EDITOR`, or a file that does not parse |
-| `rig task list [--state <s>]… [--all] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]… [--json] [--repo <dir>]` | 0, also when the issue is already linked (the existing task is printed and a line goes to stderr); 1 `--state` is not an intake state, nothing written; 2 on any other error, including no usable tracker and a `--field` the tracker owns |
+| `rig task show <task> [--findings] [--notes] [--history] [--children] [--format <text\|json\|markdown> \| --json \| --markdown] [--repo <dir>]` | 0; 2 on any error, including two different formats |
+| `rig task edit <task> [--json] [--repo <dir>]` | 0 saved, or nothing changed; 1 a field changed underneath the edit, or the edit changes a field the linked tracker owns, nothing written; 2 on any error, including no terminal and no `$VISUAL`/`$EDITOR`, or a file that does not parse |
+| `rig task list [--state <s>]… [--all] [--parent <task> \| --roots \| --tree] [--format <text\|json\|markdown> \| --json \| --markdown] [--repo <dir>]` | 0; 2 on any error, including two different formats and more than one of `--parent`, `--roots`, `--tree` |
+| `rig task parent <task> <parent\|none> [--json] [--repo <dir>]` | 0; 1 the parent does not exist or would make a cycle, nothing written; 2 on any error |
+| `rig task link <task> [<kind>:]<key> [--json] [--repo <dir>]` | 0; 1 the issue is already linked to another task, nothing written; 2 on any error. If the link is written and the refresh after it fails, exit 2 and the link stays |
+| `rig task unlink <task> [--json] [--repo <dir>]` | 0; 1 the task is not linked; 2 on any error |
+| `rig task start <slug> [--task-file <path>] [--json] [--repo <dir>]` | 0 made; 1 refused (no task file, or the path or branch is taken), nothing created; 2 usage or any other error, and what was half made is removed again |
+| `rig task finish <task> --sha <sha> [--json] [--repo <dir>]` | 0 merged (the worktree is kept, with the reason, when it could not be removed); 1 refused, or a merge conflict that was aborted, nothing changed; 2 usage or any other error |
 | `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]` | 0 moved; 1 refused by a gate or the workflow, nothing written; 2 on any error |
-| `rig task set <task> --field <name>=<value>… [--json] [--repo <dir>]` | 0; 1 a field changed underneath, nothing written; 2 on any error |
+| `rig task set <task> --field <name>=<value>… [--json] [--repo <dir>]` | 0; 1 a field changed underneath, or the field is owned by the tracker the task is linked to, nothing written; 2 on any error |
 | `rig task count <task> <counter> [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig task is <task> <state> [--repo <dir>]` | 0 the effective state is `<state>`; 1 it is not; 2 on any error |
 | `rig task log <task> [--json] [--repo <dir>]` | 0; 2 on any error |
@@ -148,11 +157,15 @@ anything in the tables below raises the major version.
 | `rig workflow show [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig workflow validate [<file>] [--json] [--repo <dir>]` | 0 valid; 1 invalid; 2 on any error |
 | `rig next [--who agent\|human] [--limit <n>] [--json] [--repo <dir>]` | 0; 2 on any error |
-| `rig context <task> [--budget <tokens>] [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig context <task> [--budget <tokens>] [--format <text\|json\|markdown> \| --json \| --markdown] [--repo <dir>]` | 0; 2 on any error, including two different formats |
 | `rig config get <key> [--global\|--repo\|--local] [--json]` | 0; 1 not set; 2 error or unknown key |
 | `rig config set <key> <value> --global\|--repo\|--local` | 0; 2 on any error |
 | `rig config unset <key> --global\|--repo\|--local` | 0, also when not set; 2 on any error |
 | `rig config list [--global\|--repo\|--local] [--show-origin] [--json]` | 0; 2 on any error |
+| `rig tracker pull <key> \| --query <q> \| --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]` | 0; 1 `--state` is not an intake state, before anything is read; 2 on any error, and at the end if any issue failed (the others are still made) |
+| `rig tracker refresh [<task> \| --all] [--dry-run] [--json] [--repo <dir>]` | 0; 2 on any error, and at the end if any task failed (the others are still refreshed) |
+| `rig tracker show <key> [--json] [--repo <dir>]` | 0; 2 on any error |
+| `rig tracker status [--json] [--repo <dir>]` | 0, also when the login does not work (it says so); 2 on any other error |
 | `rig login` | 0; 1 a login failed; 2 on any error |
 | `rig login github\|gitlab\|jira [--url <site>] [--user <email>] [--repo] [--store keychain\|file]` | 0; 1 the login failed or Jira rejected the token, nothing stored; 2 on any error |
 | `rig login status [--json]` | 0; 2 on any error |
@@ -179,6 +192,33 @@ time.
   `#<n>  <ci>  <head>  <title, at most 50 characters>`, then `  conflict`
   and `  draft` when they apply.
 - `rig push`, on success: `pushed <branch> to origin`.
+- `rig task start`, on success, exactly four lines, with these paddings:
+
+  ```text
+  WORKTREE: <worktree path>
+  BRANCH:   task/<slug>
+  BASE:     <base branch>
+  OWNS:     enforced from <task file path>
+  ```
+
+  The base is `origin`'s default branch, else `main`, `master`, `trunk` or
+  `develop`, else the current branch. The worktree is
+  `<worktrees.root>/<repository directory name>/<slug>`.
+- `rig task finish`, on success: `MERGED: <branch> @ <short sha> -> <base>`,
+  then `REMOVED: <worktree>`, or `KEPT:   <worktree> (<reason>)` when the
+  worktree could not be removed or the branch moved during the merge (its
+  later commits are not merged, and the branch is kept).
+
+**The `kit-task` marker.** `rig task start` writes the file `kit-task` in the
+new worktree's own git directory (`git rev-parse --absolute-git-dir` there),
+where git never commits it. A caller that guards file ownership (the kit's
+owns-guard) reads it to find the task file. Its contract: one line, the path of
+the task file with forward slashes even on Windows, ending in a single LF, with
+no byte order mark. The path is absolute: rig finds the file in
+`docs/plan/tasks` of the main checkout or its enclosing workspace repository,
+or resolves `--task-file` against the working directory. If the file cannot be written,
+`rig task start` removes what it made and exits 2, so a worktree is never left
+without its marker.
 
 **Stable JSON fields**
 
@@ -202,7 +242,80 @@ A pull request, from `rig pr view --json` and each element of
 `handoff` is `{written, lines}` or absent; `tasks` is an array of task file
 names without `.md`; each worktree is `{path, branch, ahead, dirty}`; `prs`
 holds pull requests as above; `prsError` is present when the forge could not
-be reached, and the rest of the output is still valid.
+be reached, and the rest of the output is still valid. It also has `store`,
+the view of the local store, which needs no network:
+`{tasks, findings, error?}`. `tasks` are the tasks not in a final state, in
+the order a task moves through the workflow. Each is `{id, short, slug, title,
+state, parent?, external?}`, where `state` is the effective state, `parent` is
+the parent's short id and `external` is `{kind, key}`; `findings` is `{open, byTask}`, with `byTask` mapping a task's
+short id to its open findings. `error` is set, and `tasks` empty, when the
+store could not be read.
+
+`rig task start --json` is `{worktree, branch, base, taskFile}`.
+`rig task finish --json` is `{merged: {branch, sha, base}, kept?: {worktree,
+reason}, removed?}`.
+
+**Task JSON.** The task printed by `rig task show --json`, `rig task list
+--json` and the other task commands gains `parent` (a task id; absent when
+there is none) and `external` (absent when the task is not linked):
+
+| `external` field | Value |
+|---|---|
+| `kind`, `key` | the tracker kind (`jira`, `github`, `gitlab` or `exec`) and the issue key |
+| `host`, `project`, `url`, `type` | strings, each left out when empty; `type` is the tracker's own level label (`epic`, `Sub-task`) |
+| `owned` | the rig fields the tracker owns |
+| `syncedAt`, `rev` | when the task was last synced, and the tracker's revision of the issue then |
+| `drift` | the owned fields whose local value differs from the last snapshot; `[]` when none |
+
+`rig task show --children --json` is the task with a `children` array of tasks.
+
+**Tracker JSON.**
+
+- `rig tracker pull --json` is `{items, skipped}`; an item is `{task, key,
+  existing, parent, warnings}`, where `task` is a task as above and `parent`
+  is the short id of its parent task, or `""`.
+- `rig tracker refresh --json` is `{tasks}`; an entry is `{task, key, status,
+  changed, replaced, error?, warnings?}`. `status` is `unchanged`, `updated`,
+  `gone` or `error`; `changed` lists the fields that changed; `replaced` is a
+  list of `{field, lost}` for each local edit the refresh overwrote.
+- `rig tracker show --json` is the issue: `{key, url, title, description,
+  acceptance, priority, assignee, labels, type, status, parent, rev}`.
+- `rig tracker status --json` is `{kind, trusted, capabilities, login}`;
+  `capabilities` is `{parent, children, types, search, comment, setStatus,
+  levels}` or `null`, and `login` is `{ok, error?}`.
+
+**Markdown format.** `--format markdown` (alias `--markdown`) is stable like
+JSON: sections and fields are only added; removing or reordering one is a major
+change. `--format json` is the alias of `--json`. Two different formats, or an
+unknown one, are exit 2. Text output stays free-form. Every Markdown output is
+UTF-8 with LF line endings, one trailing newline, no ANSI codes, no wrapping,
+and times in RFC 3339 UTC. A field with no value is left out, and a
+single-line value has its line breaks turned into one space.
+
+- `rig task show`: `# <title>`, then a bullet block with these labels in this
+  order, each only when it has a value: `id`, `slug`, `state`, `recorded state`,
+  `branch`, `pr`, `head`, `reason`, `parent`, `external`, `created`, `updated`.
+  Then H2 sections in this order: `Body`, `Fields`, `Counters`, `Findings`
+  (with `--findings`), `Notes` (`--notes`), `History` (`--history`), `Children`
+  (`--children`). `Body`, `Fields` and `Counters` are left out when empty; a
+  requested section with nothing in it prints `none`.
+  `Body` is a blockquote: line endings become LF and every line starts with
+  `> ` (an empty line is `>`). So a task body, which may come from a tracker,
+  cannot open a heading, a fence or an HTML block of its own. `Fields` and
+  `Counters` are `- name: value` lines sorted by name. A finding is
+  `- <short> [<severity>] <status>: <summary> (<path>)`; a note is
+  `- <time> [<kind>] <text>`.
+- `rig task list`: `# Tasks`, then a bullet per task,
+  `- <short> [<state>] <title> (<slug>)`, followed by ` — <key>` for a linked
+  task and ` ← <parent short>` for a task with a parent. No tasks prints
+  `none`. `--tree` indents each child under its parent in place of the `←`.
+- `rig context`: H2 sections named as the JSON `sections[].name` (`Header`,
+  `Body`, `Findings`, `Paths`, `Overlap`, `History`, `Commits`); a section the
+  budget hid is left out. `Body` is a blockquote as above and the others are
+  `- ` bullets. An omitted count is the line `_… <n> more_`. The `Header` has
+  `parent:` and `external:` rows for a task that has them. The budget is
+  counted against the Markdown's own bytes; text and JSON are counted as
+  before.
 
 ## What `rig push` does and does not guarantee
 
@@ -326,7 +439,7 @@ an example workflow file, shown in phase-2.md as the worked example.
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history |
 | 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
-| 3 | Planned, see [phase-3.md](phase-3.md). Views and trackers: `--format markdown` for `task show`, `task list` and `context`; task parent and external links; a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh` and (0.5.0) `report`; a store-based `rig status`. 0.4.0 then 0.5.0 |
+| 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0, planned**: `rig tracker report` |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
