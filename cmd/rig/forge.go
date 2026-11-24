@@ -11,9 +11,9 @@ import (
 	"github.com/AindriuB/rig/internal/git"
 )
 
-// forgeKind decides which forge hosts the repository at dir: rig.json's
-// "forge" if set, else a guess from the host of the origin remote (or
-// rig.json's "host"). Anything it cannot place is GitHub, which is what the
+// forgeKind decides which forge hosts the repository at dir: the layered
+// forge.kind if set, else a guess from the host of the origin remote (or the
+// layered forge.host). Anything it cannot place is GitHub, which is what the
 // scripts rig replaces assumed: outside a repository, with no origin, or with
 // a host that names no forge, such as an SSH config alias.
 func forgeKind(ctx context.Context, dir string) (forge.Kind, error) {
@@ -22,14 +22,19 @@ func forgeKind(ctx context.Context, dir string) (forge.Kind, error) {
 	if err != nil {
 		return forge.GitHub, nil
 	}
-	cfg, err := config.Load(top)
+	layers, err := openLayersAt(ctx, top, nil)
 	if err != nil {
 		return "", err
 	}
-	if cfg.Forge != "" {
-		return forge.Kind(cfg.Forge), nil
+	if v, ok := layers.Get(config.KeyForgeKind); ok {
+		if s, _ := v.Value.(string); s != "" {
+			return forge.Kind(s), nil
+		}
 	}
-	host := cfg.Host
+	host := ""
+	if v, ok := layers.Get(config.KeyForgeHost); ok {
+		host, _ = v.Value.(string)
+	}
 	if host == "" {
 		url, err := repo.RemoteURL(ctx, "origin")
 		if err != nil {
