@@ -154,15 +154,22 @@ func parseFieldArgs(wf *workflow.Workflow, raw []string, meta bool) (map[string]
 }
 
 func (a *app) taskNew(ctx context.Context, args []string) int {
-	args, rep, err := splitRepeated(args, []string{"--field"}, []string{"--slug", "--title", "--body", "--body-file", "--repo"})
+	args, rep, err := splitRepeated(args, []string{"--field"}, []string{"--slug", "--title", "--body", "--body-file", "--repo", "--from", "--state"})
 	if err != nil {
 		return a.fail("task new", "%v", err)
 	}
 	fs := newFlags()
 	slug, title, body, bodyFile, repo := fs.str("--slug"), fs.str("--title"), fs.str("--body"), fs.str("--body-file"), fs.str("--repo")
+	from, state := fs.str("--from"), fs.str("--state")
 	asJSON := fs.boolean("--json")
-	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
-		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]")
+	if pos, err := fs.parse(args); err != nil || len(pos) > 0 || (*from == "" && *state != "") {
+		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]\n       rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--json] [--repo <dir>]")
+	}
+	if *from != "" {
+		if *title != "" || *body != "" || *bodyFile != "" {
+			return a.fail("task new", "--from takes the title and body from the issue: drop --title, --body and --body-file")
+		}
+		return a.taskNewFrom(ctx, *repo, *from, *state, *slug, rep["--field"], *asJSON)
 	}
 	if len(*slug) > maxSlug || !slugRE.MatchString(*slug) {
 		return a.fail("task new", "--slug must be 1 to %d characters of a-z, 0-9 and -", maxSlug)
