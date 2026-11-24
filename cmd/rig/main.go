@@ -42,6 +42,8 @@ type app struct {
 	httpClient *http.Client
 	// tracker builds the tracker adapter for a resolved spec; nil is the real one.
 	tracker trackerBuilder
+	// actorFlag is --actor/--role for this run; it beats $RIG_ACTOR.
+	actorFlag string
 }
 
 const usage = `usage: rig <command>
@@ -53,25 +55,25 @@ const usage = `usage: rig <command>
   rig pr open --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]
   rig pr wait <pr-number | --run <run-id>> [--repo <dir>]
   rig status [--json]
-  rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]
-  rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--json] [--repo <dir>]
+  rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]
+  rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]
   rig task show <task> [--findings] [--notes] [--history] [--children] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
-  rig task edit <task> [--json] [--repo <dir>]
+  rig task edit <task> [--actor <name>] [--json] [--repo <dir>]
   rig task list [--state <s>]... [--all] [--parent <task> | --roots | --tree] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
-  rig task parent <task> <parent|none> [--json] [--repo <dir>]
-  rig task link <task> [<kind>:]<key> [--json] [--repo <dir>]
-  rig task unlink <task> [--json] [--repo <dir>]
-  rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]
-  rig task set <task> --field <name>=<value>... [--json] [--repo <dir>]
-  rig task count <task> <counter> [--json] [--repo <dir>]
+  rig task parent <task> <parent|none> [--actor <name>] [--json] [--repo <dir>]
+  rig task link <task> [<kind>:]<key> [--actor <name>] [--json] [--repo <dir>]
+  rig task unlink <task> [--actor <name>] [--json] [--repo <dir>]
+  rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--actor <name>] [--json] [--repo <dir>]
+  rig task set <task> --field <name>=<value>... [--actor <name>] [--json] [--repo <dir>]
+  rig task count <task> <counter> [--actor <name>] [--json] [--repo <dir>]
   rig task start <slug> [--task-file <path>] [--json] [--repo <dir>]
   rig task finish <task> --sha <sha> [--json] [--repo <dir>]
   rig task is <task> <state> [--repo <dir>]
   rig task log <task> [--json] [--repo <dir>]
-  rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]... [--json] [--repo <dir>]
+  rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]
   rig finding list <task> [--status <s>]... [--blocking] [--json] [--repo <dir>]
-  rig finding set <task> <finding> --status <s> [--json] [--repo <dir>]
-  rig note add [<task>] --kind <k> --text <text> [--json] [--repo <dir>]
+  rig finding set <task> <finding> --status <s> [--actor <name>] [--json] [--repo <dir>]
+  rig note add [<task>] --kind <k> --text <text> [--actor <name>] [--json] [--repo <dir>]
   rig note list [<task>] [--kind <k>] [--limit <n>] [--json] [--repo <dir>]
   rig workflow show [--json] [--repo <dir>]
   rig workflow validate [<file>] [--json] [--repo <dir>]
@@ -81,8 +83,8 @@ const usage = `usage: rig <command>
   rig config set <key> <value> --global|--repo|--local
   rig config unset <key> --global|--repo|--local
   rig config list [--global|--repo|--local] [--show-origin] [--json]
-  rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]
-  rig tracker refresh [<task> | --all] [--dry-run] [--json] [--repo <dir>]
+  rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--actor <name>] [--json] [--repo <dir>]
+  rig tracker refresh [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
   rig tracker show <key> [--json] [--repo <dir>]
   rig tracker status [--json] [--repo <dir>]
   rig login                                  (the forge, then Jira when tracker.kind is jira)

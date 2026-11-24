@@ -9,7 +9,7 @@ import (
 	"github.com/AindriuB/rig/internal/store"
 )
 
-const noteUsage = `usage: rig note add [<task>] --kind <k> --text <text> [--json] [--repo <dir>]
+const noteUsage = `usage: rig note add [<task>] --kind <k> --text <text> [--actor <name>] [--json] [--repo <dir>]
        rig note list [<task>] [--kind <k>] [--limit <n>] [--json] [--repo <dir>]`
 
 // note implements `rig note add|list`.
@@ -28,11 +28,15 @@ func (a *app) note(ctx context.Context, args []string) int {
 
 func (a *app) noteAdd(ctx context.Context, args []string) int {
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repoFlag, jsonOut := fs.str("--repo"), fs.boolean("--json")
 	kind, text := fs.str("--kind"), fs.str("--text")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) > 1 || *kind == "" || strings.TrimSpace(*text) == "" {
 		return a.fail("note add", "%s", noteUsage)
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("note add", "%v", err)
 	}
 	w, err := a.openWork(ctx, *repoFlag, true)
 	if err != nil {

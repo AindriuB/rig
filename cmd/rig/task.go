@@ -169,11 +169,15 @@ func (a *app) taskNew(ctx context.Context, args []string) int {
 		return a.fail("task new", "%v", err)
 	}
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	slug, title, body, bodyFile, repo := fs.str("--slug"), fs.str("--title"), fs.str("--body"), fs.str("--body-file"), fs.str("--repo")
 	from, state := fs.str("--from"), fs.str("--state")
 	asJSON := fs.boolean("--json")
 	if pos, err := fs.parse(args); err != nil || len(pos) > 0 || (*from == "" && *state != "") {
-		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--json] [--repo <dir>]\n       rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--json] [--repo <dir>]")
+		return a.fail("task new", "usage: rig task new --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]\n       rig task new --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]")
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("task new", "%v", err)
 	}
 	if *from != "" {
 		if *title != "" || *body != "" || *bodyFile != "" {
@@ -517,11 +521,15 @@ type moveOut struct {
 
 func (a *app) taskMove(ctx context.Context, args []string) int {
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repo, sha, pr, reason := fs.str("--repo"), fs.str("--sha"), fs.str("--pr"), fs.str("--reason")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 2 {
-		return a.fail("task move", "usage: rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]")
+		return a.fail("task move", "usage: rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--actor <name>] [--json] [--repo <dir>]")
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("task move", "%v", err)
 	}
 	var wargs workflow.Args
 	wargs.Sha, wargs.Reason = *sha, *reason
@@ -652,11 +660,15 @@ func (a *app) taskSet(ctx context.Context, args []string) int {
 		return a.fail("task set", "%v", err)
 	}
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 || len(rep["--field"]) == 0 {
-		return a.fail("task set", "usage: rig task set <task> --field <name>=<value>... [--json] [--repo <dir>]")
+		return a.fail("task set", "usage: rig task set <task> --field <name>=<value>... [--actor <name>] [--json] [--repo <dir>]")
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("task set", "%v", err)
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])
 	if err != nil {
@@ -675,11 +687,15 @@ func (a *app) taskSet(ctx context.Context, args []string) int {
 
 func (a *app) taskCount(ctx context.Context, args []string) int {
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 2 {
-		return a.fail("task count", "usage: rig task count <task> <counter> [--json] [--repo <dir>]")
+		return a.fail("task count", "usage: rig task count <task> <counter> [--actor <name>] [--json] [--repo <dir>]")
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("task count", "%v", err)
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])
 	if err != nil {
@@ -938,11 +954,15 @@ func (a *app) editorArgv() []string {
 
 func (a *app) taskEdit(ctx context.Context, args []string) int {
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 {
-		return a.fail("task edit", "usage: rig task edit <task> [--json] [--repo <dir>]")
+		return a.fail("task edit", "usage: rig task edit <task> [--actor <name>] [--json] [--repo <dir>]")
+	}
+	if err := actorOK(); err != nil {
+		return a.fail("task edit", "%v", err)
 	}
 	editor := a.editorArgv()
 	if len(editor) == 0 {

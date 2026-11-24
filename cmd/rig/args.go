@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // flagSet is a strict flag parser: a flag it was not told about is an error,
@@ -10,6 +12,7 @@ import (
 type flagSet struct {
 	strs  map[string]*string
 	bools map[string]*bool
+	given []string // string flags seen by parse, in order
 }
 
 func newFlags() *flagSet {
@@ -48,6 +51,7 @@ func (f *flagSet) parse(args []string) ([]string, error) {
 				val = args[i]
 			}
 			*s = val
+			f.given = append(f.given, name)
 			continue
 		}
 		if b, ok := f.bools[name]; ok && !hasVal {
@@ -57,4 +61,47 @@ func (f *flagSet) parse(args []string) ([]string, error) {
 		return nil, fmt.Errorf("unknown option %q", arg)
 	}
 	return pos, nil
+}
+
+// actorFlags registers --actor and --role (an alias) on fs, for a command that
+// writes the store. Call the returned func after fs.parse succeeds: it checks
+// the values and, when one was given, sets a.actorFlag so the store the command
+// opens stamps its events with it. Empty, control-character or conflicting
+// values are an error and leave a.actorFlag alone.
+func (a *app) actorFlags(fs *flagSet) func() error {
+	actor, role := fs.str("--actor"), fs.str("--role")
+	seen := func(name string) bool {
+		for _, n := range fs.given {
+			if n == name {
+				return true
+			}
+		}
+		return false
+	}
+	return func() error {
+		var vals []string
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--actor", actor}, {"--role", role}} {
+			if !seen(f.name) {
+				continue
+			}
+			v := strings.TrimSpace(*f.v)
+			if v == "" {
+				return fmt.Errorf("%s must not be empty", f.name)
+			}
+			if strings.IndexFunc(v, unicode.IsControl) >= 0 {
+				return fmt.Errorf("%s must not contain control characters", f.name)
+			}
+			vals = append(vals, v)
+		}
+		if len(vals) == 2 && vals[0] != vals[1] {
+			return errors.New("--actor and --role are the same flag and disagree")
+		}
+		if len(vals) > 0 {
+			a.actorFlag = vals[0]
+		}
+		return nil
+	}
 }
