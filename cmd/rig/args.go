@@ -91,8 +91,10 @@ func (a *app) actorFlags(fs *flagSet) func() error {
 			if v == "" {
 				return fmt.Errorf("%s must not be empty", f.name)
 			}
-			if strings.IndexFunc(v, unicode.IsControl) >= 0 {
-				return fmt.Errorf("%s must not contain control characters", f.name)
+			if strings.IndexFunc(v, func(r rune) bool {
+				return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
+			}) >= 0 {
+				return fmt.Errorf("%s must not contain control, format or line-separator characters", f.name)
 			}
 			vals = append(vals, v)
 		}
