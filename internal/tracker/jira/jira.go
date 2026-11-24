@@ -399,6 +399,36 @@ func (a *Adapter) Capabilities(ctx context.Context) (tracker.Caps, error) {
 	}, nil
 }
 
+var _ tracker.ProjectChecker = (*Adapter)(nil)
+
+// CheckProject reads the configured project, and when it exists searches it
+// for one issue to tell an empty project from one with issues. It returns
+// ErrUnsupported when no project is configured.
+func (a *Adapter) CheckProject(ctx context.Context) (tracker.ProjectInfo, error) {
+	key := a.cfg.Project
+	if key == "" {
+		return tracker.ProjectInfo{}, fmt.Errorf("%w: no project is configured", tracker.ErrUnsupported)
+	}
+	d, err := a.resolve(ctx)
+	if err != nil {
+		return tracker.ProjectInfo{}, err
+	}
+	info := tracker.ProjectInfo{Key: key}
+	if err := a.do(ctx, http.MethodGet, d.path()+"/project/"+key, nil, nil, nil); err != nil {
+		if errors.Is(err, tracker.ErrNotFound) {
+			return info, nil
+		}
+		return tracker.ProjectInfo{}, err
+	}
+	info.Exists = true
+	refs, err := a.searchRefs(ctx, "project = "+key, 1)
+	if err != nil {
+		return tracker.ProjectInfo{}, err
+	}
+	info.Empty = len(refs) == 0
+	return info, nil
+}
+
 // Issue returns one issue.
 func (a *Adapter) Issue(ctx context.Context, key string) (tracker.Issue, error) {
 	if err := checkKey(key); err != nil {

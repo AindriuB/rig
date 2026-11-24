@@ -53,6 +53,33 @@ func TestContractV2(t *testing.T) {
 	})
 }
 
+// 051 item 4: CheckProject tells a project that exists from one that does not,
+// and an empty one from one with issues.
+func TestCheckProject(t *testing.T) {
+	for _, version := range []int{3, 2} {
+		for _, c := range []struct {
+			project string
+			want    tracker.ProjectInfo
+		}{
+			{"RIG", tracker.ProjectInfo{Key: "RIG", Exists: true}},
+			{"EMPTY", tracker.ProjectInfo{Key: "EMPTY", Exists: true, Empty: true}},
+			{"NOPE", tracker.ProjectInfo{Key: "NOPE"}},
+		} {
+			s := newStub(t, version)
+			a := adapter(t, s, func(cfg *Config) { cfg.Project = c.project })
+			got, err := a.CheckProject(ctx)
+			if err != nil || got != c.want {
+				t.Errorf("v%d %s: %+v, %v; want %+v", version, c.project, got, err, c.want)
+			}
+		}
+	}
+	a := adapter(t, newStub(t, 3), func(cfg *Config) { cfg.Project = "" })
+	if _, err := a.CheckProject(ctx); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("no project: %v", err)
+	}
+	var _ tracker.ProjectChecker = a
+}
+
 func TestIssueMapping(t *testing.T) {
 	for _, version := range []int{3, 2} {
 		s := newStub(t, version)
