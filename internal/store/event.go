@@ -121,6 +121,10 @@ type TrackerReportData struct {
 type ReportStatus struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Asked is the status name the report requested; To is the one the
+	// tracker reached, which may be spelled differently (GitLab "open" ->
+	// "opened").
+	Asked string `json:"asked,omitempty"`
 }
 
 // ReportComment is a comment a report sent: its template kind (pr, state or

@@ -70,6 +70,18 @@ func lastReports(log []store.Event, kind, key, commentKind string) reportHistory
 	return h
 }
 
+// sameStatus reports whether the requested status name matches an earlier
+// report's asked or reached one, ignoring case and surrounding spaces.
+func sameStatus(want string, earlier ...string) bool {
+	want = strings.TrimSpace(want)
+	for _, e := range earlier {
+		if e = strings.TrimSpace(e); e != "" && strings.EqualFold(want, e) {
+			return true
+		}
+	}
+	return false
+}
+
 // digest is the hex SHA-256 of a comment body.
 func digest(body string) string {
 	sum := sha256.Sum256([]byte(body))
@@ -239,11 +251,28 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}
-	last := lastReports(log, ext.Kind, ext.Key, kind)
-	if wantStatus && last.status != nil && strings.EqualFold(last.status.To, status) {
+	// Capabilities is a read. A status the tracker cannot set is dropped before
+	// the skip check, so a repeat whose other part is skipped reports skipped.
+	var caps tracker.Caps
+	haveCaps := false
+	if wantStatus || *dry {
+		c, err := tr.Capabilities(ctx)
+		switch {
+		case err == nil:
+			caps, haveCaps = c, true
+		case *dry:
+			warnings = append(warnings, fmt.Sprintf("could not read the tracker's capabilities: %v", err))
+		}
+	}
+	if wantStatus && haveCaps && !caps.SetStatus {
+		warnings = append(warnings, "this tracker cannot set a status")
 		wantStatus = false
 	}
-	if wantComment && last.comment != nil && last.comment.Kind == kind && last.comment.Digest == digest(body) {
+	last := lastReports(log, ext.Kind, ext.Key, kind)
+	if wantStatus && last.status != nil && sameStatus(status, last.status.To, last.status.Asked) {
+		wantStatus = false
+	}
+	if wantComment && last.comment != nil && last.comment.Digest == digest(body) {
 		wantComment = false
 	}
 	if !wantStatus && !wantComment {
@@ -252,12 +281,9 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	}
 
 	if *dry {
-		if wantStatus {
-			// Capabilities is a read: a dry run warns as a real run would.
-			if caps, err := tr.Capabilities(ctx); err == nil && !caps.SetStatus {
-				warnings = append(warnings, "this tracker cannot set a status")
-				wantStatus = false
-			}
+		if wantComment && haveCaps && !caps.Comment {
+			warnings = append(warnings, "this tracker cannot comment")
+			wantComment = false
 		}
 		if wantStatus {
 			out.Status = &store.ReportStatus{To: status}
@@ -282,8 +308,8 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 		case err != nil:
 			return a.fail(cmd, "%s: set status: %v", ext.Key, err)
 		default:
-			sent.Status = &store.ReportStatus{From: res.From, To: res.To}
-			out.Status = sent.Status
+			sent.Status = &store.ReportStatus{From: res.From, To: res.To, Asked: status}
+			out.Status = &store.ReportStatus{From: res.From, To: res.To}
 		}
 	}
 	if wantComment {
