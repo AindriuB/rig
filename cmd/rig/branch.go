@@ -73,20 +73,19 @@ func taskBranch(ctx context.Context, repo git.Repo, id string) (string, error) {
 	if !taskIDRE.MatchString(id) || strings.Contains(id, "..") {
 		return "", fmt.Errorf("%q is not a task id", id)
 	}
-	wts, err := repo.Worktrees(ctx)
+	prefix := id + "-"
+	file, inWorkspace, found, err := findTaskFile(ctx, repo, func(name string) bool {
+		return strings.HasPrefix(name, prefix)
+	})
 	if err != nil {
 		return "", err
 	}
-	if len(wts) > 0 {
-		if b, ok := taskFileBranch(wts[0].Path, id); ok {
+	if found {
+		b := "task/" + strings.TrimSuffix(filepath.Base(file), ".md")
+		// The workspace may plan for other repositories too, so its task
+		// file counts only when its branch exists here.
+		if !inWorkspace || hasBranch(ctx, repo, b) {
 			return b, nil
-		}
-		if ws, ok := workspaceMain(ctx, wts[0].Path); ok {
-			// The workspace may plan for other repositories too, so its
-			// task file counts only when its branch exists here.
-			if b, ok := taskFileBranch(ws, id); ok && hasBranch(ctx, repo, b) {
-				return b, nil
-			}
 		}
 	}
 	branches, err := repo.Branches(ctx, "task/"+id+"-*")
@@ -102,14 +101,41 @@ func taskBranch(ctx context.Context, repo git.Repo, id string) (string, error) {
 	return "", fmt.Errorf("task id %s matches %d branches (%s): name the branch", id, len(branches), strings.Join(branches, ", "))
 }
 
-// taskFileBranch looks for docs/plan/tasks/<id>-<slug>.md under root and
-// returns task/<id>-<slug> for the first by name.
-func taskFileBranch(root, id string) (string, bool) {
-	entries, _ := os.ReadDir(filepath.Join(root, "docs", "plan", "tasks"))
-	for _, e := range entries { // ReadDir sorts by name
+// findTaskFile is the one task-file lookup `rig push` and `rig task start`
+// share. It looks in docs/plan/tasks of the code repository's main checkout,
+// then in the enclosing workspace repository's, and returns the first ".md"
+// file, by name, that match accepts (match gets the file name with its
+// extension). inWorkspace says which of the two it came from. The path is
+// absolute, in the platform's own form.
+func findTaskFile(ctx context.Context, repo git.Repo, match func(name string) bool) (path string, inWorkspace, ok bool, err error) {
+	wts, err := repo.Worktrees(ctx)
+	if err != nil {
+		return "", false, false, err
+	}
+	if len(wts) == 0 {
+		return "", false, false, nil
+	}
+	main := filepath.FromSlash(wts[0].Path)
+	if p, ok := taskFileIn(main, match); ok {
+		return p, false, true, nil
+	}
+	if ws, ok := workspaceMain(ctx, main); ok {
+		if p, ok := taskFileIn(ws, match); ok {
+			return p, true, true, nil
+		}
+	}
+	return "", false, false, nil
+}
+
+// taskFileIn is the first ".md" file under root/docs/plan/tasks, by name,
+// that match accepts.
+func taskFileIn(root string, match func(name string) bool) (string, bool) {
+	dir := filepath.Join(root, "docs", "plan", "tasks")
+	entries, _ := os.ReadDir(dir) // sorted by name
+	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasPrefix(name, id+"-") && strings.HasSuffix(name, ".md") {
-			return "task/" + strings.TrimSuffix(name, ".md"), true
+		if !e.IsDir() && strings.HasSuffix(name, ".md") && match(name) {
+			return filepath.Join(dir, name), true
 		}
 	}
 	return "", false
