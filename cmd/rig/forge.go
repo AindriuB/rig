@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/forge"
@@ -26,12 +27,18 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	// With no home directory the global layer is empty: forge selection
 	// goes on with the repository's own files and origin. (rig push does not:
 	// its policy may live in the global file, so it fails closed.)
-	layers, err := openLayersAt(ctx, top, home)
-	if err != nil {
-		layers, err = openLayersAt(ctx, top, func() (string, error) { return "", nil })
-		if err != nil {
-			return "", err
+	if home == nil {
+		home = os.UserHomeDir
+	}
+	layers, err := openLayersAt(ctx, top, func() (string, error) {
+		h, herr := home()
+		if herr != nil {
+			return "", nil
 		}
+		return h, nil
+	})
+	if err != nil {
+		return "", err
 	}
 	// Both keys resolve in the order rig config get reports. A kind from a
 	// less specific scope than the host never overrides that host (a global

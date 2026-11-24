@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,17 +86,68 @@ func TestForgeKindScopePrecedence(t *testing.T) {
 			if k, err := forgeKind(ctx, repo, home); err != nil || k != c.want {
 				t.Fatalf("got %q, %v; want %q", k, err, c.want)
 			}
-			// forge.kind is reported from the same scope by rig config get.
+			// rig config get reports both keys from the scopes forgeKind used.
 			layers, err := openLayersAt(ctx, repo, home)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if v, ok := layers.Get(config.KeyForgeKind); ok && v.Value.(string) != "" {
-				if _, hostSet := layers.Get(config.KeyForgeHost); !hostSet && forge.Kind(v.Value.(string)) != c.want {
-					t.Fatalf("rig config get forge.kind = %q (%s), forgeKind = %q", v.Value, v.Scope, c.want)
+			kv, kOK := layers.Get(config.KeyForgeKind)
+			hv, hOK := layers.Get(config.KeyForgeHost)
+			kOK = kOK && kv.Value.(string) != ""
+			hOK = hOK && hv.Value.(string) != ""
+			rank := func(scope string) int {
+				for i, s := range config.Order(config.KeyForgeKind) {
+					if s == scope {
+						return i
+					}
+				}
+				return 99
+			}
+			var agreed forge.Kind
+			switch {
+			case kOK && (!hOK || rank(kv.Scope) <= rank(hv.Scope)):
+				agreed = forge.Kind(kv.Value.(string))
+			default:
+				agreed = forge.GitHub
+				if hOK {
+					if k, ok := forge.KindForHost(hv.Value.(string)); ok {
+						agreed = k
+					} else if kOK {
+						agreed = forge.Kind(kv.Value.(string))
+					}
 				}
 			}
+			if agreed != c.want {
+				t.Fatalf("rig config get: kind=%v host=%v gives %q, forgeKind = %q", kv, hv, agreed, c.want)
+			}
 		})
+	}
+}
+
+// A broken global file is an error; only a failing home lookup is forgiven.
+func TestForgeKindBrokenGlobalIsAnError(t *testing.T) {
+	for name, global := range map[string]string{
+		"unknown key":    `{"forge":{"kind":"gitlab"},"bogus":1}`,
+		"truncated json": `{"forge":{"kind":"gitl`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, _ := newRepo(t)
+			gitc(t, repo, "remote", "set-url", "origin", "git@git.corp.example:o/r.git")
+			dir := t.TempDir()
+			mustMkdir(t, filepath.Join(dir, ".rig"))
+			path := filepath.Join(dir, ".rig", "config.json")
+			mustWrite(t, path, global)
+			_, err := forgeKind(ctx, repo, func() (string, error) { return dir, nil })
+			if err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("err = %v; want one naming %s", err, path)
+			}
+		})
+	}
+	repo, _ := newRepo(t)
+	gitc(t, repo, "remote", "set-url", "origin", "https://gitlab.com/o/r.git")
+	k, err := forgeKind(ctx, repo, func() (string, error) { return "", errors.New("no home") })
+	if err != nil || k != forge.GitLab {
+		t.Fatalf("no home: %q, %v", k, err)
 	}
 }
 
