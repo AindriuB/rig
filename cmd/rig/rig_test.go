@@ -60,6 +60,18 @@ type result struct {
 func rig(t *testing.T, dir string, f *fake.Forge, env map[string]string, args ...string) result {
 	t.Helper()
 	var out, errOut bytes.Buffer
+	// Never read the real home: default HOME and USERPROFILE to an empty
+	// directory unless the caller supplies them.
+	own := map[string]string{}
+	for k, v := range env {
+		own[k] = v
+	}
+	for _, k := range []string{"HOME", "USERPROFILE"} {
+		if own[k] == "" {
+			own[k] = t.TempDir()
+		}
+	}
+	env = own
 	a := &app{
 		stdout: &out, stderr: &errOut, cwd: dir,
 		getenv: func(k string) string { return env[k] },

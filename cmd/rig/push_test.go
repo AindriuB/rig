@@ -245,6 +245,37 @@ func globalHome(t *testing.T, body string) map[string]string {
 	return map[string]string{"HOME": home, "USERPROFILE": home}
 }
 
+// The harness must not read the real home: a hostile config in the process
+// HOME does not reach a push that passes no HOME of its own.
+func TestHarnessIgnoresTheProcessHome(t *testing.T) {
+	hostile := globalHome(t, `{"push":{"prefixes":["record"]}}`)
+	t.Setenv("HOME", hostile["HOME"])
+	t.Setenv("USERPROFILE", hostile["USERPROFILE"])
+	repo, _ := newRepo(t)
+	gitc(t, repo, "checkout", "-q", "task/07-foo")
+	if r := rig(t, repo, nil, nil, "push", "task/07-foo"); r.code != 0 {
+		t.Fatalf("the harness read the process home: %+v", r)
+	}
+}
+
+// rig.json is read from the main checkout, not from a linked worktree: a
+// worktree's own copy cannot widen the prefixes.
+func TestPushPrefixesReadFromTheMainCheckout(t *testing.T) {
+	repo, remote := newRepo(t)
+	gitc(t, repo, "branch", "release/x")
+	wt := filepath.Join(filepath.Dir(repo), "wt-root")
+	gitc(t, repo, "worktree", "add", "-q", wt, "task/07-foo")
+	os.MkdirAll(filepath.Join(wt, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(wt, ".claude", "rig.json"), []byte(`{"pushPrefixes":["release"]}`), 0o644)
+	before := gitc(t, remote, "for-each-ref")
+	if r := rig(t, wt, nil, nil, "push", "release/x"); r.code != 2 {
+		t.Fatalf("the worktree's rig.json was honoured: %+v", r)
+	}
+	if gitc(t, remote, "for-each-ref") != before {
+		t.Fatal("release/x reached the remote")
+	}
+}
+
 func TestPushPrefixesReadThroughTheLayers(t *testing.T) {
 	repo, remote := newRepo(t)
 	gitc(t, repo, "branch", "record/x")

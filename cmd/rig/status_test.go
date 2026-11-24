@@ -86,41 +86,43 @@ func TestStatusSurvivesAnUnreachableForgeAndAStaleHandoff(t *testing.T) {
 func TestForgeKind(t *testing.T) {
 	repo, _ := newRepo(t)
 	set := func(url string) { gitc(t, repo, "remote", "set-url", "origin", url) }
+	empty := t.TempDir()
+	home := func() (string, error) { return empty, nil }
 	cfg := filepath.Join(repo, ".claude", "rig.json")
 	os.MkdirAll(filepath.Dir(cfg), 0o755)
 
-	if k, err := forgeKind(ctx, t.TempDir()); err != nil || k != forge.GitHub {
+	if k, err := forgeKind(ctx, t.TempDir(), home); err != nil || k != forge.GitHub {
 		t.Fatalf("outside a repo: %q, %v", k, err)
 	}
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 		t.Fatalf("local-path origin: %q, %v", k, err)
 	}
 	set("git@github.com:o/r.git")
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 		t.Fatalf("github origin: %q, %v", k, err)
 	}
 	set("https://gitlab.com/o/r.git")
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitLab {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("gitlab origin: %q, %v", k, err)
 	}
 	set("git@git.example.com:o/r.git")
 	// A host that names no forge, such as an SSH config alias, is GitHub.
 	for _, url := range []string{"git@git.example.com:o/r.git", "work:o/r.git"} {
 		set(url)
-		if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
+		if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 			t.Fatalf("%s: %q, %v", url, k, err)
 		}
 	}
 	os.WriteFile(cfg, []byte(`not json`), 0o644)
-	if _, err := forgeKind(ctx, repo); err == nil {
+	if _, err := forgeKind(ctx, repo, home); err == nil {
 		t.Fatal("a broken rig.json was ignored")
 	}
 	os.WriteFile(cfg, []byte(`{"host":"gitlab.example.com"}`), 0o644)
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitLab {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("host override: %q, %v", k, err)
 	}
 	os.WriteFile(cfg, []byte(`{"forge":"github"}`), 0o644)
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 		t.Fatalf("forge override: %q, %v", k, err)
 	}
 }

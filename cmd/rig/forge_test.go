@@ -12,23 +12,22 @@ import (
 func TestForgeKindReadsTheLayers(t *testing.T) {
 	repo, _ := newRepo(t)
 	gitc(t, repo, "remote", "set-url", "origin", "git@github.com:o/r.git")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	os.MkdirAll(filepath.Join(home, ".rig"), 0o755)
-	global := filepath.Join(home, ".rig", "config.json")
+	dir := t.TempDir()
+	home := func() (string, error) { return dir, nil }
+	os.MkdirAll(filepath.Join(dir, ".rig"), 0o755)
+	global := filepath.Join(dir, ".rig", "config.json")
 
 	os.WriteFile(global, []byte(`{"forge":{"kind":"gitlab"}}`), 0o644)
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitLab {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("global forge.kind: %q, %v", k, err)
 	}
 	os.WriteFile(global, []byte(`{"forge":{"host":"gitlab.com"}}`), 0o644)
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitLab {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("global forge.host: %q, %v", k, err)
 	}
 	os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
 	os.WriteFile(filepath.Join(repo, ".claude", "rig.json"), []byte(`{"forge":"github"}`), 0o644)
-	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
+	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 		t.Fatalf("rig.json should win: %q, %v", k, err)
 	}
 }

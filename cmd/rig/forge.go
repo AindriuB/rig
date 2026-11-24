@@ -15,14 +15,15 @@ import (
 // forge.kind if set, else a guess from the host of the origin remote (or the
 // layered forge.host). Anything it cannot place is GitHub, which is what the
 // scripts rig replaces assumed: outside a repository, with no origin, or with
-// a host that names no forge, such as an SSH config alias.
-func forgeKind(ctx context.Context, dir string) (forge.Kind, error) {
+// a host that names no forge, such as an SSH config alias. home nil means
+// os.UserHomeDir.
+func forgeKind(ctx context.Context, dir string, home func() (string, error)) (forge.Kind, error) {
 	repo := git.Repo{Dir: dir}
 	top, err := repo.TopLevel(ctx)
 	if err != nil {
 		return forge.GitHub, nil
 	}
-	layers, err := openLayersAt(ctx, top, nil)
+	layers, err := openLayersAt(ctx, top, home)
 	if err != nil {
 		return "", err
 	}
@@ -66,16 +67,25 @@ func openLayersAt(ctx context.Context, top string, home func() (string, error)) 
 	return config.Open(o)
 }
 
+// selectForge picks the adapter for dir, reading the user's real home.
 func selectForge(ctx context.Context, dir string) (forge.Forge, error) {
-	kind, err := forgeKind(ctx, dir)
-	if err != nil {
-		return nil, err
+	return selectForgeWith(nil)(ctx, dir)
+}
+
+// selectForgeWith is selectForge reading the global config from home (nil
+// means os.UserHomeDir), so a caller can use the same home as its app.
+func selectForgeWith(home func() (string, error)) func(context.Context, string) (forge.Forge, error) {
+	return func(ctx context.Context, dir string) (forge.Forge, error) {
+		kind, err := forgeKind(ctx, dir, home)
+		if err != nil {
+			return nil, err
+		}
+		switch kind {
+		case forge.GitHub:
+			return github.New(dir), nil
+		case forge.GitLab:
+			return gitlab.New(dir), nil
+		}
+		return nil, fmt.Errorf("no adapter for forge %q in this build", kind)
 	}
-	switch kind {
-	case forge.GitHub:
-		return github.New(dir), nil
-	case forge.GitLab:
-		return gitlab.New(dir), nil
-	}
-	return nil, fmt.Errorf("no adapter for forge %q in this build", kind)
 }

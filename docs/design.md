@@ -48,8 +48,8 @@ has to recognise one in arbitrary shell.
 - **Go, standard library where possible.** One static binary, no runtime.
 - **Forge adapters only.** `gh` now, `glab` next. Git is called directly; there
   is no git abstraction to swap.
-- **The forge is auto-detected** from the `origin` remote's host.
-  `.claude/rig.json` overrides it.
+- **The forge is auto-detected** from the `origin` remote's host. The layered
+  config (`rig config`) overrides it, and `.claude/rig.json` is still honoured.
 - **rig holds a token only for a service with no CLI of its own.** GitHub and
   GitLab stay with `gh` and `glab`: the adapters shell out to them and use
   whatever login the user already has, and `rig login github|gitlab` only
@@ -98,7 +98,8 @@ Supporting packages:
 - `internal/proc` runs a subprocess from an argument vector with a deadline. It
   never builds a shell string, and it kills the child when the deadline passes.
 - `internal/git` wraps the handful of git calls rig needs.
-- `internal/config` reads `.claude/rig.json`:
+- `internal/config` reads the layered config (`rig config`); `.claude/rig.json`
+  is still honoured, and the forge and the push prefixes come from it:
 
   | Key | Meaning | Default |
   |---|---|---|
