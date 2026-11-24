@@ -15,12 +15,12 @@
 ## Publish targets
 | Target | Triggered by | Workflow | Secret it needs |
 |---|---|---|---|
-| GitHub release (draft, 5 binaries + SHA256SUMS) | tag push | `release.yml` | none (`GITHUB_TOKEN`) |
+| GitHub release (draft, 5 binaries + SHA256SUMS + SHA256SUMS.sig) | tag push | `release.yml` | `RIG_SIGNING_KEY` (Ed25519 seed, base64; make with `go run ./tools/rigsign keygen <dir>`) |
 | GitHub release published | `gh release edit v<version> --draft=false --latest` | none (manual) | none |
 
 ## Verify the published state
 - `gh release view v<version> --json isDraft,assets --jq '.isDraft, [.assets[].name]'`
-  prints `false` and `rig-{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,windows-amd64.exe}`, `SHA256SUMS`.
+  prints `false` and `rig-{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,windows-amd64.exe}`, `SHA256SUMS`, `SHA256SUMS.sig`.
 - `go install github.com/AindriuB/rig/cmd/rig@v<version>` in a temp `GOBIN`, then `rig version` prints `<version>`.
 
 ## If a step fails
