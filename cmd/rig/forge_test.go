@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -185,5 +186,61 @@ func TestForgeKindWithoutHome(t *testing.T) {
 	t.Setenv("USERPROFILE", "")
 	if k, err := forgeKind(ctx, repo, nil); err != nil || k != forge.GitLab {
 		t.Fatalf("HOME unset: got %q, %v; want gitlab", k, err)
+	}
+}
+
+// TestConfigGetAgreesWithForgeAndPush: the real `rig config get` and the
+// openers forge selection and rig push use read the same project root, in a
+// normal layout and in a bare one (the worktree's own files).
+func TestConfigGetAgreesWithForgeAndPush(t *testing.T) {
+	const rigj = `{"pushPrefixes":["task"],"forge":"gitlab"}`
+	layouts := map[string]func(t *testing.T) string{
+		"main checkout": func(t *testing.T) string {
+			repo, _ := newRepo(t)
+			mustMkdir(t, filepath.Join(repo, ".claude"))
+			mustWrite(t, filepath.Join(repo, ".claude", "rig.json"), rigj)
+			return repo
+		},
+		"bare layout worktree": func(t *testing.T) string {
+			repo, _ := newRepo(t)
+			bare := filepath.Join(filepath.Dir(repo), "bare.git")
+			gitc(t, filepath.Dir(repo), "clone", "-q", "--bare", repo, bare)
+			wt := filepath.Join(filepath.Dir(repo), "wt-bare")
+			gitc(t, bare, "worktree", "add", "-q", wt, "task/07-foo")
+			mustMkdir(t, filepath.Join(wt, ".claude"))
+			mustWrite(t, filepath.Join(wt, ".claude", "rig.json"), rigj)
+			return wt
+		},
+	}
+	for name, mk := range layouts {
+		t.Run(name, func(t *testing.T) {
+			dir := mk(t)
+			home := func() (string, error) { return t.TempDir(), nil }
+			get := func(key string) string {
+				r := rig(t, dir, nil, nil, "config", "get", key)
+				if r.code != 0 {
+					t.Fatalf("config get %s: %+v", key, r)
+				}
+				return strings.TrimSpace(r.out)
+			}
+			k, err := forgeKind(context.Background(), dir, home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := get("forge.kind"); got != string(k) || k != forge.GitLab {
+				t.Fatalf("config get forge.kind = %q, forgeKind = %q; want gitlab", got, k)
+			}
+			layers, err := openLayersAt(context.Background(), dir, home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v, ok := layers.Get(config.KeyPushPrefixes)
+			if !ok {
+				t.Fatal("push opener found no push.prefixes")
+			}
+			if got, want := get("push.prefixes"), strings.Join(v.Value.([]string), ","); got != want || got != "task" {
+				t.Fatalf("config get push.prefixes = %q, push opener = %q; want task", got, want)
+			}
+		})
 	}
 }
