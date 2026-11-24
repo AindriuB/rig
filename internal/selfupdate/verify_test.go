@@ -7,13 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"testing"
 )
 
-// preKey marks a build made before the maintainer's public key was embedded.
-// Without it, an empty production key list fails the build.
-var preKey = flag.Bool("prekey", false, "allow an empty production key list (pre-key build)")
+// vectorSig is task 01's committed signature over vectorMsg (seed 0x01..0x20).
+const vectorSig = "23aa8a6bb7d7a3f3fc482ef3b7a0f51d2bd035d2e8f7f6aa01f587d87c51bb6a63a7a064b5f7936eec223f970dcf8ba9bc5c9c7e49680c049f8e8ba9e7e40506"
+
+const vectorMsg = "abc  rig-linux-amd64
+"
 
 func vector() (ed25519.PublicKey, ed25519.PrivateKey) {
 	seed := make([]byte, 32)
@@ -26,10 +27,7 @@ func vector() (ed25519.PublicKey, ed25519.PrivateKey) {
 
 func TestProductionKeys(t *testing.T) {
 	if len(trustedKeys) == 0 {
-		if *preKey {
-			t.Skip("pre-key build: trustedKeys is empty")
-		}
-		t.Fatal("trustedKeys is empty: add the public key from rigsign keygen (or run with -prekey for a pre-key build)")
+		t.Fatal("trustedKeys is empty: add the public key from rigsign keygen")
 	}
 	keys, err := decodeKeys(trustedKeys)
 	if err != nil {
@@ -78,11 +76,19 @@ func TestVerifyWith(t *testing.T) {
 }
 
 func TestVectorMessage(t *testing.T) {
-	pub, priv := vector()
-	msg := []byte("abc  rig-linux-amd64\n")
-	if !ed25519.Verify(pub, msg, ed25519.Sign(priv, msg)) {
-		t.Fatal("vector does not verify")
+	pub, _ := vector()
+	keys, err := decodeKeys([]string{base64.StdEncoding.EncodeToString(pub)})
+	if err != nil {
+		t.Fatal(err)
 	}
+	sig, err := hex.DecodeString(vectorSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The signature passes (the error is the later checksum stage, since "abc"
+	// is not the hash of "x"); a changed message fails at the signature stage.
+	checkName(t, verifyWith(keys, "rig-linux-amd64", []byte("x"), []byte(vectorMsg), sig), "checksum")
+	checkName(t, verifyWith(keys, "rig-linux-amd64", []byte("x"), []byte(vectorMsg+"x"), sig), "signature")
 }
 
 func TestVerifyEmptyProductionKeys(t *testing.T) {
