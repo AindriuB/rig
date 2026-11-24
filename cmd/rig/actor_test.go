@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -36,6 +37,13 @@ func (e *trkEnv) newEvents(before map[string][]store.Event) []store.Event {
 		out = append(out, evs[len(before[id]):]...)
 	}
 	return out
+}
+
+// actorReporter lets scripted take a comment, which tracker report sends.
+type actorReporter struct{ *scripted }
+
+func (actorReporter) Comment(context.Context, string, tracker.Comment) (tracker.CommentResult, error) {
+	return tracker.CommentResult{ID: "c1"}, nil
 }
 
 func actorEnv(t *testing.T) (*trkEnv, *scripted) {
@@ -91,6 +99,7 @@ func TestActorFlagStampsEveryWritingCommand(t *testing.T) {
 				is.Title, is.Rev = "Twelve, renamed", "r2"
 				s.issues["12"] = is
 			}},
+			{"tracker report", []string{"tracker", "report", x.Short, "--comment", "state"}, func() { e.tr = actorReporter{s} }},
 			{"task unlink", []string{"task", "unlink", x.Short}, nil},
 			{"finding add", []string{"finding", "add", x.Short, "--severity", "P1", "--summary", "t"}, nil},
 			{"finding set", []string{"finding", "set", x.Short, f.Finding.ID, "--status", "fixed"}, nil},
