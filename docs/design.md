@@ -179,7 +179,13 @@ ambiguous task, a bad workflow file, and store or git errors. The commands'
 flags and behaviour are described in [phase-2.md](phase-2.md) and
 [phase-2.5.md](phase-2.5.md), and the workflow file in
 [workflows.md](workflows.md). `RIG_ACTOR` names who acted and `RIG_WORKFLOW`
-the workflow to use; `RIG_JIRA_TOKEN` overrides a stored Jira token at use
+the workflow to use. The commands that write the store (`task new`, `edit`,
+`move`, `set`, `count`, `parent`, `link`, `unlink`; `finding add`, `set`;
+`note add`; `tracker pull`, `refresh`) also take `--actor <name>`, or its alias
+`--role <name>`, which beats `RIG_ACTOR` and git's `user.name` for the actor
+stamped on the events; an empty or control-character value, or the two flags
+with different values, is exit 2 with nothing written, and every other command
+rejects them as unknown options (exit 2); `RIG_JIRA_TOKEN` overrides a stored Jira token at use
 time.
 
 **Stable text output**
