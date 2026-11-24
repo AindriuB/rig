@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/forge/fake"
+	"github.com/AindriuB/rig/internal/store"
+	"github.com/AindriuB/rig/internal/tracker"
 )
 
 func TestStatus(t *testing.T) {
@@ -116,5 +120,60 @@ func TestForgeKind(t *testing.T) {
 	os.WriteFile(cfg, []byte(`{"forge":"github"}`), 0o644)
 	if k, err := forgeKind(ctx, repo); err != nil || k != forge.GitHub {
 		t.Fatalf("forge override: %q, %v", k, err)
+	}
+}
+
+// statusRun runs `rig status` on the env's memstore with fake as the forge,
+// a PATH that holds no gh or glab, and a tracker seam that fails the test.
+func (e *taskEnv) statusRun(f *fake.Forge, dir string, args ...string) result {
+	e.t.Helper()
+	var out, errOut bytes.Buffer
+	env := map[string]string{"RIG_WORKFLOW": e.env["RIG_WORKFLOW"], "PATH": e.t.TempDir()}
+	a := &app{
+		stdout: &out, stderr: &errOut, cwd: dir,
+		getenv: func(k string) string { return env[k] },
+		store:  func(context.Context, string) (store.Store, error) { return e.st, nil },
+		forge:  func(context.Context, string) (forge.Forge, error) { return f, nil },
+		tracker: func(context.Context, trackerSpec) (tracker.Tracker, error) {
+			e.t.Error("status reached for a tracker")
+			return nil, errors.New("no tracker")
+		},
+	}
+	code := a.run(ctx, append([]string{"status"}, args...))
+	return result{code, out.String(), errOut.String()}
+}
+
+// bareRepo is a git repository with no commits, no handoff and no docs/plan.
+func bareRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitc(t, dir, "init", "-q", "-b", "main")
+	return dir
+}
+
+func TestStatusStoreOnlyAndEmpty(t *testing.T) {
+	e := newTaskEnv(t)
+	dir := bareRepo(t)
+	f := &fake.Forge{}
+
+	r := e.statusRun(f, dir)
+	if r.code != 0 || !strings.Contains(r.out, "STORE: no tasks\n") || strings.Contains(r.out, "HANDOFF") {
+		t.Fatalf("empty store: %+v", r)
+	}
+	r = e.statusRun(f, dir, "--json")
+	if r.code != 0 || !strings.Contains(r.out, `"store":{"tasks":[],"findings":{"open":0,"byTask":{}}}`) {
+		t.Fatalf("empty store json: %+v", r)
+	}
+
+	e.newTask("alpha")
+	r = e.statusRun(f, dir)
+	if r.code != 0 || !strings.Contains(r.out, "STORE TASKS (1):\n") || !strings.Contains(r.out, "alpha  Title alpha\n") {
+		t.Fatalf("store only: %+v", r)
+	}
+	if strings.Contains(r.out, "HANDOFF") || strings.Contains(r.out, "OPEN TASKS (") {
+		t.Fatalf("phase-1 output without its sources: %s", r.out)
+	}
+	if len(f.Calls) != 3 { // phase-1 ListPRs only, once per run
+		t.Fatalf("forge calls = %q", f.Calls)
 	}
 }

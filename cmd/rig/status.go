@@ -28,6 +28,36 @@ type statusOut struct {
 	Worktrees []worktreeOut `json:"worktrees"`
 	PRs       []prOut       `json:"prs"`
 	PRsError  string        `json:"prsError,omitempty"`
+	Store     storeView     `json:"store"`
+}
+
+// storeView is the store-based view: the open tasks with their effective
+// states, and the open findings. Error is set when the store could not be
+// read, and then Tasks is empty.
+type storeView struct {
+	Tasks    []storeTask  `json:"tasks"`
+	Findings storeFinding `json:"findings"`
+	Error    string       `json:"error,omitempty"`
+}
+
+type storeTask struct {
+	ID       string         `json:"id"`
+	Short    string         `json:"short"`
+	Slug     string         `json:"slug"`
+	Title    string         `json:"title"`
+	State    string         `json:"state"`
+	Parent   string         `json:"parent,omitempty"`
+	External *storeExternal `json:"external,omitempty"`
+}
+
+type storeExternal struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+}
+
+type storeFinding struct {
+	Open   int            `json:"open"`
+	ByTask map[string]int `json:"byTask"`
 }
 
 type handoffOut struct {
@@ -54,7 +84,8 @@ func (a *app) status(ctx context.Context, args []string) int {
 	if pos, err := fs.parse(args); err != nil || len(pos) > 0 {
 		return a.fail("status", "usage: rig status [--json]")
 	}
-	out := statusOut{Tasks: []string{}, Worktrees: []worktreeOut{}, PRs: []prOut{}}
+	out := statusOut{Tasks: []string{}, Worktrees: []worktreeOut{}, PRs: []prOut{},
+		Store: storeView{Tasks: []storeTask{}, Findings: storeFinding{ByTask: map[string]int{}}}}
 	repo := git.Repo{Dir: a.cwd}
 	inRepo := false
 	if wts, err := repo.Worktrees(ctx); err == nil && len(wts) > 0 {
