@@ -167,7 +167,8 @@ func TestTrackerRepoFromConfigAndRemote(t *testing.T) {
 	if spec, err = e.a.trackerSpec(ctx, e.repo); err != nil || spec.GitHub.Repo != "acme/rig" {
 		t.Fatalf("project from remote: %+v, %v", spec, err)
 	}
-	e = newTrkEnv(t, map[string]any{"kind": "gitlab"})
+	e = newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{"forge": map[string]any{"host": "gitlab.example.com"}, "tracker": map[string]any{"kind": "gitlab"}})
 	gitc(t, e.repo, "remote", "set-url", "origin", "git@gitlab.example.com:grp/sub/proj.git")
 	if spec, err = e.a.trackerSpec(ctx, e.repo); err != nil || spec.GitLab.Project != "grp/sub/proj" || spec.GitLab.Host != "gitlab.example.com" ||
 		spec.Link != (trackerLink{"gitlab", "gitlab.example.com", "grp/sub/proj"}) {
