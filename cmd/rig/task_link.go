@@ -114,7 +114,8 @@ func (a *app) taskParent(ctx context.Context, args []string) int {
 }
 
 // taskLink is `rig task link <task> <ref>`: it links an existing task to an
-// issue, then does one refresh. The uniqueness check is the store's; two
+// issue, then does one refresh. The issue is read first, so a key the tracker
+// does not know, or answers with another key, writes no link. The uniqueness check is the store's; two
 // writers linking one issue from two tasks are not atomic across tasks, and
 // the window is small.
 func (a *app) taskLink(ctx context.Context, args []string) int {
@@ -141,20 +142,45 @@ func (a *app) taskLink(ctx context.Context, args []string) int {
 	if prefixed && kind != spec.Kind {
 		return a.fail(cmd, "%q: the tracker is %s", pos[1], spec.Kind)
 	}
-	ev, err := store.NewEvent(store.KindExternal, store.ExternalData{
-		Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project, Key: key, Owned: w.wf.OwnedFields(),
-	})
-	if err != nil {
-		return a.storeFail(cmd, err)
-	}
-	after, err := w.st.Update(ctx, t.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
-		return []store.Event{ev}, nil
-	})
-	if errors.Is(err, store.ErrLinked) {
-		return a.storeFail(cmd, &refusal{reason: err.Error()})
+	issue, err := tr.Issue(ctx, key)
+	if errors.Is(err, tracker.ErrNotFound) {
+		return a.fail(cmd, "%s was not found in the tracker", key)
 	}
 	if err != nil {
-		return a.storeFail(cmd, err)
+		return a.fail(cmd, "%s: %v", key, err)
+	}
+	if err := checkIssueKey("issue", issue.Key); err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	if !strings.EqualFold(issue.Key, key) {
+		return a.fail(cmd, "the tracker answered %s for %s; link it as rig task link %s %s", issue.Key, key, t.Short, issue.Key)
+	}
+	data := store.ExternalData{
+		Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project, Key: issue.Key,
+		URL: issue.URL, Type: issue.Type, Owned: w.wf.OwnedFields(),
+	}
+	if p := issue.Parent; p != nil {
+		if err := checkIssueKey("parent", p.Key); err != nil {
+			return a.fail(cmd, "%v", err)
+		}
+		data.ParentKey = p.Key
+	}
+	after := t
+	// Already linked to this very issue: no link event, only the refresh.
+	if _, same := store.Linked(&store.External{Kind: data.Kind, Host: data.Host, Project: data.Project, Key: data.Key}, []store.Task{t}); !same {
+		ev, err := store.NewEvent(store.KindExternal, data)
+		if err != nil {
+			return a.storeFail(cmd, err)
+		}
+		after, err = w.st.Update(ctx, t.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+			return []store.Event{ev}, nil
+		})
+		if errors.Is(err, store.ErrLinked) {
+			return a.storeFail(cmd, &refusal{reason: err.Error()})
+		}
+		if err != nil {
+			return a.storeFail(cmd, err)
+		}
 	}
 	res := a.refreshOne(ctx, w, tr, spec, after, false)
 	if res.Status != "updated" && res.Status != "unchanged" {

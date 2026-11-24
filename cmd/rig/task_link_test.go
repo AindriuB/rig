@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -182,8 +183,11 @@ func TestTaskLink(t *testing.T) {
 		len(v.External.Drift) != 0 || v.External.SyncedAt.IsZero() {
 		t.Fatalf("%+v", v)
 	}
-	if c.n != 1 {
-		t.Fatalf("%d tracker calls, want one refresh", c.n)
+	if c.n != 2 {
+		t.Fatalf("%d tracker calls, want the fetch and one refresh", c.n)
+	}
+	if v.External.URL != "https://t.example/12" || v.External.Type != "Task" {
+		t.Fatalf("link URL/Type: %+v", v.External)
 	}
 	if ts := e.snapshotOf(x.Short); ts["title"] != "Remote Title" || ts["body"] != "about Remote Title" {
 		t.Fatalf("snapshot %v", ts)
@@ -201,12 +205,21 @@ func TestTaskLink(t *testing.T) {
 		t.Fatalf("relink: exit %d: %s", code, e.err.String())
 	}
 
-	// A refresh that fails after the link is written is exit 2, and says so.
-	if code := e.run("task", "link", y.Short, "99"); code != 2 || !strings.Contains(e.err.String(), "link stands") {
+	// An issue the tracker does not have is exit 2 and writes no link.
+	before = e.eventCount(y.ID)
+	if code := e.run("task", "link", y.Short, "99"); code != 2 || !strings.Contains(e.err.String(), "not found") {
 		t.Fatalf("exit %d, stderr %q", code, e.err.String())
 	}
-	if task, _ := e.st().Task(ctx, y.ID); task.External == nil || task.External.Key != "99" {
-		t.Fatalf("the link did not stand: %+v", task.External)
+	if task, _ := e.st().Task(ctx, y.ID); task.External != nil || e.eventCount(y.ID) != before {
+		t.Fatalf("a link to a missing issue was written: %+v", task.External)
+	}
+	// A repeat of the task's own link writes no link event, only the refresh.
+	before = e.eventCount(x.ID)
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
+		t.Fatalf("relink: exit %d: %s", code, e.err.String())
+	}
+	if n := e.eventCount(x.ID); n != before {
+		t.Fatalf("a repeated link wrote %d events", n-before)
 	}
 	if code := e.run("task", "link", y.Short); code != 2 {
 		t.Fatalf("usage: exit %d", code)
@@ -517,5 +530,66 @@ func TestTaskSetUsesLinkOwnedFields(t *testing.T) {
 	}
 	if code := e.run("task", "set", x.Short, "--field", "body=Mine"); code != 0 {
 		t.Fatalf("body is not owned by this link: exit %d: %s", code, e.err.String())
+	}
+}
+
+// failAfter lets n tracker reads through, then fails every later one.
+type failAfter struct {
+	tracker.Tracker
+	n int
+}
+
+func (f *failAfter) Issue(ctx context.Context, k string) (tracker.Issue, error) {
+	if f.n <= 0 {
+		return tracker.Issue{}, errors.New("tracker down")
+	}
+	f.n--
+	return f.Tracker.Issue(ctx, k)
+}
+
+// answersKey answers every read with another key, as a moved issue does.
+type answersKey struct {
+	tracker.Tracker
+	key string
+}
+
+func (a answersKey) Issue(ctx context.Context, k string) (tracker.Issue, error) {
+	is, err := a.Tracker.Issue(ctx, k)
+	is.Key = a.key
+	return is, err
+}
+
+// task link reads the issue before it writes: a moved or malformed answer is
+// exit 2 with no link; a refresh failure after the link stands says so; the
+// link carries the issue's URL, Type and parent key.
+func TestTaskLinkReadsFirst(t *testing.T) {
+	base := issue("12", "Remote")
+	base.Parent = &tracker.IssueRef{Key: "7"}
+	for name, tr := range map[string]tracker.Tracker{
+		"moved": answersKey{fake.New(allCaps, []tracker.Issue{base}, nil), "13"},
+		"bad":   answersKey{fake.New(allCaps, []tracker.Issue{base}, nil), "a b"},
+	} {
+		e := newTrkEnv(t, ghCfg())
+		e.tr = tr
+		x := e.mkTask("x")
+		n := e.eventCount(x.ID)
+		if code := e.run("task", "link", x.Short, "12"); code != 2 {
+			t.Fatalf("%s: exit %d, stderr %q", name, code, e.err.String())
+		}
+		if got, _ := e.st().Task(ctx, x.ID); got.External != nil || e.eventCount(x.ID) != n {
+			t.Fatalf("%s: a link was written: %+v", name, got.External)
+		}
+	}
+
+	e := newTrkEnv(t, ghCfg())
+	e.tr = &failAfter{Tracker: fake.New(allCaps, []tracker.Issue{base}, nil), n: 1}
+	x := e.mkTask("x")
+	if code := e.run("task", "link", x.Short, "12"); code != 2 || !strings.Contains(e.err.String(), "link stands") {
+		t.Fatalf("exit %d, stderr %q", code, e.err.String())
+	}
+	got, _ := e.st().Task(ctx, x.ID)
+	if got.External == nil || got.External.Key != "12" || got.External.URL != "https://t.example/12" ||
+		got.External.Type != "Task" || got.External.ParentKey != "7" || strings.Join(got.External.Owned, ",") != "body,title" {
+		t.Fatalf("link: %+v", got.External)
 	}
 }
