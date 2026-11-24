@@ -44,7 +44,7 @@ an error and not a silent no-op.
 |---|---|
 | `name`, `version` | A label and a positive integer. A task records both when it is created. |
 | `initial` | The state a new task starts in. |
-| `branch` | Branch name template; `{short}`, `{slug}`, `{id}` and `{key}` are replaced. Optional. `{key}` is the linked issue's key, lowercased, with every character outside `a-z`, `0-9` and `-` turned into `-`; a task with no link gets its short id. A task made from an issue (`rig task new --from`, `rig tracker pull`) has its branch stamped at creation, so a later change to the template or the issue's title does not rename it. Other tasks derive the branch from the template whenever it is read. |
+| `branch` | Branch name template; `{short}`, `{slug}`, `{id}` and `{key}` are replaced. Optional. A task made from an issue (`rig task new --from`, `rig tracker pull`) has its branch stamped at creation, with `{key}` as the issue's key, lowercased, with every character outside `a-z`, `0-9` and `-` turned into `-`; a later change to the template or the issue does not rename it. Other tasks derive the branch from the template whenever it is read, and there `{key}` is the task's short id, even after `rig task link`, so linking never renames a branch. |
 | `states` | An object: state name to `{action, who, final, shaBound}`, all optional. |
 | `onNewCommit` | The state a sha-bound task counts as in when its branch has moved on. Needed if any state is sha-bound. |
 | `transitions` | The allowed moves, in order (see below). |

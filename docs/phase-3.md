@@ -431,7 +431,7 @@ not moved. The view makes no network call and works with no
 open pull requests from the forge, as in phase 1. The output is in
 [design.md](design.md) (`store` in `--json`). In text it is a section after
 the phase-1 output: `STORE TASKS (<n>):` with one line per open task (at most
-50, then `… and <n> more`) and `STORE FINDINGS: <n> open (...)`, or
+50, then `… and <n> more`) and `STORE FINDINGS: <n> open (...)` when any finding is open, or
 `STORE: no tasks`, or `STORE: unavailable (<reason>)`.
 
 ## Markdown format

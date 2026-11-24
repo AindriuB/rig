@@ -49,10 +49,12 @@ func TestBranchFor(t *testing.T) {
 	if got := w.BranchFor(task); got != "rig/t-1a-fix-it" {
 		t.Fatalf("BranchFor {key} unlinked = %q, want the short id", got)
 	}
+	// Linking a task later must not rename its derived branch: only a branch
+	// stamped at intake carries the issue key.
 	linked := task
 	linked.External = &store.External{Kind: "jira", Key: "PROJ-12"}
-	if got := w.BranchFor(linked); got != "rig/proj-12-fix-it" {
-		t.Fatalf("BranchFor {key} linked = %q", got)
+	if got := w.BranchFor(linked); got != "rig/t-1a-fix-it" {
+		t.Fatalf("BranchFor {key} after link = %q, want the unlinked name", got)
 	}
 	w.Branch = ""
 	if got := w.BranchFor(task); got != "" {
