@@ -282,6 +282,17 @@ func TestArgumentErrorsNeverEchoSecret(t *testing.T) {
 	}
 }
 
+// 051 item 6: the no-service message names --token, not --pat.
+func TestLoginNoServiceMessageNamesToken(t *testing.T) {
+	e := newLoginEnv(t)
+	if code := e.run("login", "--token"); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	if msg := e.err.String(); !strings.Contains(msg, "--url, --user, --repo, --store and --token apply to jira, which tracker.kind does not select") {
+		t.Fatalf("message %q", msg)
+	}
+}
+
 func TestLoginTokenMessagesNameToken(t *testing.T) {
 	srv, _ := patServer(t)
 	e := newLoginEnv(t)

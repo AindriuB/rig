@@ -651,7 +651,7 @@ search:
 	}
 	s.User = user
 	// A stored login with no user is a personal access token (rig login jira
-	// --pat): it is checked against the v2 API as a Bearer credential.
+	// --token): it is checked against the v2 API as a Bearer credential.
 	check := func() error { return jira.Check(ctx, a.httpClient, site, user, token) }
 	if user == "" {
 		check = func() error { return jira.CheckPAT(ctx, a.httpClient, site, token) }
