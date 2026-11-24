@@ -765,6 +765,30 @@ func TestTrackerRepoHostAlias(t *testing.T) {
 	}
 }
 
+func TestTrackerRepoHostSSHAliases(t *testing.T) {
+	for _, h := range []string{"github-work", "github.com-work"} {
+		e := newTrkEnv(t, map[string]any{"kind": "github"})
+		gitc(t, e.repo, "remote", "set-url", "origin", "git@"+h+":acme/rig.git")
+		spec, err := e.a.trackerSpec(ctx, e.repo)
+		if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
+			t.Fatalf("%s: spec %+v, %v", h, spec, err)
+		}
+	}
+}
+
+func TestTrackerRepoHostConfiguredForgeHost(t *testing.T) {
+	e := newTrkEnv(t, nil)
+	e.globalConfig(map[string]any{
+		"forge":   map[string]any{"host": "git.corp.example"},
+		"tracker": map[string]any{"kind": "gitlab"},
+	})
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@git.corp.example:acme/rig.git")
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.Link != (trackerLink{"gitlab", "git.corp.example", "acme/rig"}) || spec.GitLab.Host != "git.corp.example" {
+		t.Fatalf("spec %+v, %v", spec, err)
+	}
+}
+
 type parentRefresh struct {
 	Tasks []struct {
 		Task, Key, Status string

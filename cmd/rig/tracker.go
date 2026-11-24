@@ -11,7 +11,6 @@ import (
 
 	authjira "github.com/AindriuB/rig/internal/auth/jira"
 	"github.com/AindriuB/rig/internal/config"
-	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/secret"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
@@ -163,12 +162,22 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		if site != "" {
 			host = urlHost(site)
 		}
+		def := "github.com"
+		if spec.Kind == config.TrackerGitLab {
+			def = "gitlab.com"
+		}
+		forgeHost := ""
+		if v, ok := layers.Get(config.KeyForgeHost); ok {
+			forgeHost, _ = v.Value.(string)
+			forgeHost = strings.ToLower(forgeHost)
+		}
 		if key := layers.RepoKey(); key != "" {
 			h, path, _ := strings.Cut(key, "/")
-			// As forgeKind does, a host that is not this forge's (an SSH
-			// alias, say) is not used: the forge's default host stands in.
-			if k, ok := forge.KindForHost(h); host == "" && ok && string(k) == spec.Kind {
-				host = h
+			// Only the forge's own host is taken from the remote: a host
+			// that merely looks like it (an SSH alias such as github-work)
+			// is not, and the configured or public host stands in.
+			if lh := strings.ToLower(h); host == "" && (lh == def || (forgeHost != "" && lh == forgeHost)) {
+				host = lh
 			}
 			if project == "" {
 				project = path
@@ -177,12 +186,11 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		if project == "" {
 			return spec, errors.New("no repository for the tracker: set tracker.project or add an origin remote")
 		}
-		def := "github.com"
-		if spec.Kind == config.TrackerGitLab {
-			def = "gitlab.com"
-		}
 		if host == "" {
 			host = def
+			if forgeHost != "" {
+				host = forgeHost
+			}
 		}
 		spec.Link.Host, spec.Link.Project = host, project
 		if host == def {
