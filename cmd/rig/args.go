@@ -35,20 +35,21 @@ func (f *flagSet) boolean(name string) *bool {
 // named in an error only when it is one of these (a real flag used on a
 // command that lacks it): any other argument may be a secret typed in the
 // wrong place, typos included. A test fails when a flag a command registers
-// is missing here.
+// is missing here, whether it is registered with str/boolean or named in a
+// []string literal handed to splitRepeated or takeRepeated.
 var knownOptions = map[string]bool{
 	"--actor": true, "--all": true, "--base": true, "--blocking": true, "--body": true,
 	"--body-file": true, "--budget": true, "--children": true, "--comment": true,
-	"--draft": true, "--dry-run": true, "--findings": true, "--format": true,
+	"--draft": true, "--dry-run": true, "--field": true, "--findings": true, "--format": true,
 	"--from": true, "--global": true, "--head": true, "--help": true, "--history": true,
-	"--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
+	"--include": true, "--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
 	"--local": true, "--markdown": true, "--mine": true, "--notes": true, "--parent": true,
 	"--pat": true, "--path": true, "--pr": true, "--query": true, "--reason": true,
 	"--repo": true, "--role": true, "--roots": true, "--run": true, "--severity": true,
 	"--sha": true, "--show-origin": true, "--slug": true, "--state": true, "--status": true,
 	"--store": true, "--summary": true, "--task": true, "--task-file": true, "--text": true,
 	"--title": true, "--token": true, "--tree": true, "--url": true, "--user": true,
-	"--version": true, "--who": true, "-h": true,
+	"--version": true, "--who": true, "--worktree": true, "-h": true,
 }
 
 // shownOption is how an unknown option appears in an error. The value after

@@ -210,3 +210,23 @@ func TestPushRejectedByTheRemoteExits1(t *testing.T) {
 		t.Fatalf("non-fast-forward: %+v", r)
 	}
 }
+
+// F4: the refusal for an option never prints what was typed after it.
+func TestPushOptionErrorNeverEchoesValue(t *testing.T) {
+	repo, _ := newRepo(t)
+	for _, args := range [][]string{
+		{"--token=ghp_abc", "task/x"},
+		{"--ghp_abc", "task/x"},
+		{"-ghp_abc", "task/x"},
+		{"--force=ghp_abc", "task/x"},
+	} {
+		r := rig(t, repo, nil, nil, append([]string{"push"}, args...)...)
+		if r.code != 2 || strings.Contains(r.errOut+r.out, "ghp_abc") {
+			t.Errorf("rig push %q: exit %d, stderr %q", args, r.code, r.errOut)
+		}
+	}
+	r := rig(t, repo, nil, nil, "push", "--token=ghp_abc", "task/x")
+	if !strings.Contains(r.errOut, `"--token"`) {
+		t.Errorf("known option name not shown: %q", r.errOut)
+	}
+}

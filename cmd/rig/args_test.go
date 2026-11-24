@@ -42,6 +42,10 @@ func TestKnownOptionsCoverEveryRegisteredFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	re := regexp.MustCompile(`(?:\.(?:str|boolean)\(|\.(?:strs|bools)\[)"(-[^"]+)"`)
+	// Names passed through helpers (splitRepeated, takeRepeated) are
+	// []string literals made only of options.
+	list := regexp.MustCompile(`\[\]string\{("-[^"]+"(?:, *"-[^"]+")*)\}`)
+	item := regexp.MustCompile(`"(-[^"]+)"`)
 	seen := 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
@@ -55,6 +59,14 @@ func TestKnownOptionsCoverEveryRegisteredFlag(t *testing.T) {
 			seen++
 			if !knownOptions[m[1]] {
 				t.Errorf("%s registers %s, which is not in knownOptions", f, m[1])
+			}
+		}
+		for _, l := range list.FindAllStringSubmatch(string(src), -1) {
+			for _, m := range item.FindAllStringSubmatch(l[1], -1) {
+				seen++
+				if !knownOptions[m[1]] {
+					t.Errorf("%s passes %s to a flag helper, which is not in knownOptions", f, m[1])
+				}
 			}
 		}
 	}

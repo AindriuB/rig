@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -868,7 +869,18 @@ type trackerStatusOut struct {
 // check's result, or Error when the check itself failed.
 type trackerProject struct {
 	tracker.ProjectInfo
-	Error string `json:"error,omitempty"`
+	Error string
+}
+
+// MarshalJSON writes exactly {"error": ...} for a failed check and the
+// ProjectInfo fields otherwise.
+func (p trackerProject) MarshalJSON() ([]byte, error) {
+	if p.Error != "" {
+		return json.Marshal(struct {
+			Error string `json:"error"`
+		}{p.Error})
+	}
+	return json.Marshal(p.ProjectInfo)
 }
 
 func (a *app) trackerStatus(ctx context.Context, args []string) int {
