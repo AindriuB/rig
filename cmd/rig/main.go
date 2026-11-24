@@ -64,6 +64,8 @@ const usage = `usage: rig <command>
   rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]
   rig task set <task> --field <name>=<value>... [--json] [--repo <dir>]
   rig task count <task> <counter> [--json] [--repo <dir>]
+  rig task start <slug> [--task-file <path>] [--json] [--repo <dir>]
+  rig task finish <task> --sha <sha> [--json] [--repo <dir>]
   rig task is <task> <state> [--repo <dir>]
   rig task log <task> [--json] [--repo <dir>]
   rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]... [--json] [--repo <dir>]

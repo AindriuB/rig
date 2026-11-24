@@ -25,7 +25,14 @@ const (
 	// KeyTrackerJiraAcceptanceField is the id of the Jira field that holds an
 	// issue's acceptance criteria. Unset, the issue has none.
 	KeyTrackerJiraAcceptanceField = "tracker.jira.acceptanceField"
+
+	// KeyWorktreesRoot is where `rig task start` puts worktrees: relative to
+	// the repository's top level, or absolute.
+	KeyWorktreesRoot = "worktrees.root"
 )
+
+// DefaultWorktreesRoot is the worktrees.root used when none is configured.
+const DefaultWorktreesRoot = ".worktrees"
 
 // Tracker kinds.
 const (
@@ -46,7 +53,38 @@ const DefaultWorkflow = "basic"
 var keys = []string{
 	KeyForgeHost, KeyForgeKind, KeyPushPrefixes,
 	KeyTrackerCommand, KeyTrackerJiraAcceptanceField, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
-	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow,
+	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow, KeyWorktreesRoot,
+}
+
+// WorktreesRoot is worktrees.root, DefaultWorktreesRoot when unset. A value
+// from a repository-supplied file (.rig/config.json) must be a relative path
+// without a '..' element, so it stays under the checkout; anything else is an
+// error naming the file. Only the global file may point elsewhere.
+func (l *Layers) WorktreesRoot() (string, error) {
+	v, ok := l.Get(KeyWorktreesRoot)
+	s, _ := v.Value.(string)
+	if !ok || s == "" {
+		return DefaultWorktreesRoot, nil
+	}
+	if v.Scope == ScopeLocal || v.Scope == ScopeRigJSON {
+		if !insideCheckout(s) {
+			return "", fmt.Errorf("%s: %s %q must be a relative path without '..': a project file may not point outside the checkout; set it in %s", l.localPath, KeyWorktreesRoot, s, l.globalPath)
+		}
+	}
+	return s, nil
+}
+
+// insideCheckout says whether p is relative and never leaves its base.
+func insideCheckout(p string) bool {
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return false
+	}
+	for _, e := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if e == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // Keys returns the allow-list, sorted.
@@ -193,6 +231,10 @@ func checkValue(key, v string) error {
 	case KeyWorkflow:
 		if !presetRE.MatchString(v) && !filepath.IsAbs(v) {
 			return bad("a preset name or an absolute path")
+		}
+	case KeyWorktreesRoot:
+		if v == "" || strings.ContainsRune(v, 0) {
+			return bad("a non-empty directory path")
 		}
 	default:
 		return checkKey(key)

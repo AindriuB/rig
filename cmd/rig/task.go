@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit|parent|link|unlink ..."
+	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit|parent|link|unlink|start|finish ..."
 
 	// maxBodyFile is the most `rig task new --body-file` reads.
 	maxBodyFile = 64 << 10
@@ -67,6 +67,10 @@ func (a *app) task(ctx context.Context, args []string) int {
 		return a.taskLink(ctx, rest)
 	case "unlink":
 		return a.taskUnlink(ctx, rest)
+	case "start":
+		return a.taskStart(ctx, rest)
+	case "finish":
+		return a.taskFinish(ctx, rest)
 	}
 	return a.fail("task", "unknown subcommand %q\n%s", args[0], taskUsage)
 }
