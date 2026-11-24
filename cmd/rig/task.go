@@ -61,6 +61,8 @@ func (a *app) task(ctx context.Context, args []string) int {
 		return a.taskLog(ctx, rest)
 	case "edit":
 		return a.taskEdit(ctx, rest)
+	case "parent":
+		return a.taskParent(ctx, rest)
 	}
 	return a.fail("task", "unknown subcommand %q\n%s", args[0], taskUsage)
 }

@@ -90,3 +90,65 @@ func TestTaskNewFromBadState(t *testing.T) {
 		t.Fatalf("--title with --from: exit %d", code)
 	}
 }
+
+// parentOf is the stored parent id of a task.
+func (e *trkEnv) parentOf(ref string) string {
+	e.t.Helper()
+	task, err := e.st().Task(ctx, ref)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return task.Parent
+}
+
+// AC2: task parent sets and clears; a cycle and a missing parent are exit 1
+// and write nothing.
+func TestTaskParent(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	a, b, c := e.mkTask("a"), e.mkTask("b"), e.mkTask("c")
+
+	var v workflow.TaskView
+	if code := e.json(&v, "task", "parent", b.Short, a.Short); code != 0 || v.Parent != a.ID || v.ID != b.ID {
+		t.Fatalf("set: exit %d %+v (%s)", code, v, e.err.String())
+	}
+	if e.parentOf(b.ID) != a.ID {
+		t.Fatal("parent not stored")
+	}
+	if code := e.run("task", "parent", c.Short, b.Slug); code != 0 || e.parentOf(c.ID) != b.ID {
+		t.Fatalf("slug ref: exit %d (%s)", code, e.err.String())
+	}
+
+	// A cycle, the task itself and a missing parent are refused, nothing written.
+	before := e.eventCount(a.ID)
+	for _, args := range [][]string{
+		{"task", "parent", a.Short, c.Short}, // a -> c -> b -> a
+		{"task", "parent", a.Short, a.Short},
+		{"task", "parent", a.Short, "nosuchtask"},
+	} {
+		if code := e.run(args...); code != 1 {
+			t.Fatalf("%v: exit %d, stderr %q", args, code, e.err.String())
+		}
+	}
+	if e.eventCount(a.ID) != before || e.parentOf(a.ID) != "" {
+		t.Fatal("a refused parent change wrote an event")
+	}
+
+	// none clears; clearing an already clear parent is not an error.
+	var cleared workflow.TaskView
+	if code := e.json(&cleared, "task", "parent", b.Short, "none"); code != 0 || cleared.Parent != "" || cleared.ID != b.ID || e.parentOf(b.ID) != "" {
+		t.Fatalf("clear: exit %d %+v", code, cleared)
+	}
+	n := e.eventCount(b.ID)
+	if code := e.run("task", "parent", b.Short, "none"); code != 0 || e.eventCount(b.ID) != n {
+		t.Fatalf("clear again: exit %d", code)
+	}
+	// A missing task is exit 2 like every other task command.
+	if code := e.run("task", "parent", "nosuchtask", a.Short); code != 2 {
+		t.Fatalf("missing task: exit %d", code)
+	}
+	if code := e.run("task", "parent", a.Short); code != 2 {
+		t.Fatalf("usage: exit %d", code)
+	}
+}
+
+// END-OF-TESTS
