@@ -52,6 +52,11 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	if kind, ok := forge.KindForHost(host); ok {
 		return kind, nil
 	}
+	// A host that names no forge does not end the search: a less specific
+	// kind still applies.
+	if hostOK && kindOK {
+		return forge.Kind(kindV.Value.(string)), nil
+	}
 	return forge.GitHub, nil
 }
 

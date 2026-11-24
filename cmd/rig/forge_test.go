@@ -61,6 +61,7 @@ func TestForgeKindScopePrecedence(t *testing.T) {
 		{"local kind gitlab, rig.json forge github", ``, `{"forge":{"kind":"gitlab"}}`, `{"forge":"github"}`, forge.GitLab},
 		{"repos kind beats global kind", `{"forge":{"kind":"github"},"repos":{"github.com/o/r":{"forge":{"kind":"gitlab"}}}}`, ``, ``, forge.GitLab},
 		{"global kind, local host", `{"forge":{"kind":"gitlab"}}`, `{"forge":{"host":"github.com"}}`, ``, forge.GitHub},
+		{"global kind, repos host unknown to KindForHost", `{"forge":{"kind":"gitlab"},"repos":{"github.com/o/r":{"forge":{"host":"git.corp.example"}}}}`, ``, ``, forge.GitLab},
 		{"same scope: kind wins", `{"forge":{"kind":"github","host":"gitlab.com"}}`, ``, ``, forge.GitHub},
 	}
 	for _, c := range cases {
