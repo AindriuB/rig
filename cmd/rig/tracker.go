@@ -348,17 +348,21 @@ type pullOut struct {
 
 func (a *app) trackerPull(ctx context.Context, args []string) int {
 	const cmd = "tracker pull"
-	const use = "usage: rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]"
+	const use = "usage: rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--actor <name>] [--json] [--repo <dir>]"
 	args, depth, err := takeChildren(args)
 	if err != nil {
 		return a.fail(cmd, "%v", err)
 	}
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	query, label, limit, state, repo := fs.str("--query"), fs.str("--label"), fs.str("--limit"), fs.str("--state"), fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) > 1 {
 		return a.fail(cmd, "%s", use)
+	}
+	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
 	}
 	sources := len(pos)
 	for _, s := range []string{*query, *label} {
@@ -710,13 +714,17 @@ func (a *app) refreshOne(ctx context.Context, w *work, tr tracker.Tracker, spec 
 
 func (a *app) trackerRefresh(ctx context.Context, args []string) int {
 	const cmd = "tracker refresh"
-	const use = "usage: rig tracker refresh [<task> | --all] [--dry-run] [--json] [--repo <dir>]"
+	const use = "usage: rig tracker refresh [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]"
 	fs := newFlags()
+	actorOK := a.actorFlags(fs)
 	repo := fs.str("--repo")
 	all, dry, asJSON := fs.boolean("--all"), fs.boolean("--dry-run"), fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) > 1 || (len(pos) == 1) == *all {
 		return a.fail(cmd, "give exactly one of <task> and --all\n%s", use)
+	}
+	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
 	}
 	w, err := a.openWork(ctx, *repo, true)
 	if err != nil {

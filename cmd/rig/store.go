@@ -20,9 +20,12 @@ func (a *app) openStore(ctx context.Context, dir string) (store.Store, error) {
 	return gitref.Open(repo, store.Options{Now: a.now, Actor: a.actor(ctx, dir)})
 }
 
-// actor is who events record: $RIG_ACTOR, else git's user.name for the
+// actor is who events record: --actor or --role, else $RIG_ACTOR, else git's user.name for the
 // repository at dir, else "unknown".
 func (a *app) actor(ctx context.Context, dir string) string {
+	if a.actorFlag != "" {
+		return a.actorFlag
+	}
 	if v := strings.TrimSpace(a.getenv("RIG_ACTOR")); v != "" {
 		return v
 	}
