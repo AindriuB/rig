@@ -27,10 +27,11 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	if err != nil {
 		return "", err
 	}
+	// Both keys resolve in the order rig config get reports. A kind from a
+	// less specific scope than the host never overrides that host (a global
+	// kind does not override a repo's host).
 	kindV, kindOK := forgeValue(layers, config.KeyForgeKind)
 	hostV, hostOK := forgeValue(layers, config.KeyForgeHost)
-	// A kind from a less specific scope never overrides a host from a more
-	// specific one (a global kind does not override a repo's host).
 	if kindOK && (!hostOK || forgeRank(kindV.Scope) <= forgeRank(hostV.Scope)) {
 		return forge.Kind(kindV.Value.(string)), nil
 	}
@@ -54,31 +55,29 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	return forge.GitHub, nil
 }
 
-// forgeScopes lists the scopes a forge value can come from, most specific
-// first. .claude/rig.json is the most specific, as it was before the layered
-// config existed.
-var forgeScopes = []string{config.ScopeRigJSON, config.ScopeLocal, config.ScopeRepo, config.ScopeGlobal}
-
+// forgeRank is scope's place in the lookup order of forge.kind and forge.host
+// (the same order), most specific first.
 func forgeRank(scope string) int {
-	for i, s := range forgeScopes {
+	order := config.Order(config.KeyForgeKind)
+	for i, s := range order {
 		if s == scope {
 			return i
 		}
 	}
-	return len(forgeScopes)
+	return len(order)
 }
 
-// forgeValue returns the most specific non-empty string value of key, by
-// forgeScopes order.
+// forgeValue returns key as rig config get reports it: the first scope in
+// lookup order that sets it. An empty string counts as unset.
 func forgeValue(l *config.Layers, key string) (config.Value, bool) {
-	for _, scope := range forgeScopes {
-		if v, ok := l.GetIn(scope, key); ok {
-			if s, _ := v.Value.(string); s != "" {
-				return v, true
-			}
-		}
+	v, ok := l.Get(key)
+	if !ok {
+		return config.Value{}, false
 	}
-	return config.Value{}, false
+	if s, _ := v.Value.(string); s == "" {
+		return config.Value{}, false
+	}
+	return v, true
 }
 
 // openLayersAt opens the layered config for the repository whose working tree

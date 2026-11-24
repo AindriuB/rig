@@ -162,6 +162,10 @@ func order(key string) []string {
 	return []string{ScopeLocal, ScopeRepo, ScopeRigJSON, ScopeGlobal, ScopeDefault}
 }
 
+// Order returns the scopes key is looked up in, highest precedence first: the
+// order Get uses.
+func Order(key string) []string { return order(key) }
+
 func (l *Layers) layer(scope string) map[string]any {
 	switch scope {
 	case ScopeLocal:

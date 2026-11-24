@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/forge"
 )
 
@@ -57,7 +58,7 @@ func TestForgeKindScopePrecedence(t *testing.T) {
 	}{
 		{"global kind github, rig.json host gitlab", `{"forge":{"kind":"github"}}`, ``, `{"host":"gitlab.example.com"}`, forge.GitLab},
 		{"global kind gitlab, rig.json forge github", `{"forge":{"kind":"gitlab"}}`, ``, `{"forge":"github"}`, forge.GitHub},
-		{"local kind gitlab, rig.json forge github", ``, `{"forge":{"kind":"gitlab"}}`, `{"forge":"github"}`, forge.GitHub},
+		{"local kind gitlab, rig.json forge github", ``, `{"forge":{"kind":"gitlab"}}`, `{"forge":"github"}`, forge.GitLab},
 		{"repos kind beats global kind", `{"forge":{"kind":"github"},"repos":{"github.com/o/r":{"forge":{"kind":"gitlab"}}}}`, ``, ``, forge.GitLab},
 		{"global kind, local host", `{"forge":{"kind":"gitlab"}}`, `{"forge":{"host":"github.com"}}`, ``, forge.GitHub},
 		{"same scope: kind wins", `{"forge":{"kind":"github","host":"gitlab.com"}}`, ``, ``, forge.GitHub},
@@ -82,6 +83,16 @@ func TestForgeKindScopePrecedence(t *testing.T) {
 			}
 			if k, err := forgeKind(ctx, repo, home); err != nil || k != c.want {
 				t.Fatalf("got %q, %v; want %q", k, err, c.want)
+			}
+			// forge.kind is reported from the same scope by rig config get.
+			layers, err := openLayersAt(ctx, repo, home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v, ok := layers.Get(config.KeyForgeKind); ok && v.Value.(string) != "" {
+				if _, hostSet := layers.Get(config.KeyForgeHost); !hostSet && forge.Kind(v.Value.(string)) != c.want {
+					t.Fatalf("rig config get forge.kind = %q (%s), forgeKind = %q", v.Value, v.Scope, c.want)
+				}
 			}
 		})
 	}
