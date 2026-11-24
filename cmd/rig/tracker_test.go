@@ -127,6 +127,19 @@ func TestTrackerExecNeedsTrustedCommand(t *testing.T) {
 	}
 }
 
+// 38-1 (round 2): status for an exec tracker with no trusted command says
+// trusted:false, matching its login error.
+func TestTrackerStatusUntrustedExec(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "exec"})
+	var out struct {
+		Trusted bool
+		Login   struct{ OK bool }
+	}
+	if code := e.json(&out, "tracker", "status"); code != 0 || out.Trusted || out.Login.OK {
+		t.Fatalf("exit %d, %+v\n%s", code, out, e.out.String())
+	}
+}
+
 func TestTrackerJiraLogin(t *testing.T) {
 	cfg := map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG", "jira": map[string]any{"api": "v2", "epicField": "customfield_10014", "acceptanceField": "customfield_10020"}}
 	e := newTrkEnv(t, cfg)

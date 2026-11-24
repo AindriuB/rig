@@ -154,6 +154,7 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		}
 		argv, _ := v.Value.([]string)
 		if len(argv) == 0 || v.Scope == config.ScopeLocal || v.Scope == config.ScopeRigJSON {
+			spec.Trusted = false
 			return spec, fmt.Errorf("%w: tracker.exec needs tracker.command set in the global config", errUntrusted)
 		}
 		spec.Exec = argv
