@@ -91,6 +91,13 @@ func TestSignWritesRawSignature(t *testing.T) {
 	if err != nil || len(sig) != 64 {
 		t.Fatalf("sig len %d err %v", len(sig), err)
 	}
+	if got := hex.EncodeToString(sig); got != vectorSig {
+		t.Fatalf("signature %s, want %s", got, vectorSig)
+	}
+	pub := ed25519.NewKeyFromSeed(vectorSeed()).Public().(ed25519.PublicKey)
+	if !ed25519.Verify(pub, []byte(vectorMsg), sig) {
+		t.Fatal("written signature does not verify over the file bytes")
+	}
 }
 
 func TestSignBadKeyExits1WithoutEcho(t *testing.T) {
