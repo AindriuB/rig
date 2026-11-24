@@ -14,21 +14,76 @@ func TestForgeKindReadsTheLayers(t *testing.T) {
 	gitc(t, repo, "remote", "set-url", "origin", "git@github.com:o/r.git")
 	dir := t.TempDir()
 	home := func() (string, error) { return dir, nil }
-	os.MkdirAll(filepath.Join(dir, ".rig"), 0o755)
+	mustMkdir(t, filepath.Join(dir, ".rig"))
 	global := filepath.Join(dir, ".rig", "config.json")
 
-	os.WriteFile(global, []byte(`{"forge":{"kind":"gitlab"}}`), 0o644)
+	mustWrite(t, global, `{"forge":{"kind":"gitlab"}}`)
 	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("global forge.kind: %q, %v", k, err)
 	}
-	os.WriteFile(global, []byte(`{"forge":{"host":"gitlab.com"}}`), 0o644)
+	mustWrite(t, global, `{"forge":{"host":"gitlab.com"}}`)
 	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitLab {
 		t.Fatalf("global forge.host: %q, %v", k, err)
 	}
-	os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
-	os.WriteFile(filepath.Join(repo, ".claude", "rig.json"), []byte(`{"forge":"github"}`), 0o644)
+	mustMkdir(t, filepath.Join(repo, ".claude"))
+	mustWrite(t, filepath.Join(repo, ".claude", "rig.json"), `{"forge":"github"}`)
 	if k, err := forgeKind(ctx, repo, home); err != nil || k != forge.GitHub {
 		t.Fatalf("rig.json should win: %q, %v", k, err)
+	}
+}
+
+func mustMkdir(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWrite(t *testing.T, p, content string) {
+	t.Helper()
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestForgeKindScopePrecedence: a kind from a less specific scope never
+// overrides a host from a more specific one; rig.json is the most specific.
+func TestForgeKindScopePrecedence(t *testing.T) {
+	const origin = "git@github.com:o/r.git"
+	cases := []struct {
+		name                string
+		global, local, rigj string
+		want                forge.Kind
+	}{
+		{"global kind github, rig.json host gitlab", `{"forge":{"kind":"github"}}`, ``, `{"host":"gitlab.example.com"}`, forge.GitLab},
+		{"global kind gitlab, rig.json forge github", `{"forge":{"kind":"gitlab"}}`, ``, `{"forge":"github"}`, forge.GitHub},
+		{"local kind gitlab, rig.json forge github", ``, `{"forge":{"kind":"gitlab"}}`, `{"forge":"github"}`, forge.GitHub},
+		{"repos kind beats global kind", `{"forge":{"kind":"github"},"repos":{"github.com/o/r":{"forge":{"kind":"gitlab"}}}}`, ``, ``, forge.GitLab},
+		{"global kind, local host", `{"forge":{"kind":"gitlab"}}`, `{"forge":{"host":"github.com"}}`, ``, forge.GitHub},
+		{"same scope: kind wins", `{"forge":{"kind":"github","host":"gitlab.com"}}`, ``, ``, forge.GitHub},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := newRepo(t)
+			gitc(t, repo, "remote", "set-url", "origin", origin)
+			dir := t.TempDir()
+			home := func() (string, error) { return dir, nil }
+			mustMkdir(t, filepath.Join(dir, ".rig"))
+			if c.global != "" {
+				mustWrite(t, filepath.Join(dir, ".rig", "config.json"), c.global)
+			}
+			if c.local != "" {
+				mustMkdir(t, filepath.Join(repo, ".rig"))
+				mustWrite(t, filepath.Join(repo, ".rig", "config.json"), c.local)
+			}
+			if c.rigj != "" {
+				mustMkdir(t, filepath.Join(repo, ".claude"))
+				mustWrite(t, filepath.Join(repo, ".claude", "rig.json"), c.rigj)
+			}
+			if k, err := forgeKind(ctx, repo, home); err != nil || k != c.want {
+				t.Fatalf("got %q, %v; want %q", k, err, c.want)
+			}
+		})
 	}
 }
 

@@ -27,14 +27,16 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	if err != nil {
 		return "", err
 	}
-	if v, ok := layers.Get(config.KeyForgeKind); ok {
-		if s, _ := v.Value.(string); s != "" {
-			return forge.Kind(s), nil
-		}
+	kindV, kindOK := forgeValue(layers, config.KeyForgeKind)
+	hostV, hostOK := forgeValue(layers, config.KeyForgeHost)
+	// A kind from a less specific scope never overrides a host from a more
+	// specific one (a global kind does not override a repo's host).
+	if kindOK && (!hostOK || forgeRank(kindV.Scope) <= forgeRank(hostV.Scope)) {
+		return forge.Kind(kindV.Value.(string)), nil
 	}
 	host := ""
-	if v, ok := layers.Get(config.KeyForgeHost); ok {
-		host, _ = v.Value.(string)
+	if hostOK {
+		host = hostV.Value.(string)
 	}
 	if host == "" {
 		url, err := repo.RemoteURL(ctx, "origin")
@@ -50,6 +52,33 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 		return kind, nil
 	}
 	return forge.GitHub, nil
+}
+
+// forgeScopes lists the scopes a forge value can come from, most specific
+// first. .claude/rig.json is the most specific, as it was before the layered
+// config existed.
+var forgeScopes = []string{config.ScopeRigJSON, config.ScopeLocal, config.ScopeRepo, config.ScopeGlobal}
+
+func forgeRank(scope string) int {
+	for i, s := range forgeScopes {
+		if s == scope {
+			return i
+		}
+	}
+	return len(forgeScopes)
+}
+
+// forgeValue returns the most specific non-empty string value of key, by
+// forgeScopes order.
+func forgeValue(l *config.Layers, key string) (config.Value, bool) {
+	for _, scope := range forgeScopes {
+		if v, ok := l.GetIn(scope, key); ok {
+			if s, _ := v.Value.(string); s != "" {
+				return v, true
+			}
+		}
+	}
+	return config.Value{}, false
 }
 
 // openLayersAt opens the layered config for the repository whose working tree

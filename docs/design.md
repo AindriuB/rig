@@ -49,7 +49,10 @@ has to recognise one in arbitrary shell.
 - **Forge adapters only.** `gh` now, `glab` next. Git is called directly; there
   is no git abstraction to swap.
 - **The forge is auto-detected** from the `origin` remote's host. The layered
-  config (`rig config`) overrides it, and `.claude/rig.json` is still honoured.
+  config (`rig config`) overrides it. `.claude/rig.json` wins first, then the
+  layered config by scope (local, repo section, global), then origin detection.
+  A kind from a less specific scope never overrides a host from a more
+  specific one.
 - **rig holds a token only for a service with no CLI of its own.** GitHub and
   GitLab stay with `gh` and `glab`: the adapters shell out to them and use
   whatever login the user already has, and `rig login github|gitlab` only
