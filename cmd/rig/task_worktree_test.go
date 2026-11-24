@@ -656,3 +656,65 @@ func TestRollBackMessageStatesOnlyWhatItRemoved(t *testing.T) {
 		t.Fatalf("nothing was removed, but: %s", got)
 	}
 }
+
+// finishDirtyEnv starts a task with one commit and returns what finish needs.
+func finishDirtyEnv(t *testing.T) (repo, wt, sha string) {
+	t.Helper()
+	isolate(t)
+	repo, _ = newRepo(t)
+	wt = started(t, repo, "08-bar")
+	sha = commitIn(t, wt, "a.txt", "a\n")
+	return repo, wt, sha
+}
+
+// A tracked edit in the main checkout refuses finish before any checkout or merge.
+func TestTaskFinishRefusesATrackedEditInTheMainCheckout(t *testing.T) {
+	repo, wt, sha := finishDirtyEnv(t)
+	files := strings.Fields(gitc(t, repo, "ls-files"))
+	if len(files) == 0 {
+		t.Fatal("no tracked file")
+	}
+	edited := filepath.Join(repo, files[0])
+	if err := os.WriteFile(edited, []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head := gitc(t, repo, "rev-parse", "HEAD")
+	r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha)
+	if r.code != 1 || !strings.Contains(r.errOut, "uncommitted") {
+		t.Fatalf("finish: %+v", r)
+	}
+	if got := gitc(t, repo, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD moved: %s -> %s", head, got)
+	}
+	if b, err := os.ReadFile(edited); err != nil || string(b) != "edited\n" {
+		t.Fatalf("edit lost: %q %v", b, err)
+	}
+	if !exists(wt) || gitc(t, repo, "branch", "--list", "task/08-bar") == "" {
+		t.Fatal("worktree or branch removed")
+	}
+}
+
+// A merge in progress in the main checkout refuses finish; an untracked file does not.
+func TestTaskFinishRefusesAnOperationInProgress(t *testing.T) {
+	repo, wt, sha := finishDirtyEnv(t)
+	mh := filepath.Join(repo, ".git", "MERGE_HEAD")
+	if err := os.WriteFile(mh, []byte(gitc(t, repo, "rev-parse", "HEAD")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha)
+	if r.code != 1 || !strings.Contains(r.errOut, "in progress") {
+		t.Fatalf("finish: %+v", r)
+	}
+	if !exists(mh) || !exists(wt) {
+		t.Fatal("state changed")
+	}
+	if err := os.Remove(mh); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("u\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha); r.code != 0 {
+		t.Fatalf("untracked file blocked finish: %+v", r)
+	}
+}

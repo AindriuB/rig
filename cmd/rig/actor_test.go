@@ -150,10 +150,15 @@ func TestActorFlagValues(t *testing.T) {
 		{"--actor", ""}, {"--role", ""}, {"--actor", "   "}, {"--actor=\t"},
 		{"--actor", "a\x00b"}, {"--role", "a\nb"}, {"--actor", "a\x7fb"}, {"--actor", "ok", "--role", ""},
 		{"--actor"},
+		{"--actor", "a‮b"}, {"--role", "a​b"}, {"--actor", "a b"}, {"--actor", "a b"},
 	} {
 		if code, evs := run(extra...); code != 2 || len(evs) != 0 {
 			t.Fatalf("%q: exit %d, %d events, stderr %q", extra, code, len(evs), e.err.String())
 		}
+	}
+	// An ordinary non-ASCII name is still accepted.
+	if code, evs := run("--actor", "Seán"); code != 0 || len(evs) != 1 || evs[0].Actor != "Seán" {
+		t.Fatalf("non-ASCII: exit %d %+v", code, evs)
 	}
 }
 

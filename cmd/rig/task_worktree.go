@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/git"
+	"github.com/AindriuB/rig/internal/proc"
 )
 
 const (
@@ -341,6 +343,11 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 		return a.fail(cmd, "%v", err)
 	}
 
+	if why, err := mainCheckoutBusy(ctx, repo); err != nil {
+		return a.fail(cmd, "%v", err)
+	} else if why != "" {
+		return a.refuse(cmd, "%s: nothing changed. Clean it up, then run finish again.", why)
+	}
 	if err := repo.Checkout(ctx, base); err != nil {
 		return a.refuse(cmd, "cannot switch the main checkout to %s: %v", base, err)
 	}
@@ -370,6 +377,42 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 		return a.fail(cmd, "merged and removed the worktree, but the branch was not deleted: %v", err)
 	}
 	return a.printFinish(out, *asJSON, "")
+}
+
+// mainCheckoutBusy says why finish must not touch the main checkout: an
+// operation in progress, or uncommitted changes to tracked files. Untracked
+// files do not count. It returns "" when the checkout is free.
+func mainCheckoutBusy(ctx context.Context, repo git.Repo) (string, error) {
+	gitOut := func(args ...string) (string, error) {
+		res, err := proc.Run(ctx, proc.Options{Dir: repo.Dir, Env: []string{"LC_ALL=C"}, Timeout: 30 * time.Second}, "git", args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w", args[0], err)
+		}
+		return strings.TrimRight(string(res.Stdout), "\r\n"), nil
+	}
+	for _, p := range []struct{ path, name string }{
+		{"MERGE_HEAD", "a merge"}, {"CHERRY_PICK_HEAD", "a cherry-pick"}, {"REVERT_HEAD", "a revert"},
+		{"rebase-merge", "a rebase"}, {"rebase-apply", "a rebase"},
+	} {
+		path, err := gitOut("rev-parse", "--git-path", p.path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repo.Dir, filepath.FromSlash(path))
+		}
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Sprintf("%s has %s in progress", filepath.Base(repo.Dir), p.name), nil
+		}
+	}
+	out, err := gitOut("status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return "", err
+	}
+	if out != "" {
+		return fmt.Sprintf("%s has uncommitted changes to tracked files", filepath.Base(repo.Dir)), nil
+	}
+	return "", nil
 }
 
 // printFinish prints the outcome: JSON, or the MERGED line followed by KEPT
