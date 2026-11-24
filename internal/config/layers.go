@@ -31,7 +31,8 @@ const (
 
 // Options say where the layers live.
 type Options struct {
-	// Home returns the user's home directory. Nil: os.UserHomeDir.
+	// Home returns the user's home directory. Nil: os.UserHomeDir. "" with
+	// no error means there is no global file: that layer is empty.
 	Home func() (string, error)
 	// Root is the main checkout's root; "" outside a repository.
 	Root string
@@ -82,7 +83,7 @@ func Open(o Options) (*Layers, error) {
 	}
 	l := &Layers{
 		root:       o.Root,
-		globalPath: filepath.Join(home, Dir, ConfigFile),
+		globalPath: "",
 		local:      map[string]any{},
 		repo:       map[string]any{},
 		rigJSON:    map[string]any{},
@@ -92,22 +93,25 @@ func Open(o Options) (*Layers, error) {
 		l.repoKey, l.remoteErr = RepoKey(o.Remote)
 	}
 
-	raw, err := readRaw(l.globalPath)
-	if err != nil {
-		return nil, err
-	}
-	repos, err := reposOf(l.globalPath, raw)
-	if err != nil {
-		return nil, err
-	}
-	delete(raw, "repos")
-	if l.global, _, err = flattenFile(l.globalPath, raw, nil); err != nil {
-		return nil, err
-	}
-	if section, ok := repos[l.repoKey]; ok && l.repoKey != "" {
-		where := fmt.Sprintf("%s repos[%q]", l.globalPath, l.repoKey)
-		if l.repo, _, err = flattenFile(where, section, nil); err != nil {
+	if home != "" {
+		l.globalPath = filepath.Join(home, Dir, ConfigFile)
+		raw, err := readRaw(l.globalPath)
+		if err != nil {
 			return nil, err
+		}
+		repos, err := reposOf(l.globalPath, raw)
+		if err != nil {
+			return nil, err
+		}
+		delete(raw, "repos")
+		if l.global, _, err = flattenFile(l.globalPath, raw, nil); err != nil {
+			return nil, err
+		}
+		if section, ok := repos[l.repoKey]; ok && l.repoKey != "" {
+			where := fmt.Sprintf("%s repos[%q]", l.globalPath, l.repoKey)
+			if l.repo, _, err = flattenFile(where, section, nil); err != nil {
+				return nil, err
+			}
 		}
 	}
 

@@ -23,9 +23,15 @@ func forgeKind(ctx context.Context, dir string, home func() (string, error)) (fo
 	if err != nil {
 		return forge.GitHub, nil
 	}
+	// With no home directory the global layer is empty: forge selection
+	// goes on with the repository's own files and origin. (rig push does not:
+	// its policy may live in the global file, so it fails closed.)
 	layers, err := openLayersAt(ctx, top, home)
 	if err != nil {
-		return "", err
+		layers, err = openLayersAt(ctx, top, func() (string, error) { return "", nil })
+		if err != nil {
+			return "", err
+		}
 	}
 	// Both keys resolve in the order rig config get reports. A kind from a
 	// less specific scope than the host never overrides that host (a global

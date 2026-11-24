@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -326,5 +327,22 @@ func TestPushPrefixesNeverFromTheLocalFileAndDefaultStays(t *testing.T) {
 		if r := rig(t, repo, nil, env, "push", b); r.code != 0 {
 			t.Fatalf("%s: %+v", b, r)
 		}
+	}
+}
+
+// With no home directory rig push fails closed: its policy may live in the
+// global file, which cannot be read.
+func TestPushWithoutHomeFailsClosed(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	repo, remote := newRepo(t)
+	before := gitc(t, remote, "for-each-ref")
+	var out, errOut bytes.Buffer
+	a := &app{stdout: &out, stderr: &errOut, cwd: repo, getenv: func(string) string { return "" }}
+	if code := a.run(ctx, []string{"push", "task/07-foo"}); code != 2 {
+		t.Fatalf("exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	if gitc(t, remote, "for-each-ref") != before {
+		t.Fatal("a push reached the remote")
 	}
 }

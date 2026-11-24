@@ -119,3 +119,19 @@ func TestNoCommandReadsTheLegacyConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestForgeKindWithoutHome: with no home directory the global layer is
+// empty, and the repository's own files and origin still pick the forge.
+func TestForgeKindWithoutHome(t *testing.T) {
+	repo, _ := newRepo(t)
+	gitc(t, repo, "remote", "set-url", "origin", "git@gitlab.com:o/r.git")
+	noHome := func() (string, error) { return "", os.ErrNotExist }
+	if k, err := forgeKind(ctx, repo, noHome); err != nil || k != forge.GitLab {
+		t.Fatalf("got %q, %v; want gitlab", k, err)
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	if k, err := forgeKind(ctx, repo, nil); err != nil || k != forge.GitLab {
+		t.Fatalf("HOME unset: got %q, %v; want gitlab", k, err)
+	}
+}
