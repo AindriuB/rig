@@ -56,12 +56,35 @@ var keys = []string{
 	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow, KeyWorktreesRoot,
 }
 
-// WorktreesRoot is worktrees.root, DefaultWorktreesRoot when unset.
-func (l *Layers) WorktreesRoot() string {
-	if s := l.str(KeyWorktreesRoot); s != "" {
-		return s
+// WorktreesRoot is worktrees.root, DefaultWorktreesRoot when unset. A value
+// from a repository-supplied file (.rig/config.json) must be a relative path
+// without a '..' element, so it stays under the checkout; anything else is an
+// error naming the file. Only the global file may point elsewhere.
+func (l *Layers) WorktreesRoot() (string, error) {
+	v, ok := l.Get(KeyWorktreesRoot)
+	s, _ := v.Value.(string)
+	if !ok || s == "" {
+		return DefaultWorktreesRoot, nil
 	}
-	return DefaultWorktreesRoot
+	if v.Scope == ScopeLocal || v.Scope == ScopeRigJSON {
+		if !insideCheckout(s) {
+			return "", fmt.Errorf("%s: %s %q must be a relative path without '..': a project file may not point outside the checkout; set it in %s", l.localPath, KeyWorktreesRoot, s, l.globalPath)
+		}
+	}
+	return s, nil
+}
+
+// insideCheckout says whether p is relative and never leaves its base.
+func insideCheckout(p string) bool {
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return false
+	}
+	for _, e := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if e == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // Keys returns the allow-list, sorted.

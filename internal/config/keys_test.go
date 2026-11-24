@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -158,15 +159,45 @@ func TestWorktreesRootKey(t *testing.T) {
 		t.Error("key not on the sorted allow-list")
 	}
 	l := open(t, repoEnv(t))
-	if got := l.WorktreesRoot(); got != DefaultWorktreesRoot {
-		t.Errorf("default = %q", got)
+	if got, err := l.WorktreesRoot(); err != nil || got != DefaultWorktreesRoot {
+		t.Errorf("default = %q, %v", got, err)
 	}
 	for _, scope := range []string{ScopeGlobal, ScopeRepo, ScopeLocal} {
 		if err := l.Set(scope, KeyWorktreesRoot, "wt-"+scope); err != nil {
 			t.Fatalf("Set(%s): %v", scope, err)
 		}
 	}
-	if got := l.WorktreesRoot(); got != "wt-local" {
-		t.Errorf("WorktreesRoot = %q", got)
+	if got, err := l.WorktreesRoot(); err != nil || got != "wt-local" {
+		t.Errorf("WorktreesRoot = %q, %v", got, err)
+	}
+}
+
+// F3: a repository-supplied layer may only point worktrees.root inside the
+// checkout; an absolute path or a '..' element is accepted from the user's
+// global file (and its per-repo section) alone.
+func TestWorktreesRootTrust(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "x")
+	for _, v := range []string{"../../x", "a/../../x", "..", abs, "/tmp/x"} {
+		e := newEnv(t)
+		e.local(t, `{"worktrees":{"root":`+strconv.Quote(v)+`}}`)
+		_, err := open(t, e).WorktreesRoot()
+		if err == nil || !strings.Contains(err.Error(), filepath.Join(e.root, ".rig", "config.json")) {
+			t.Errorf("local %q: err = %v, want one naming the file", v, err)
+		}
+	}
+	e := newEnv(t)
+	e.local(t, `{"worktrees":{"root":"sub/wt"}}`)
+	if got, err := open(t, e).WorktreesRoot(); err != nil || got != "sub/wt" {
+		t.Errorf("local relative = %q, %v", got, err)
+	}
+	e = newEnv(t)
+	e.global(t, `{"worktrees":{"root":`+strconv.Quote(abs)+`}}`)
+	if got, err := open(t, e).WorktreesRoot(); err != nil || got != abs {
+		t.Errorf("global absolute = %q, %v", got, err)
+	}
+	e = newEnv(t)
+	e.global(t, `{"repos":{"github.com/acme/rig":{"worktrees":{"root":"../../x"}}}}`)
+	if got, err := open(t, e).WorktreesRoot(); err != nil || got != "../../x" {
+		t.Errorf("per-repo '..' = %q, %v", got, err)
 	}
 }

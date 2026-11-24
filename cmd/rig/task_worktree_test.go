@@ -561,3 +561,32 @@ func TestTaskStartRollsBackWhenWorktreeAddFailsAfterGitMadeIt(t *testing.T) {
 		t.Fatalf("worktrees: %s", got)
 	}
 }
+
+// F3: a project file cannot send worktrees outside the checkout.
+func TestTaskStartRefusesAProjectRootOutsideTheCheckout(t *testing.T) {
+	home := isolate(t)
+	repo, _ := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	outside := filepath.Join(t.TempDir(), "x")
+	for _, v := range []string{"../../x", outside} {
+		if err := os.MkdirAll(filepath.Join(repo, ".rig"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, ".rig", "config.json"), []byte(`{"worktrees":{"root":`+jsonString(v)+`}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+		if r.code != 2 || r.out != "" || !strings.Contains(r.errOut, filepath.Join(repo, ".rig", "config.json")) {
+			t.Fatalf("root %q: %+v", v, r)
+		}
+		if gitc(t, repo, "branch", "--list", "task/08-bar") != "" || exists(outside) || exists(filepath.Join(repo, "..", "..", "x")) {
+			t.Fatalf("root %q: something was created", v)
+		}
+	}
+	// The same absolute path from the user's own global file is honoured.
+	os.Remove(filepath.Join(repo, ".rig", "config.json"))
+	writeGlobalConfig(t, home, `{"worktrees":{"root":`+jsonString(outside)+`}}`)
+	if r := rig(t, repo, nil, nil, "task", "start", "08-bar"); r.code != 0 {
+		t.Fatalf("global absolute root: %+v", r)
+	}
+}

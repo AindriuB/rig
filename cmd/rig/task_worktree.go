@@ -95,7 +95,10 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail(cmd, "read config: %v", err)
 	}
-	root := layers.WorktreesRoot()
+	root, err := layers.WorktreesRoot()
+	if err != nil {
+		return a.fail(cmd, "%v", err)
+	}
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(main, root)
 	}
