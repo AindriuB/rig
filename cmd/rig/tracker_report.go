@@ -240,7 +240,7 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 		return a.storeFail(cmd, err)
 	}
 	last := lastReports(log, ext.Kind, ext.Key)
-	if wantStatus && last.status != nil && last.status.To == status {
+	if wantStatus && last.status != nil && strings.EqualFold(last.status.To, status) {
 		wantStatus = false
 	}
 	if wantComment && last.comment != nil && last.comment.Kind == kind && last.comment.Digest == digest(body) {

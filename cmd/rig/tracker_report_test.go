@@ -51,11 +51,16 @@ type reportRec struct {
 	tracker.Tracker
 	log        []string
 	commentErr error
+	shoutTo    bool // report the reached status in upper case
 }
 
 func (r *reportRec) SetStatus(ctx context.Context, key, status string) (tracker.StatusResult, error) {
 	r.log = append(r.log, "status "+status)
-	return r.Tracker.SetStatus(ctx, key, status)
+	res, err := r.Tracker.SetStatus(ctx, key, status)
+	if r.shoutTo {
+		res.To = strings.ToUpper(res.To)
+	}
+	return res, err
 }
 
 func (r *reportRec) Comment(ctx context.Context, key string, c tracker.Comment) (tracker.CommentResult, error) {
@@ -415,5 +420,19 @@ func TestReportRelinkResetsSkipHistory(t *testing.T) {
 	e.mustRun("tracker", "report", e.task)
 	if !slices.Equal(e.rec.log, []string{"status In Progress", "comment"}) {
 		t.Fatalf("after relink sent %v", e.rec.log)
+	}
+}
+
+// F2: the status skip ignores case, against the recorded status and the
+// requested one.
+func TestReportStatusSkipIgnoresCase(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.rec.shoutTo = true
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task, "--status")
+	e.rec.log = nil
+	e.mustRun("tracker", "report", e.task, "--status")
+	if len(e.rec.log) != 0 || len(e.reports()) != 1 {
+		t.Fatalf("repeat sent %v, events %d", e.rec.log, len(e.reports()))
 	}
 }
