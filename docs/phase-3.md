@@ -1,10 +1,14 @@
 # Phase 3 plan: views and trackers
 
-Status: planned, not built. It is cut as two releases: **0.4.0** (formats,
-parent and external links, branch stamping, intake and refresh, a store-based
-`rig status`) and **0.5.0** (`rig tracker report`). This document is the plan
-the tasks in "Tasks" are built from. Where it names code by `path:line`, the
-line is where the code was when the plan was written, at `42c7ee1`.
+Status: **0.4.0 is built** (formats, parent and external links, branch
+stamping, intake and refresh, a store-based `rig status`, and `rig task start`
+and `finish`). **0.5.0** (`rig tracker report`) is still planned. This
+document was the plan the tasks in "Tasks" were built from, and has been
+corrected to say what was built: where the plan guessed and the code settled it
+differently, the text now follows the code. Where it names code by `path:line`,
+the line is where the code was when the plan was written, at `42c7ee1`, and may
+have moved. Sections about `rig tracker report` are the plan for 0.5.0, not
+built.
 
 Phase 3 lets rig take its planning from an issue tracker and show its tasks
 as Markdown. [phase-2.md](phase-2.md) gave rig a store and generic actions;
@@ -49,7 +53,9 @@ Goals that follow:
 Limits:
 
 - A task links to **one** issue. An issue is linked from **one** task per
-  (kind, host, key).
+  (kind, host, project, key). The project counts only for GitHub and GitLab,
+  where it is part of the repository; for Jira and `exec` it is empty. Host and
+  key match in any case.
 - Tracker text is untrusted input and is treated as such (see "Security and
   trust").
 - Tracker adapters are read-mostly. Phase 3 writes to a tracker only through
@@ -84,7 +90,7 @@ All changes are additions. The event format version `v` stays 1.
 | Kind | Data | Meaning |
 |---|---|---|
 | `parent` | `{task}` | The task's parent: a task ULID, or `""` to clear. The last one wins. |
-| `external` | `{kind, host, project, key, url, type, owned[], parentKey}` | Links the task to an issue. `owned` lists the rig fields the tracker owns. `type` is the tracker's own level label. `parentKey` is the issue's parent when that parent has no task yet. |
+| `external` | `{kind, host, project, key, url, type, owned[], parentKey}` | Links the task to an issue. `owned` lists the rig fields the tracker owns. `type` is the tracker's own level label. `parentKey` is the issue's parent when that parent has no task yet. The **clear form** has an empty `kind` and an empty `key` and removes the link (`rig task unlink` writes it). One of the two empty and the other not is not a valid event and is skipped. |
 | `tracker-sync` | `{at, rev, values{field: value}}` | A snapshot of the owned fields as the tracker last gave them, and the tracker's revision. It is what drift is measured against. |
 | `tracker-report` | `{kind, key, status?, comment?, at}` | What `rig tracker report` sent. It makes report idempotent (0.5.0). |
 
@@ -97,8 +103,13 @@ reader folds them the same whichever event carries them.
 `Task` gains `Parent` (a ULID, `omitempty`) and `External`:
 
 ```
-external: {kind, host, project, key, url, type, owned[], syncedAt, rev}
+external: {kind, host, project, key, url, type, owned[], parentKey, syncedAt, rev, snapshot}
 ```
+
+`parentKey` and `snapshot` (the owned values as the tracker last gave them,
+which is what drift is measured against) are on the stored link only. The
+`--json` task shows the link without them: `{kind, host, project, key, url,
+type, owned, syncedAt, rev, drift}`.
 
 The `--json` task gains `parent`, `external` and `external.drift`. Drift is
 computed offline: the names of owned fields whose current local value differs
@@ -114,18 +125,30 @@ levels.
 ### Parent rules
 
 - The parent must exist. A cycle is refused (exit 1, nothing written).
-- A local parent change is refused while the task is linked and `parent` is in
-  its `owned` set: the tracker decides, and the next refresh moves it.
+- `parent` is not a mappable attribute, so it is never in a task's `owned` set
+  and `rig task parent` is never refused for a linked task. This replaces the
+  plan's rule that the tracker decides a linked task's parent. A refresh sets a
+  parent only for a task that has none, from the link's `parentKey`, once that
+  parent has a task; it never moves or clears a parent you set.
 
 ### Links and uniqueness
 
-- `(kind, host, key)` is unique across tasks. `CreateTask` checks it under the
-  store lock (`internal/store/gitref/gitref.go:317-335`). `NewTask` gains
-  `External`, `Parent` and `BranchTemplate`. When the key is already linked,
-  `CreateTask` returns the existing task and says so.
-- Linking an *existing* task (`rig task link`) checks uniqueness before it
-  writes, but two writers on two tasks are not atomic across tasks. The
-  window is small and the doc for the command says so.
+- `(kind, host, project, key)` is unique across tasks. The project is set only
+  for GitHub and GitLab, and the comparison ignores case in host, project and
+  key. `CreateTask` checks it under the store lock
+  (`internal/store/gitref/gitref.go`). `NewTask` gains `External`, `Parent`,
+  `Snapshot` and `BranchTemplate`. When the key is already linked,
+  `CreateTask` returns the existing task with `store.ErrLinked`, and the
+  command says so on stderr and exits 0.
+- Linking an *existing* task (`rig task link`) is checked the same way, under
+  the same store lock, inside `Update`: an `external` event that would link an
+  issue another task links is refused (`ErrLinked`, exit 1) and writes nothing.
+  The command reads the issue first, so an unknown key writes no link.
+- **Residual, accepted.** The store lock is a file. A lock older than 60
+  seconds is taken to be stale and is removed, and two writers that both break
+  one stale lock can both hold it for a moment. Then two tasks can end up
+  linked to one issue; `Resolve` shows them as ambiguous. This is rare and was
+  not closed. Phase 4's `rig sync` must tolerate duplicate links.
 - `Resolve` (`internal/store/ids.go:28-55`) also matches `external.key`, after
   a full ULID, a short id and a slug. A key that matches more than one task is
   the existing ambiguous-id exit 2. To verify during implementation: a bare
@@ -211,19 +234,31 @@ type Tracker interface {
     Issue(ctx context.Context, key string) (Issue, error)
     Search(ctx context.Context, q Query) ([]IssueRef, error)
     Children(ctx context.Context, key string) ([]IssueRef, error)
-    Comment(ctx context.Context, key string, c Comment) error
+    Comment(ctx context.Context, key string, c Comment) (CommentResult, error)
     SetStatus(ctx context.Context, key, status string) (StatusResult, error)
 }
 ```
+
+`CommentResult` is `{ID, URL}`: the new comment's id and, where the tracker
+has one, its URL. `StatusResult` is `{From, To, Changed}`.
 
 `Issue` has `key`, `url`, `title`, `description`, `acceptance` (a list),
 `priority`, `assignee`, `labels`, `type`, `status`, a parent reference and
 `rev`, the tracker's own change marker. `Caps` is `{Parent, Children, Types,
 Search, Comment, SetStatus, Levels}`.
 
+`Search(ctx, Query{})`, with no text and no labels, is not "everything". An
+adapter may add a default restriction of its own: the Jira adapter searches the
+configured project, because Jira Cloud refuses an unbounded query, and with no
+project it returns an error. A caller must not assume an empty query lists
+every issue.
+
 A capability a tracker lacks returns `ErrUnsupported`. A command turns that
 into a `warnings[]` entry and carries on; it is not an error. `ErrNotFound`
-and `ErrAuth` are exit 2. `internal/tracker/fake` and
+and `ErrAuth` are exit 2. `ErrNoTransition` says a status cannot be reached
+(GitHub issues are only open or closed; Jira has no transition to that name).
+`rig tracker report` (0.5.0) turns it into exit 1 with nothing sent; it is not
+used by any 0.4.0 command. `internal/tracker/fake` and
 `internal/tracker/trackertest` give a fake and the contract test every adapter
 passes, as `memstore` and `storetest` do for the store.
 
@@ -236,7 +271,7 @@ passes, as `memstore` and `storetest` do for the store.
 | Adapter | How it talks | Notes |
 |---|---|---|
 | `jira` | `net/http`; Jira Cloud REST v3 with Basic auth, or Jira Server/Data Center REST v2 with a personal access token over Bearer | Token from the same keychain entry `rig login jira` writes; `RIG_JIRA_TOKEN` overrides. |
-| `github` | `gh` through `internal/proc`, argv only | Sub-issues and types by `gh api graphql` with `-F` variables. |
+| `github` | `gh` through `internal/proc`, argv only | Sub-issues and types by `gh api graphql` with variables: `-f` for strings, `-F` only for numbers rig has already validated (`number`, `per_page`). `-F` makes `gh` read `@file` and convert values, so a string never goes through it. |
 | `gitlab` | `glab api` through `internal/proc`, argv only | Work items and issues. |
 | `exec` | one program per operation, JSON on stdin and stdout | For any tracker rig has no adapter for. |
 
@@ -272,11 +307,14 @@ trusted `tracker.url` host, over https (plain http only for a loopback
 address), and refuses a redirect to another host itself. To verify during
 implementation: Go's `net/http` drops the `Authorization` header on a
 cross-host redirect, which would make the explicit refusal redundant; keep it
-anyway. Jira has no standard acceptance-criteria field (to verify): acceptance
-maps from a field id given under `tracker.map`, and is unmapped without one.
-Jira also changes status by transition (to verify): `SetStatus` first looks up
-the transition to the named status and returns an error naming the available
-ones when there is none.
+anyway. Jira has no standard acceptance-criteria field. The field id comes from
+the config key `tracker.jira.acceptanceField` (a field id such as
+`customfield_10100`; it follows the lookup order of the other tracker keys, so
+a project file may set it). Without it an issue has no acceptance criteria. The
+workflow's `tracker.map` says which rig field receives `acceptance`; it carries
+no Jira field id. Jira also changes status by transition: `SetStatus` first
+looks up the transition to the named status and returns `ErrNoTransition`,
+naming the available transitions, when there is none.
 
 **GitHub and GitLab.** Calls follow `internal/forge/github`'s pattern
 (`github.go:33-35`): an argument vector through `proc.Run`, never a shell, no
@@ -304,9 +342,13 @@ JSON object on stdout:
 {"v":1,"ok":false,"error":"no such issue","code":"not-found"}
 ```
 
-`code` is `not-found`, `unsupported` or `auth`; an `ok:false` with no code is
-a plain error. A non-zero exit, output that is not one JSON object, or no
-answer in 30 seconds is an error carrying the tail of stderr. The program gets
+`code` is `not-found`, `unsupported`, `auth` or `no-transition`; an `ok:false`
+with no code is a plain error, and an unknown code is a plain error that names
+it. A non-zero exit, output that is not one JSON object, or no answer in 30
+seconds is an error carrying the tail of stderr. So a program that wants to
+say "not found" must exit 0 and answer `ok:false` with the code: a non-zero
+exit loses the code. `comment` answers with a `comment` object `{id, url}` and
+`status` with a `status` object `{from, to, changed}`. The program gets
 only that operation's data, and a scrubbed environment (see "Security and
 trust"). `tracker.kind = exec` with no trusted `tracker.command` is exit 2.
 
@@ -319,11 +361,13 @@ local, repo, `.claude/rig.json`, global (`internal/config/layers.go:140-150`);
 `tracker.command` follows the workflow key's order (`layers.go:143-148`),
 reading the global file only.
 
-Two keys are new for Jira. `tracker.jira.api` is `auto`, `v2` or `v3`, default
-`auto`. `tracker.jira.epicField` is the Server/DC Epic Link field id, unset by
-default so that it is discovered by name. Both follow the lookup order of the
-other tracker keys. Neither carries a URL or a command, so a tracked
-`.rig/config.json` may set them.
+Three keys are new for Jira. `tracker.jira.api` is `auto`, `v2` or `v3`,
+default `auto`. `tracker.jira.epicField` is the Server/DC Epic Link field id,
+unset by default so that it is discovered by name.
+`tracker.jira.acceptanceField` is the id of the field that holds acceptance
+criteria, unset by default. All follow the lookup order of the other tracker
+keys. None carries a URL or a command, so a tracked `.rig/config.json` may set
+them.
 
 ## Commands
 
@@ -336,7 +380,7 @@ codes of [phase-2.md](phase-2.md): **0** done; **1** refused, nothing written;
 | Command | What it does | `--json` |
 |---|---|---|
 | `rig task new --from <kind>:<key>\|<key> [--state <s>] [--slug <s>] [--field <name>=<value>]…` | Creates a linked task from an issue. A thin wrapper over the intake function `rig tracker pull` also uses. The slug is made from the key and title, at most 40 characters, unless `--slug` is given. If the key is already linked, returns the existing task, exit 0, with a line on stderr. `--state` outside the workflow's intake states is exit 1. | the Task |
-| `rig tracker pull <key> \| --query <q> \| --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>]` | Creates tasks from one issue, a search or a label, and with `--children` the issue's descendants to `<depth>`. A parent already in the store is linked; otherwise `external.parentKey` is kept and resolved at the next refresh. Parents are never created for you. | `{items: [{task, key, existing, parent, warnings[]}], skipped}` |
+| `rig tracker pull <key> \| --query <q> \| --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>]` | Creates tasks from one issue, a search or a label, and with `--children` the issue's descendants to `<depth>`. A parent already in the store is linked; otherwise `external.parentKey` is kept and resolved at the next refresh. Parents are never created for you. | `{items: [{task, key, existing, parent, warnings[]}], skipped}`; `task` is the Task and `parent` is the parent task's short id, or `""` |
 | `rig tracker refresh [<task> \| --all] [--dry-run]` | Re-reads the issue and brings the owned fields up to date. The tracker wins. Writes `field` events and one `tracker-sync`. A deleted issue is `gone` and writes nothing. | `{tasks: [{task, key, status, changed[], replaced[], error?}]}` |
 | `rig tracker show <key>` | Reads one issue and prints it. Writes nothing. | the Issue |
 | `rig tracker status` | Tracker kind, whether the config is trusted, the adapter's capabilities and whether login works. Writes nothing. | `{kind, trusted, capabilities, login}` |
@@ -382,8 +426,11 @@ with `--include`.
 
 `rig status` gains a view built from the store (open tasks, their effective
 states and open findings) and keeps its phase-1 reads for projects that have
-not moved. Its exact output is fixed in that task; it must stay fast and make
-no network call.
+not moved. The view makes no network call and works with no
+`claude-handoff.md` and no `docs/plan`; `rig status` as a whole still lists
+open pull requests from the forge, as in phase 1. The output is in
+[design.md](design.md): `store` in `--json`, and the `STORE TASKS` and
+`STORE FINDINGS` lines in text.
 
 ## Markdown format
 
@@ -410,10 +457,16 @@ sections in this order: `Body`, `Fields`, `Counters`, `Findings`
 `Children` (`--children`). A requested section with nothing in it prints
 `none`.
 
-`Body` is printed verbatim, except that an ATX heading outside a code fence is
-demoted to level 4 or deeper, so a task body cannot add sections of its own.
-`Fields` and `Counters` are `- name: value` lines sorted by name. A finding is
-`- <short> [<severity>] <status>: <summary> (<path>)`.
+`Body` is a blockquote: line endings (CRLF and CR) become LF and every line
+starts with `> ` (an empty line is `>`). Nothing in the body can then open a
+heading, a code fence or an HTML block outside the quote, so a task body cannot
+add sections of its own. This replaces the plan's heading demotion. `Body`,
+`Fields` and `Counters` are left out when empty. `Fields` and `Counters` are
+`- name: value` lines sorted by name. A finding is
+`- <short> [<severity>] <status>: <summary> (<path>)`. A note is
+`- <time> [<kind>] <text>`. The `external` bullet is
+`<kind> <key> <url> owned: <fields> drift: <fields>`, with the parts that have
+no value left out.
 
 ### `task list`
 
@@ -426,7 +479,7 @@ task and ` ← <parent short>` for a task with a parent. No tasks prints `none`.
 
 H2 sections named as the JSON `sections[].name`: `Header`, `Body`,
 `Findings`, `Paths`, `Overlap`, `History`, `Commits`. A section the budget hid
-is left out. `Body` is verbatim as above; the others are `- ` bullets. An
+is left out. `Body` is a blockquote as above; the others are `- ` bullets. An
 omitted count is the line `_… n more_`. `Header` gains `parent:` and
 `external:` rows. In Markdown, the Markdown's own bytes are charged against the
 budget; text and JSON accounting do not change. There is no `Hierarchy`
@@ -467,7 +520,7 @@ it was asked for.
 through `rig task show` and `rig context`, so a hostile issue can try to
 instruct an agent. rig does not filter it. It marks the source: the
 `external:` row says which fields the tracker supplied, and the Markdown body
-heading rule above stops tracker text from adding sections.
+blockquote above stops tracker text from adding sections.
 
 ## Compatibility with 0.3.0
 
@@ -514,9 +567,10 @@ compatibility reads is decided after 0.5.0.
 the `parent:` and `external:` header rows are enough, and a section can be
 added later.*
 
-**Q37. Jira acceptance criteria.** *Recommend: a configurable field id under
-the workflow's `tracker.map`; acceptance is unmapped without one.* Jira has no
-standard field for it (to verify).
+**Q37. Jira acceptance criteria. Decided.** A configurable field id, the config
+key `tracker.jira.acceptanceField`; an issue has no acceptance criteria
+without it. Jira has no standard field for it. The workflow's `tracker.map`
+only says which rig field receives `acceptance`.
 
 **Q38. One tracker per repository.** *Recommend: one by default, from
 `tracker.kind`; `external.kind` is stored per task so a second tracker can be
@@ -559,7 +613,7 @@ Every task also keeps `go vet`, `gofmt` and the package tests green.
 
 | Task | Owns | Delivers | Done when |
 |---|---|---|---|
-| 3.4 views | `cmd/rig/format.go`, `cmd/rig/render_md.go`, and the show, list and context code in `cmd/rig/task.go` and `cmd/rig/context.go` | `--format`, the aliases, the Markdown renderings | Golden tests for each section and for empty cases; two formats or an unknown one is exit 2; body headings are demoted outside code fences; context Markdown stays within budget |
+| 3.4 views | `cmd/rig/format.go`, `cmd/rig/render_md.go`, and the show, list and context code in `cmd/rig/task.go` and `cmd/rig/context.go` | `--format`, the aliases, the Markdown renderings | Golden tests for each section and for empty cases; two formats or an unknown one is exit 2; a body is printed as a blockquote; context Markdown stays within budget |
 | 3.5 port | `internal/tracker/{tracker.go,fake,trackertest}` | The port, errors, the fake and the contract test | The fake passes `trackertest`; `ErrUnsupported` is distinguishable from `ErrNotFound` and `ErrAuth` |
 | 3.6 proc | `internal/proc/**` | The environment scrub | A child started with the scrub does not see `RIG_JIRA_TOKEN` or any `RIG_*_TOKEN`; existing callers are unchanged |
 
@@ -591,6 +645,15 @@ and adds the `--pat` login path and the v2 `myself` check. It runs after 3.2.
 has merged, or the function goes in a file of its own that 3.10 owns. 3.12 is
 last, because it needs the finished task view. **0.4.0 is cut after wave 2.**
 
+### Added during the build
+
+| Task | Owns | Delivers | Done when |
+|---|---|---|---|
+| 3.15 worktrees | `cmd/rig/task_worktree.go`, the `worktrees.root` key in `internal/config` | `rig task start <slug>` and `rig task finish <task> --sha <sha>`, the `kit-task` marker, `worktrees.root` | `start` makes `task/<slug>` in `<root>/<repo>/<slug>` and writes the marker, and takes back only what it made when it fails; `finish` merges exactly the verified sha, refuses when the branch is elsewhere, and keeps the worktree with a reason when it cannot remove it; a project file's `worktrees.root` cannot leave the checkout, symlinks included |
+
+3.15 was not in the plan. It is part of 0.4.0. The marker and output are in
+[design.md](design.md).
+
 ### Wave 3: 0.5.0
 
 | Task | Owns | Delivers | Done when |
@@ -601,7 +664,7 @@ last, because it needs the finished task view. **0.4.0 is cut after wave 2.**
 
 | Task | Owns | Delivers |
 |---|---|---|
-| 3.14 docs | `docs/workflows.md`, `README.md`, `docs/design.md` contract section, `docs/release.md` | The `tracker` key and the 0.3.0 incompatibility, the new commands and the Markdown format in the contract, the release notes for each of 0.4.0 and 0.5.0 |
+| 3.14 docs | `docs/workflows.md`, `README.md`, `docs/design.md` contract section, this file, the usage lines in `cmd/rig/main.go` | The `tracker` key and the 0.3.0 incompatibility, the new commands and the Markdown format in the contract, this file corrected to what was built. The release notes are a draft in the pull request body, not a committed file, and `docs/release.md` is unchanged |
 
 Docs for 0.4.0 are written before 0.4.0 is cut, and for 0.5.0 before 0.5.0.
 This plan itself changes only `docs/`.
@@ -609,7 +672,10 @@ This plan itself changes only `docs/`.
 ### To verify during implementation
 
 These are the plan's guesses, collected. None is a fact until a task has
-checked it.
+checked it. The build settled the Jira acceptance field (now the config key
+`tracker.jira.acceptanceField`) and the `-F` rule for `gh`; the corrections in
+this file say so. This list was not otherwise re-checked for 0.4.0, and the
+adapters were tested against stubs and recorded responses, not live services.
 
 - Go's `net/http` drops `Authorization` on a cross-host redirect (refuse
   explicitly regardless).
