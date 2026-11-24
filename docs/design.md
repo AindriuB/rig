@@ -293,7 +293,11 @@ there is none) and `external` (absent when the task is not linked):
   acceptance, priority, assignee, labels, type, status, parent, rev}`.
 - `rig tracker status --json` is `{kind, trusted, capabilities, login}`;
   `capabilities` is `{parent, children, types, search, comment, setStatus,
-  levels}` or `null`, and `login` is `{ok, error?}`.
+  levels}` or `null`, and `login` is `{ok, error?}`. For a tracker that can
+  check its configured project (Jira) there is also `project`, `{key, exists,
+  empty}`, and the text output gains `project: RIG ok`, `project: RIG not found`
+  or `project: RIG ok (no issues yet)`; a missing project does not change the
+  exit code.
 
 **Tracker report.** `rig tracker report` sends a task's progress to the issue
 it is linked to (the task must be linked to an issue of the configured tracker,
