@@ -97,6 +97,31 @@ func TestQueries(t *testing.T) {
 	}
 }
 
+func TestTrackedDirtyAndGitPath(t *testing.T) {
+	repo, _ := newRepo(t)
+	r := Repo{Dir: repo}
+	if d, err := r.TrackedDirty(ctx); err != nil || d {
+		t.Fatalf("clean: %v, %v", d, err)
+	}
+	os.WriteFile(filepath.Join(repo, "new.txt"), []byte("x"), 0o644)
+	if d, err := r.TrackedDirty(ctx); err != nil || d {
+		t.Fatalf("untracked file counted: %v, %v", d, err)
+	}
+	sh(t, repo, "add", "new.txt")
+	sh(t, repo, "commit", "-q", "-m", "add")
+	os.WriteFile(filepath.Join(repo, "new.txt"), []byte("y"), 0o644)
+	if d, err := r.TrackedDirty(ctx); err != nil || !d {
+		t.Fatalf("modified file: %v, %v", d, err)
+	}
+	p, err := r.GitPath(ctx, "MERGE_HEAD")
+	if err != nil || !filepath.IsAbs(p) || filepath.Base(p) != "MERGE_HEAD" || filepath.Base(filepath.Dir(p)) != ".git" {
+		t.Fatalf("GitPath = %q, %v", p, err)
+	}
+	if _, err := (Repo{Dir: t.TempDir()}).GitPath(ctx, "MERGE_HEAD"); err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("outside a repo: %v", err)
+	}
+}
+
 func TestWorktrees(t *testing.T) {
 	repo, _ := newRepo(t)
 	wt := filepath.Join(filepath.Dir(repo), "wt")

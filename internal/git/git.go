@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -190,6 +191,26 @@ func (r Repo) DirtyCount(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return len(strings.Split(out, "\n")), nil
+}
+
+// TrackedDirty reports whether a tracked file has uncommitted changes.
+// Untracked files do not count.
+func (r Repo) TrackedDirty(ctx context.Context) (bool, error) {
+	out, err := r.out(ctx, "status", "--porcelain", "--untracked-files=no")
+	return out != "", err
+}
+
+// GitPath resolves a path inside the repository's git directory (for example
+// MERGE_HEAD) to an absolute path, as rev-parse --git-path does.
+func (r Repo) GitPath(ctx context.Context, name string) (string, error) {
+	p, err := r.out(ctx, "rev-parse", "--git-path", name)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(r.Dir, filepath.FromSlash(p))
+	}
+	return p, nil
 }
 
 // AheadBehind counts the commits ref has that base lacks, and the reverse.

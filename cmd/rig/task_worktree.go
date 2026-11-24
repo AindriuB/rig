@@ -7,11 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/git"
-	"github.com/AindriuB/rig/internal/proc"
 )
 
 const (
@@ -383,33 +381,24 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 // operation in progress, or uncommitted changes to tracked files. Untracked
 // files do not count. It returns "" when the checkout is free.
 func mainCheckoutBusy(ctx context.Context, repo git.Repo) (string, error) {
-	gitOut := func(args ...string) (string, error) {
-		res, err := proc.Run(ctx, proc.Options{Dir: repo.Dir, Env: []string{"LC_ALL=C"}, Timeout: 30 * time.Second}, "git", args...)
-		if err != nil {
-			return "", fmt.Errorf("git %s: %w", args[0], err)
-		}
-		return strings.TrimRight(string(res.Stdout), "\r\n"), nil
-	}
 	for _, p := range []struct{ path, name string }{
 		{"MERGE_HEAD", "a merge"}, {"CHERRY_PICK_HEAD", "a cherry-pick"}, {"REVERT_HEAD", "a revert"},
 		{"rebase-merge", "a rebase"}, {"rebase-apply", "a rebase"},
+		{"BISECT_LOG", "a bisect"}, {"sequencer", "a cherry-pick or revert sequence"},
 	} {
-		path, err := gitOut("rev-parse", "--git-path", p.path)
+		path, err := repo.GitPath(ctx, p.path)
 		if err != nil {
 			return "", err
-		}
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(repo.Dir, filepath.FromSlash(path))
 		}
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Sprintf("%s has %s in progress", filepath.Base(repo.Dir), p.name), nil
 		}
 	}
-	out, err := gitOut("status", "--porcelain", "--untracked-files=no")
+	dirty, err := repo.TrackedDirty(ctx)
 	if err != nil {
 		return "", err
 	}
-	if out != "" {
+	if dirty {
 		return fmt.Sprintf("%s has uncommitted changes to tracked files", filepath.Base(repo.Dir)), nil
 	}
 	return "", nil

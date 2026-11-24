@@ -73,7 +73,7 @@ rig tracker report <task> [--status] [--comment pr|state|summary] [--include fin
 rig tracker show <key> [--json] [--repo <dir>]
 rig tracker status [--json] [--repo <dir>]
 rig login                                  (the forge, then Jira when tracker.kind is jira)
-rig login <service> [--url <site>] [--user <email>] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
+rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira; --token stores a personal access token, with no user; --pat is the 0.4.0 name and still works)
 rig login status [--json]
 rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
 rig version
@@ -101,7 +101,7 @@ is trimmed; an empty one, one with a control character, or `--actor` and
 | `rig task start <slug>`, `rig task finish <task> --sha <sha>` | `start` makes a git worktree and branch `task/<slug>` for a task file and ties the worktree to it. `finish` merges exactly the verified commit into the default branch and removes the worktree. | 0; 1 refused, nothing changed (a merge conflict is aborted); 2 on any error |
 | `rig tracker pull` | Creates linked tasks from one issue, a search or a label, and with `--children` the issue's sub-issues. | 0; 1 `--state` refused; 2 on any error, or if any issue failed |
 | `rig tracker refresh` | Re-reads linked issues and overwrites the owned fields of their tasks with the tracker's values. `--dry-run` writes nothing. | 0; 2 on any error, or if any task failed |
-| `rig tracker report` | Sends a linked task's progress to its issue: a status from the workflow's `tracker.report.status`, then a comment (`pr`, `state` or `summary`; findings and notes only with `--include`). With neither `--status` nor `--comment` it sends the status and a `state` comment. A repeat that changes nothing is skipped; `--dry-run` prints what would be sent. | 0; 1 no status mapped for the state, no such transition, or no pull request for `--comment pr`, with nothing sent; 2 on any other error |
+| `rig tracker report` | Sends a linked task's progress to its issue: a status from the workflow's `tracker.report.status`, then a comment (`pr`, `state` or `summary`; findings and notes only with `--include`). With neither `--status` nor `--comment` it sends the status and a `state` comment. Each send is recorded in a `tracker-report` event (the status as `from`, `to` and the requested `asked`). A repeat that changes nothing is skipped; `--dry-run` prints what would be sent. | 0; 1 no status mapped for the state, no such transition, or no pull request for `--comment pr`, with nothing sent; 2 on any other error |
 | `rig tracker show`, `rig tracker status` | Prints one issue; or prints the tracker kind, whether its configuration is trusted, what it supports and whether the login works. Neither writes. | 0; 2 on any error |
 | `rig workflow` | Shows the workflow in effect, or checks a workflow file. | 0; `validate` 1 invalid; 2 on any error |
 | `rig next`, `rig context` | List what each open task needs, and print a size-limited brief for one task. They never call the forge. | 0; 2 on any error |

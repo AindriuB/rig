@@ -51,12 +51,24 @@ type reportRec struct {
 	tracker.Tracker
 	log        []string
 	commentErr error
-	shoutTo    bool // report the reached status in upper case
+	shoutTo    bool   // report the reached status in upper case
+	reachedAs  string // when set, the status SetStatus reports reaching
+	capsErr    error  // when set, Capabilities fails with it
+}
+
+func (r *reportRec) Capabilities(ctx context.Context) (tracker.Caps, error) {
+	if r.capsErr != nil {
+		return tracker.Caps{}, r.capsErr
+	}
+	return r.Tracker.Capabilities(ctx)
 }
 
 func (r *reportRec) SetStatus(ctx context.Context, key, status string) (tracker.StatusResult, error) {
 	r.log = append(r.log, "status "+status)
 	res, err := r.Tracker.SetStatus(ctx, key, status)
+	if r.reachedAs != "" {
+		res.To = r.reachedAs
+	}
 	if r.shoutTo {
 		res.To = strings.ToUpper(res.To)
 	}
@@ -462,5 +474,127 @@ func TestReportDryRunUnsupportedStatus(t *testing.T) {
 	}
 	if out.Status != nil || out.Comment == nil || len(out.Warnings) != 1 || len(e.rec.log) != 0 {
 		t.Fatalf("%+v calls %v", out, e.rec.log)
+	}
+}
+
+// A1: a dry run on a tracker that cannot comment warns and prints no comment.
+func TestReportDryRunUnsupportedComment(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{SetStatus: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task, "--dry-run"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if out.Comment != nil || out.Status == nil || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "comment") {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// A2: the status part a tracker cannot set is dropped before the skip check,
+// so a repeat whose comment is skipped reports skipped.
+func TestReportUnsupportedStatusRepeatIsSkipped(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{Comment: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task)
+	e.rec.log = nil
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if !out.Skipped || len(e.rec.log) != 0 || len(e.reports()) != 1 {
+		t.Fatalf("%+v calls %v events %d", out, e.rec.log, len(e.reports()))
+	}
+}
+
+// A3: the requested status name is recorded as asked, and a repeat matching it
+// is skipped though the tracker reached a differently named status.
+func TestReportStatusSkipMatchesAsked(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.rec.reachedAs = "Reached Elsewhere"
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task, "--status")
+	evs := e.reports()
+	if len(evs) != 1 || !strings.Contains(string(evs[0].Data), `"asked":"In Progress"`) {
+		t.Fatalf("events %+v", evs)
+	}
+	e.rec.log = nil
+	e.mustRun("tracker", "report", e.task, "--status")
+	if len(e.rec.log) != 0 || len(e.reports()) != 1 {
+		t.Fatalf("repeat sent %v, events %d", e.rec.log, len(e.reports()))
+	}
+}
+
+// A4: a dry run whose Capabilities call fails says so.
+func TestReportDryRunCapabilitiesError(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.rec.capsErr = errors.New("capabilities down")
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task, "--dry-run"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "capabilities down") {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// A5: a forge that cannot give the pull request URL stops --comment pr with
+// exit 2 and nothing sent; --comment summary sends without the line and warns.
+func TestReportForgeFailure(t *testing.T) {
+	t.Run("pr", func(t *testing.T) {
+		e := newReportEnv(t, reportCaps, statuses3...)
+		e.mustRun("task", "move", e.task, "doing")
+		e.mustRun("task", "move", e.task, "review", "--pr", "5")
+		e.prs.Err = errors.New("forge down")
+		e.rec.log = nil
+		if code := e.run("tracker", "report", e.task, "--comment", "pr"); code != 2 {
+			t.Fatalf("exit %d: %s", code, e.err.String())
+		}
+		if len(e.rec.log) != 0 || len(e.reports()) != 0 {
+			t.Fatalf("calls %v, events %d", e.rec.log, len(e.reports()))
+		}
+	})
+	t.Run("summary", func(t *testing.T) {
+		e := newReportEnv(t, reportCaps, statuses3...)
+		e.mustRun("task", "move", e.task, "doing")
+		e.mustRun("task", "move", e.task, "review", "--pr", "5")
+		e.prs.Err = errors.New("forge down")
+		var out reportJSON
+		if code := e.json(&out, "tracker", "report", e.task, "--comment", "summary"); code != 0 {
+			t.Fatalf("exit %d: %s", code, e.err.String())
+		}
+		if len(e.fk.Comments) != 1 || strings.Contains(e.fk.Comments[0].Comment.Body, "Pull request") || len(out.Warnings) != 1 {
+			t.Fatalf("%+v warnings %v", e.fk.Comments, out.Warnings)
+		}
+	})
+}
+
+// R2: a pre-asked event records only `to`; the requested name matches it
+// ignoring case and surrounding spaces.
+func TestSameStatusIgnoresCaseAndSpaces(t *testing.T) {
+	if !sameStatus(" In Progress ", "IN PROGRESS", "") {
+		t.Fatal("case or spaces defeated the match against to")
+	}
+	if !sameStatus("In Progress", " in progress ", "") {
+		t.Fatal("spaces in the recorded name defeated the match")
+	}
+	if sameStatus("In Review", "IN PROGRESS", "") {
+		t.Fatal("a different status matched")
+	}
+}
+
+// R3: a comment a tracker cannot send is dropped before the skip check, so a
+// repeat whose status part is skipped reports skipped.
+func TestReportUnsupportedCommentRepeatIsSkipped(t *testing.T) {
+	e := newReportEnv(t, tracker.Caps{SetStatus: true}, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.mustRun("tracker", "report", e.task)
+	e.rec.log = nil
+	var out reportJSON
+	if code := e.json(&out, "tracker", "report", e.task); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	if !out.Skipped || len(e.rec.log) != 0 || len(e.reports()) != 1 {
+		t.Fatalf("%+v calls %v events %d", out, e.rec.log, len(e.reports()))
 	}
 }

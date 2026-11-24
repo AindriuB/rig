@@ -89,7 +89,7 @@ const usage = `usage: rig <command>
   rig tracker show <key> [--json] [--repo <dir>]
   rig tracker status [--json] [--repo <dir>]
   rig login                                  (the forge, then Jira when tracker.kind is jira)
-  rig login <service> [--url <site>] [--user <email>] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
+  rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
   rig login status [--json]
   rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
   rig version
@@ -146,6 +146,10 @@ func (a *app) run(ctx context.Context, args []string) int {
 	case "logout":
 		return a.logout(ctx, args[1:])
 	case "version", "--version":
+		if len(args) > 1 {
+			fmt.Fprintln(a.stderr, "usage: rig version")
+			return 2
+		}
 		fmt.Fprintln(a.stdout, version)
 		return 0
 	case "help", "-h", "--help":
