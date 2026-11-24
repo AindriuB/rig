@@ -343,3 +343,18 @@ func TestOpenOutsideRepoAndWithoutRemote(t *testing.T) {
 		t.Error("Get of an unknown key = ok")
 	}
 }
+
+// A Home of "" means no global file: the layer is empty, and the file
+// ./.rig/config.json in the current directory is not read as the global one.
+func TestEmptyHomeIsNotTheCurrentDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	put(t, filepath.Join(cwd, Dir, ConfigFile), `{"forge":{"kind":"gitlab"}}`)
+	t.Chdir(cwd)
+	l, err := Open(Options{Home: func() (string, error) { return "", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := l.Get(KeyForgeKind); ok && v.Scope == ScopeGlobal {
+		t.Errorf("forge.kind = %+v from the current directory", v)
+	}
+}

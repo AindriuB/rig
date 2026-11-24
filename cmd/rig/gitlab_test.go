@@ -27,7 +27,13 @@ esac
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var out, errOut bytes.Buffer
-	a := &app{stdout: &out, stderr: &errOut, cwd: repo, getenv: func(string) string { return "" }, forge: selectForge}
+	// A hostile process home must not reach the forge choice.
+	hostile := globalHome(t, `{"forge":{"kind":"github"}}`)
+	t.Setenv("HOME", hostile["HOME"])
+	t.Setenv("USERPROFILE", hostile["USERPROFILE"])
+	empty := t.TempDir()
+	home := func() (string, error) { return empty, nil }
+	a := &app{stdout: &out, stderr: &errOut, cwd: repo, getenv: func(string) string { return "" }, forge: selectForgeWith(home)}
 	if code := a.run(ctx, []string{"pr", "checks", "5"}); code != 0 || out.String() != "#5  green  task/07-foo\n  pass     build\n" {
 		t.Fatalf("pr checks: exit %d\n%s%s", code, out.String(), errOut.String())
 	}

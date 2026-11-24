@@ -48,8 +48,14 @@ has to recognise one in arbitrary shell.
 - **Go, standard library where possible.** One static binary, no runtime.
 - **Forge adapters only.** `gh` now, `glab` next. Git is called directly; there
   is no git abstraction to swap.
-- **The forge is auto-detected** from the `origin` remote's host.
-  `.claude/rig.json` overrides it.
+- **The forge is auto-detected** from the `origin` remote's host. The layered
+  config (`rig config`) overrides it, by the scope order `rig config get`
+  reports (local, repo section, `.claude/rig.json`, global), then origin
+  detection. A kind from a less specific scope never overrides a host from a
+  more specific one; a host that names no known forge falls back to a less
+  specific kind. Without a home directory forge selection treats the global
+  layer as empty, but `rig push` still fails closed (exit 2): its policy may
+  live in the global file.
 - **rig holds a token only for a service with no CLI of its own.** GitHub and
   GitLab stay with `gh` and `glab`: the adapters shell out to them and use
   whatever login the user already has, and `rig login github|gitlab` only
@@ -98,7 +104,8 @@ Supporting packages:
 - `internal/proc` runs a subprocess from an argument vector with a deadline. It
   never builds a shell string, and it kills the child when the deadline passes.
 - `internal/git` wraps the handful of git calls rig needs.
-- `internal/config` reads `.claude/rig.json`:
+- `internal/config` reads the layered config (`rig config`); `.claude/rig.json`
+  is still honoured, and the forge and the push prefixes come from it:
 
   | Key | Meaning | Default |
   |---|---|---|
@@ -393,6 +400,7 @@ Two things sit outside that guarantee.
 - **`.claude/rig.json` is the user's file.** Its `pushPrefixes` decide which
   prefixes count, so whoever can write it can widen the pushes: to
   `release/x`, say, though still never to a bare branch, a tag or a force.
+  In a bare layout the worktree's own files apply, as for `rig config`.
   An agent must not edit it. The project settings template makes any Edit or
   Write of `.claude/rig.json`, in the project or in a worktree below it, and any shell
   command that names `rig.json`, ask first (`tests/rig-settings.bats` pins

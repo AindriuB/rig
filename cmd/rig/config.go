@@ -150,8 +150,15 @@ func valueText(v any) string {
 // repository with no origin has no Remote. In a bare repository there is no
 // main checkout, so the current worktree's top level is the Root.
 func (a *app) openConfig(ctx context.Context) (layers *config.Layers, root, remote string, err error) {
-	o := config.Options{Home: a.homeDir}
-	r := git.Repo{Dir: a.cwd}
+	return openLayers(ctx, a.cwd, a.homeDir)
+}
+
+// openLayers is the one opener rig config, rig push and forge selection
+// share, so all three read the same project files. dir is any directory in
+// the repository.
+func openLayers(ctx context.Context, dir string, home func() (string, error)) (layers *config.Layers, root, remote string, err error) {
+	o := config.Options{Home: home}
+	r := git.Repo{Dir: dir}
 	if wts, err := r.Worktrees(ctx); err == nil && len(wts) > 0 {
 		if wts[0].Bare {
 			if top, err := r.TopLevel(ctx); err == nil {

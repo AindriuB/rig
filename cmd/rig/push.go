@@ -60,9 +60,15 @@ func (a *app) push(ctx context.Context, args []string) int {
 	if err != nil {
 		return refuse("not a git working tree: %s", wt)
 	}
-	cfg, err := config.Load(top)
+	layers, err := openLayersAt(ctx, top, a.homeDir)
 	if err != nil {
 		return refuse("%v", err)
+	}
+	prefixes := config.DefaultPushPrefixes
+	if v, ok := layers.Get(config.KeyPushPrefixes); ok {
+		if l, ok := v.Value.([]string); ok {
+			prefixes = l
+		}
 	}
 
 	branch := target
@@ -71,7 +77,7 @@ func (a *app) push(ctx context.Context, args []string) int {
 			return refuse("%v", err)
 		}
 	}
-	if err := checkBranch(branch, cfg.PushPrefixes); err != nil {
+	if err := checkBranch(branch, prefixes); err != nil {
 		return refuse("%v", err)
 	}
 	if def, _ := repo.DefaultBranch(ctx); def != "" && branch == def {
