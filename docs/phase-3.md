@@ -47,8 +47,9 @@ Goals that follow:
   `task list` and `context` is for people and for agents that read prose. Its
   layout is versioned in the contract the way `--json` is.
 - **Everything is additive.** An older rig keeps reading a store a newer rig
-  wrote (see "Compatibility with 0.3.0"), with one exception, the workflow
-  file's `tracker` key, which is documented below.
+  wrote (see "Compatibility with 0.3.0"), with two exceptions in the workflow
+  file, the `tracker` key and `{key}` in a `branch` template, which are
+  documented below.
 
 Limits:
 
@@ -170,7 +171,7 @@ Today a task's branch is derived whenever it is read, from the workflow's
 `Options.Created` applies a template given in `NewTask` (`{short}`, `{slug}`,
 `{id}`, and the new `{key}`) and stores the result in `CreatedData.Branch`.
 Existing tasks stay derived. `{key}` is the issue key lowercased with every
-character outside `[a-z0-9-]` replaced by `-`. A tracker key in a branch name
+run of characters outside `[a-z0-9-]` replaced by one `-`. A tracker key in a branch name
 is the reason for doing this: the branch must not move if the issue is later
 renamed or the template edited.
 
@@ -533,6 +534,7 @@ blockquote above stops tracker text from adding sections.
 | `field` events written by refresh | Read as ordinary edits; 0.3.0 sees current titles and bodies. |
 | New JSON fields | Not present in 0.3.0 output; scripts that read only old fields are unaffected. |
 | A workflow file with a `tracker` key | **Not loadable.** 0.3.0 exits 2 on the unknown key. |
+| A `branch` template that uses `{key}` | **Not loadable.** 0.3.0 exits 2 on the unknown placeholder. |
 | A task created by 0.3.0 | A 0.4.0 rig reads it as unlinked and parentless. |
 
 Only the reader behaviour of 0.3.0 was checked in the code; it was not run. To

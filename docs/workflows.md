@@ -44,7 +44,7 @@ an error and not a silent no-op.
 |---|---|
 | `name`, `version` | A label and a positive integer. A task records both when it is created. |
 | `initial` | The state a new task starts in. |
-| `branch` | Branch name template; `{short}`, `{slug}`, `{id}` and `{key}` are replaced. Optional. A task made from an issue (`rig task new --from`, `rig tracker pull`) has its branch stamped at creation, with `{key}` as the issue's key, lowercased, with every character outside `a-z`, `0-9` and `-` turned into `-`; a later change to the template or the issue does not rename it. Other tasks derive the branch from the template whenever it is read, and there `{key}` is the task's short id, even after `rig task link`, so linking never renames a branch. |
+| `branch` | Branch name template; `{short}`, `{slug}`, `{id}` and `{key}` are replaced. Optional. A task made from an issue (`rig task new --from`, `rig tracker pull`) has its branch stamped at creation, with `{key}` as the issue's key, lowercased, with every run of characters outside `a-z`, `0-9` and `-` turned into one `-`; a later change to the template or the issue does not rename it. Other tasks derive the branch from the template whenever it is read, and there `{key}` is the task's short id, even after `rig task link`, so linking never renames a branch. 0.3.0 cannot load a file whose template uses `{key}`. |
 | `states` | An object: state name to `{action, who, final, shaBound}`, all optional. |
 | `onNewCommit` | The state a sha-bound task counts as in when its branch has moved on. Needed if any state is sha-bound. |
 | `transitions` | The allowed moves, in order (see below). |
@@ -208,9 +208,10 @@ repository cannot change it.
 `rig workflow validate` reports each broken rule with its JSON path, for
 example `tracker.map.priority`.
 
-**0.3.0 cannot load a workflow file that has a `tracker` key.** It rejects the
-unknown key and exits 2. If one global file is shared between machines, update
-rig on all of them before you add the key. Stores are not affected: 0.3.0
+**0.3.0 cannot load a workflow file that has a `tracker` key, or a `branch`
+template that uses `{key}`.** It rejects the unknown key or placeholder and
+exits 2. If one global file is shared between machines, update rig on all of
+them before you add either. Stores are not affected: 0.3.0
 still reads a store that 0.4.0 wrote, and sees the current title and body of a
 linked task; it skips the events it does not know and shows a task made from an
 issue without its link or parent.
