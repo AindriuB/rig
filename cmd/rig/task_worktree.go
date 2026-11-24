@@ -120,19 +120,15 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 		return a.fail(cmd, "%v", err)
 	}
 	if err := repo.WorktreeAdd(ctx, wt, branch, base); err != nil {
-		return a.fail(cmd, "%v", err)
+		// git may have made the branch and worktree before it failed (a
+		// post-checkout hook, a timeout): take back only what is ours.
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, err))
 	}
 
 	marked := filepath.ToSlash(taskFile)
 	if err := a.mark(ctx, wt, marked); err != nil {
 		// Never leave a worktree that owns-guard would treat as unguarded.
-		if rerr := repo.WorktreeRemove(ctx, wt); rerr != nil {
-			return a.fail(cmd, "%v; and the worktree %s could not be removed again: %v", err, wt, rerr)
-		}
-		if derr := repo.DeleteBranch(ctx, branch, true); derr != nil {
-			return a.fail(cmd, "%v; and the branch %s could not be removed again: %v", err, branch, derr)
-		}
-		return a.fail(cmd, "%v (the worktree and branch were removed again)", err)
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, err))
 	}
 
 	if *asJSON {
@@ -140,6 +136,28 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintf(a.stdout, "WORKTREE: %s\nBRANCH:   %s\nBASE:     %s\nOWNS:     enforced from %s\n", wt, branch, base, marked)
 	return 0
+}
+
+// rollBack removes what a failed start made: the worktree if it exists (never
+// with --force), then the branch if it exists and still points at base. It
+// returns the message to print.
+func rollBack(ctx context.Context, repo git.Repo, wt, branch, base string, cause error) string {
+	if _, err := os.Lstat(wt); err == nil {
+		if rerr := repo.WorktreeRemove(ctx, wt); rerr != nil {
+			return fmt.Sprintf("%v; and the worktree %s could not be removed again: %v", cause, wt, rerr)
+		}
+	}
+	if ok, _ := repo.BranchExists(ctx, branch); ok {
+		tip, _, _ := repo.ResolveRef(ctx, "refs/heads/"+branch)
+		want, _, _ := repo.ResolveRef(ctx, base+"^{commit}")
+		if tip == "" || tip != want {
+			return fmt.Sprintf("%v; the branch %s was left: it is not at %s", cause, branch, base)
+		}
+		if derr := repo.DeleteBranch(ctx, branch, true); derr != nil {
+			return fmt.Sprintf("%v; and the branch %s could not be removed again: %v", cause, branch, derr)
+		}
+	}
+	return fmt.Sprintf("%v (the worktree and branch were removed again)", cause)
 }
 
 // startTaskFile finds the task file for slug: --task-file, else the exact

@@ -532,3 +532,32 @@ func TestTaskFinishKeepsABranchThatMoved(t *testing.T) {
 		t.Fatal("the worktree is gone or the branch did not move")
 	}
 }
+
+// F1: a worktree add that git half-completes (the post-checkout hook fails
+// after the branch and worktree exist) is rolled back, never left unguarded.
+func TestTaskStartRollsBackWhenWorktreeAddFailsAfterGitMadeIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a /bin/sh hook")
+	}
+	isolate(t)
+	repo, _ := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	if r.code != 2 || r.out != "" {
+		t.Fatalf("start: %+v", r)
+	}
+	if exists(filepath.Join(repo, ".worktrees", "repo", "08-bar")) {
+		t.Fatal("the worktree was left behind")
+	}
+	if gitc(t, repo, "branch", "--list", "task/08-bar") != "" {
+		t.Fatal("the branch was left behind")
+	}
+	if got := gitc(t, repo, "worktree", "list"); strings.Count(got, "\n") != 0 {
+		t.Fatalf("worktrees: %s", got)
+	}
+}
