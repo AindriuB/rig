@@ -206,7 +206,7 @@ repository cannot change it.
   0.4.0 sends a status; `rig tracker report` is planned for 0.5.0.
 
 `rig workflow validate` reports each broken rule with its JSON path, for
-example `tracker.map.owns`.
+example `tracker.map.priority`.
 
 **0.3.0 cannot load a workflow file that has a `tracker` key.** It rejects the
 unknown key and exits 2. If one global file is shared between machines, update
