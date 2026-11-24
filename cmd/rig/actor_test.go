@@ -42,6 +42,10 @@ func (e *trkEnv) newEvents(before map[string][]store.Event) []store.Event {
 // actorReporter lets scripted take a comment, which tracker report sends.
 type actorReporter struct{ *scripted }
 
+func (actorReporter) Capabilities(context.Context) (tracker.Caps, error) {
+	return tracker.Caps{Comment: true}, nil
+}
+
 func (actorReporter) Comment(context.Context, string, tracker.Comment) (tracker.CommentResult, error) {
 	return tracker.CommentResult{ID: "c1"}, nil
 }
