@@ -173,10 +173,14 @@ func (a *app) trackerSpec(ctx context.Context, dir string) (trackerSpec, error) 
 		}
 		if key := layers.RepoKey(); key != "" {
 			h, path, _ := strings.Cut(key, "/")
-			// Only the forge's own host is taken from the remote: a host
-			// that merely looks like it (an SSH alias such as github-work)
-			// is not, and the configured or public host stands in.
-			if lh := strings.ToLower(h); host == "" && (lh == def || (forgeHost != "" && lh == forgeHost)) {
+			// Only the forge's own host is taken from the remote. Any other
+			// host (an SSH alias such as github-work, or a self-hosted
+			// server nobody configured) is refused rather than guessed:
+			// a guess could read and link an issue on the wrong server.
+			if lh := strings.ToLower(h); host == "" {
+				if lh != def && (forgeHost == "" || lh != forgeHost) {
+					return spec, fmt.Errorf("origin host %q is not %s or the configured forge.host: set tracker.url to the tracker's address", h, def)
+				}
 				host = lh
 			}
 			if project == "" {

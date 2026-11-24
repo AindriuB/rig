@@ -756,24 +756,30 @@ func TestTrackerJiraEnvTokenNeedsUserOnCloud(t *testing.T) {
 	}
 }
 
-// F5: an origin host that is an SSH alias falls back to the forge's default host.
-func TestTrackerRepoHostAlias(t *testing.T) {
-	e := newTrkEnv(t, map[string]any{"kind": "github"})
-	gitc(t, e.repo, "remote", "set-url", "origin", "git@work-alias:acme/rig.git")
-	spec, err := e.a.trackerSpec(ctx, e.repo)
-	if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
-		t.Fatalf("spec %+v, %v", spec, err)
+// F5 and 38-1: an origin host that is neither the public forge host nor the
+// configured forge host (an SSH alias, or a self-hosted server nobody named)
+// is refused rather than guessed, so no issue is read from the wrong server.
+func TestTrackerRepoHostUnknownRefused(t *testing.T) {
+	for _, c := range []struct{ kind, host string }{
+		{"github", "work-alias"}, {"github", "github-work"}, {"github", "github.com-work"},
+		{"github", "github.acme.example"}, {"gitlab", "gitlab.example.com"},
+	} {
+		e := newTrkEnv(t, map[string]any{"kind": c.kind})
+		gitc(t, e.repo, "remote", "set-url", "origin", "git@"+c.host+":acme/rig.git")
+		_, err := e.a.trackerSpec(ctx, e.repo)
+		if err == nil || !strings.Contains(err.Error(), c.host) || !strings.Contains(err.Error(), "tracker.url") {
+			t.Fatalf("%s %s: want a refusal naming the host and tracker.url, got %v", c.kind, c.host, err)
+		}
 	}
 }
 
-func TestTrackerRepoHostSSHAliases(t *testing.T) {
-	for _, h := range []string{"github-work", "github.com-work"} {
-		e := newTrkEnv(t, map[string]any{"kind": "github"})
-		gitc(t, e.repo, "remote", "set-url", "origin", "git@"+h+":acme/rig.git")
-		spec, err := e.a.trackerSpec(ctx, e.repo)
-		if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
-			t.Fatalf("%s: spec %+v, %v", h, spec, err)
-		}
+// An alias origin works once tracker.url names the host.
+func TestTrackerRepoHostAliasWithURL(t *testing.T) {
+	e := newTrkEnv(t, map[string]any{"kind": "github", "url": "https://github.com"})
+	gitc(t, e.repo, "remote", "set-url", "origin", "git@github-work:acme/rig.git")
+	spec, err := e.a.trackerSpec(ctx, e.repo)
+	if err != nil || spec.Link != (trackerLink{"github", "github.com", "acme/rig"}) || spec.GitHub.Host != "" {
+		t.Fatalf("spec %+v, %v", spec, err)
 	}
 }
 
