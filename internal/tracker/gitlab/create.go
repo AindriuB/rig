@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 
 // Constant documents; every untrusted value travels as a variable.
 const (
-	typesQuery  = `query RigTypes($path: ID!) { project(fullPath: $path) { workItemTypes { nodes { id name } } } }`
+	typesQuery  = `query RigTypes($path: ID!) { project(fullPath: $path) { workItemTypes { nodes { id name } } group { workItemTypes { nodes { id name } } } } }`
 	parentQuery = `query RigParent($path: ID!, $iid: String!) { project(fullPath: $path) { workItems(iid: $iid, first: 1) { nodes { id } } } }`
 	labelsQuery = `query RigLabels($path: ID!, $term: String!) { project(fullPath: $path) { labels(searchTerm: $term, includeAncestorGroups: true, first: 100) { nodes { id title } } } }`
 	createMut   = `mutation RigCreate($input: WorkItemCreateInput!) { workItemCreate(input: $input) { workItem { iid webUrl updatedAt } errors } }`
@@ -26,13 +27,16 @@ type typeInfo struct {
 	Name string
 }
 
-// workItemTypes lists the types this project can create. Group-level types
-// (Epic) are never listed: an epic's key is group-scoped and does not
-// round-trip through this adapter (task 28).
+// workItemTypes lists the types this project can create. Epic is listed only
+// when the project's direct group offers it; it is created in that group and
+// keyed "epic-<iid>".
 func (t *Tracker) workItemTypes(ctx context.Context) ([]typeInfo, error) {
 	var data struct {
 		Project *struct {
 			WorkItemTypes struct{ Nodes []struct{ ID, Name string } } `json:"workItemTypes"`
+			Group         *struct {
+				WorkItemTypes struct{ Nodes []struct{ ID, Name string } } `json:"workItemTypes"`
+			} `json:"group"`
 		}
 	}
 	if err := t.graphql(ctx, typesQuery, map[string]any{"path": t.project}, &data); err != nil {
@@ -50,6 +54,13 @@ func (t *Tracker) workItemTypes(ctx context.Context) ([]typeInfo, error) {
 			out = append(out, typeInfo{ID: n.ID, Name: n.Name})
 		}
 	}
+	if g := data.Project.Group; g != nil {
+		for _, n := range g.WorkItemTypes.Nodes {
+			if strings.EqualFold(n.Name, "Epic") {
+				out = append(out, typeInfo{ID: n.ID, Name: n.Name})
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -62,7 +73,7 @@ func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {
 	out := make([]tracker.IssueType, 0, len(types))
 	for _, ti := range types {
 		it := tracker.IssueType{Name: ti.Name}
-		if l, ok := map[string]int{"issue": 1, "task": 0}[strings.ToLower(ti.Name)]; ok {
+		if l, ok := map[string]int{"epic": 2, "issue": 1, "task": 0}[strings.ToLower(ti.Name)]; ok {
 			it.Level = &l
 		}
 		out = append(out, it)
@@ -75,12 +86,13 @@ func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {
 // the work item write leaves no work item. When the item is written but its
 // revision cannot be read, the created Key and URL come back with the error.
 func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issue, error) {
-	if strings.EqualFold(ni.Type, "Epic") {
-		return tracker.Issue{}, fmt.Errorf("gitlab tracker: work item type %q is not supported here: %w", ni.Type, tracker.ErrUnsupported)
-	}
+	isEpic := strings.EqualFold(ni.Type, "Epic")
 	if ni.ParentKey != "" {
 		if err := validateKey(ni.ParentKey); err != nil {
 			return tracker.Issue{}, err
+		}
+		if isEpic {
+			return tracker.Issue{}, fmt.Errorf("gitlab tracker: an epic with a parent is not supported here: %w", tracker.ErrUnsupported)
 		}
 	}
 	types, err := t.workItemTypes(ctx)
@@ -93,10 +105,22 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 			ti = &types[i]
 		}
 	}
+	if ti == nil && isEpic {
+		return tracker.Issue{}, fmt.Errorf("gitlab tracker: work item type %q is not supported here: %w", ni.Type, tracker.ErrUnsupported)
+	}
 	if ti == nil {
 		return tracker.Issue{}, fmt.Errorf("gitlab tracker: unknown work item type %q", ni.Type)
 	}
-	input := map[string]any{"namespacePath": t.project, "workItemTypeId": ti.ID, "title": ni.Title}
+	namespace := t.project
+	if isEpic {
+		if namespace, err = t.groupPath(ctx); err != nil {
+			return tracker.Issue{}, err
+		}
+		if namespace == "" {
+			return tracker.Issue{}, fmt.Errorf("gitlab tracker: work item type %q is not supported here: %w", ni.Type, tracker.ErrUnsupported)
+		}
+	}
+	input := map[string]any{"namespacePath": namespace, "workItemTypeId": ti.ID, "title": ni.Title}
 	if desc := description(ni); desc != "" {
 		input["descriptionWidget"] = map[string]any{"description": desc}
 	}
@@ -117,7 +141,7 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	if len(ni.Labels) > 0 {
 		ids := make([]string, 0, len(ni.Labels))
 		for _, l := range ni.Labels {
-			id, err := t.ensureLabel(ctx, l)
+			id, err := t.ensureLabel(ctx, l, isEpic)
 			if err != nil {
 				return tracker.Issue{}, err
 			}
@@ -144,11 +168,23 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	if r.WorkItem == nil || validateKey(r.WorkItem.IID) != nil || r.WorkItem.WebURL == "" {
 		return tracker.Issue{}, errors.New("gitlab tracker: the create reply had no work item")
 	}
+	key := r.WorkItem.IID
+	if isEpic {
+		key = epicPrefix + key
+	}
 	made := tracker.Issue{
-		Key: r.WorkItem.IID, URL: r.WorkItem.WebURL, Title: ni.Title, Description: description(ni),
+		Key: key, URL: r.WorkItem.WebURL, Title: ni.Title, Description: description(ni),
 		Labels: ni.Labels, Type: strings.ToLower(ti.Name), Status: "opened",
 	}
-	// Rev comes from the REST read, the same source as Issue(), so the two agree.
+	// Rev comes from the same read as Issue(), so the two agree.
+	if isEpic {
+		e, err := t.epicRead(ctx, r.WorkItem.IID)
+		if err != nil {
+			return made, fmt.Errorf("gitlab tracker: epic %s was created but its revision could not be read: %w", made.Key, err)
+		}
+		made.Rev = e.UpdatedAt
+		return made, nil
+	}
 	is, err := t.fetch(ctx, made.Key)
 	if err != nil {
 		return made, fmt.Errorf("gitlab tracker: work item %s was created but its revision could not be read: %w", made.Key, err)
@@ -173,12 +209,20 @@ func description(ni tracker.NewIssue) string {
 }
 
 func (t *Tracker) parentID(ctx context.Context, key string) (string, error) {
+	iid, epic, err := parseKey(key)
+	if err != nil {
+		return "", err
+	}
+	if epic {
+		e, err := t.epicRead(ctx, iid)
+		return e.ID, err
+	}
 	var data struct {
 		Project *struct {
 			WorkItems struct{ Nodes []struct{ ID string } } `json:"workItems"`
 		}
 	}
-	if err := t.graphql(ctx, parentQuery, map[string]any{"path": t.project, "iid": key}, &data); err != nil {
+	if err := t.graphql(ctx, parentQuery, map[string]any{"path": t.project, "iid": iid}, &data); err != nil {
 		return "", err
 	}
 	if data.Project == nil || len(data.Project.WorkItems.Nodes) == 0 || data.Project.WorkItems.Nodes[0].ID == "" {
@@ -188,17 +232,28 @@ func (t *Tracker) parentID(ctx context.Context, key string) (string, error) {
 }
 
 // labelID finds a label by exact name in the project or its ancestor groups.
-func (t *Tracker) labelID(ctx context.Context, name string) (string, bool, error) {
-	var data struct {
-		Project *struct {
-			Labels struct{ Nodes []struct{ ID, Title string } } `json:"labels"`
-		}
+func (t *Tracker) labelID(ctx context.Context, name string, inGroup bool) (string, bool, error) {
+	type labelSet struct {
+		Labels struct{ Nodes []struct{ ID, Title string } } `json:"labels"`
 	}
-	if err := t.graphql(ctx, labelsQuery, map[string]any{"path": t.project, "term": name}, &data); err != nil {
+	var data struct {
+		Project *labelSet
+		Group   *labelSet
+	}
+	query, path := labelsQuery, t.project
+	if inGroup {
+		query = groupLabelsQuery
+		path, _ = t.groupPath(ctx)
+	}
+	if err := t.graphql(ctx, query, map[string]any{"path": path, "term": name}, &data); err != nil {
 		return "", false, err
 	}
-	if data.Project != nil {
-		for _, n := range data.Project.Labels.Nodes {
+	set := data.Project
+	if inGroup {
+		set = data.Group
+	}
+	if set != nil {
+		for _, n := range set.Labels.Nodes {
 			if n.Title == name && n.ID != "" {
 				return n.ID, true, nil
 			}
@@ -209,15 +264,20 @@ func (t *Tracker) labelID(ctx context.Context, name string) (string, bool, error
 
 // ensureLabel returns the label's id, creating the label first when it is
 // missing. A create that answers "already exists" counts as present.
-func (t *Tracker) ensureLabel(ctx context.Context, name string) (string, error) {
-	if id, ok, err := t.labelID(ctx, name); err != nil || ok {
+func (t *Tracker) ensureLabel(ctx context.Context, name string, inGroup bool) (string, error) {
+	if id, ok, err := t.labelID(ctx, name, inGroup); err != nil || ok {
 		return id, err
 	}
-	_, err := t.run(ctx, nil, "-X", "POST", "projects/"+t.path+"/labels", "-f", "name="+name, "-f", "color="+labelColor)
+	endpoint := "projects/" + t.path + "/labels"
+	if inGroup {
+		g, _ := t.groupPath(ctx)
+		endpoint = "groups/" + url.PathEscape(g) + "/labels"
+	}
+	_, err := t.run(ctx, nil, "-X", "POST", endpoint, "-f", "name="+name, "-f", "color="+labelColor)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 		return "", fmt.Errorf("gitlab tracker: create label %s: %w", strconv.Quote(name), err)
 	}
-	id, ok, err := t.labelID(ctx, name)
+	id, ok, err := t.labelID(ctx, name, inGroup)
 	if err != nil {
 		return "", err
 	}

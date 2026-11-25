@@ -133,8 +133,9 @@ func TestHostileTextIsOneArgument(t *testing.T) {
 				if err := json.Unmarshal([]byte(c.Stdin), &v); err != nil {
 					t.Errorf("stdin is not JSON: %q", c.Stdin)
 				}
-				if strings.Contains(c.Stdin, "per_page=1") {
-					t.Errorf("hostile text in a GraphQL body: %q", c.Stdin)
+				// Text may travel as a variable, never inside the query document.
+				if q, _ := v["query"].(string); strings.Contains(q, "per_page=1") {
+					t.Errorf("hostile text in a GraphQL document: %q", q)
 				}
 			}
 		}
@@ -147,7 +148,7 @@ func TestHostileTextIsOneArgument(t *testing.T) {
 // AC3: malformed keys never start glab.
 func TestMalformedKeysNeverStartGlab(t *testing.T) {
 	tr, dir := newTracker(t, true)
-	for _, k := range []string{"g/p#1", "01", "0", "1x", "-1", "+1", "1 ", "99999999999999999999", "٣"} {
+	for _, k := range []string{"g/p#1", "01", "0", "1x", "-1", "+1", "1 ", "99999999999999999999", "٣", "epic-", "epic-0", "epic-01", "Epic-1", "epic-1x", "epic--1", "epic-epic-1"} {
 		if _, err := tr.Issue(ctx, k); err == nil {
 			t.Errorf("Issue(%q) succeeded", k)
 		}
@@ -273,7 +274,7 @@ func level(l *int) int {
 	return *l
 }
 
-// AC1: levels; Epic is never returned, even when the group offers it.
+// AC2: levels; Epic (level 2) only where the group offers it.
 func TestIssueTypesLevels(t *testing.T) {
 	tr, dir := newTracker(t, true)
 	setState(t, dir, func(s *fakeState) { s.Epics = true })
@@ -285,7 +286,7 @@ func TestIssueTypesLevels(t *testing.T) {
 	for _, it := range types {
 		got[it.Name] = level(it.Level)
 	}
-	want := map[string]int{"Issue": 1, "Task": 0, "Incident": -1}
+	want := map[string]int{"Epic": 2, "Issue": 1, "Task": 0, "Incident": -1}
 	if len(got) != len(want) {
 		t.Errorf("types = %v, want %v", got, want)
 	}
@@ -296,7 +297,43 @@ func TestIssueTypesLevels(t *testing.T) {
 	}
 }
 
+func TestIssueTypesNoEpicWithoutGroupOffer(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	for _, mut := range []func(*fakeState){
+		func(s *fakeState) { s.Epics = false },
+		func(s *fakeState) { s.Epics = true; s.Group = false },
+	} {
+		setState(t, dir, mut)
+		types, err := tr.IssueTypes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range types {
+			if it.Name == "Epic" {
+				t.Errorf("Epic listed: %+v", types)
+			}
+		}
+		if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"}); !errors.Is(err, tracker.ErrUnsupported) {
+			t.Errorf("Create Epic err = %v", err)
+		}
+	}
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") || slices.Contains(c.Args, "POST") {
+			t.Errorf("write made: %v", c.Args)
+		}
+	}
+}
+
 func lastCreate(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	found := createInputs(t, dir)
+	if len(found) != 1 {
+		t.Fatalf("%d create writes, want 1", len(found))
+	}
+	return found[0]
+}
+
+func createInputs(t *testing.T, dir string) []map[string]any {
 	t.Helper()
 	var found []map[string]any
 	for _, c := range readCalls(t, dir) {
@@ -310,10 +347,7 @@ func lastCreate(t *testing.T, dir string) map[string]any {
 			found = append(found, req.Variables.Input)
 		}
 	}
-	if len(found) != 1 {
-		t.Fatalf("%d create writes, want 1", len(found))
-	}
-	return found[0]
+	return found
 }
 
 // AC2, AC4, AC5: one write carrying only the agreed fields.
@@ -349,21 +383,8 @@ func TestCreateWithParent(t *testing.T) {
 	}
 }
 
-// AC3, AC9: Epic is ErrUnsupported with no write, with or without group epics.
-func TestCreateEpicUnsupported(t *testing.T) {
-	tr, dir := newTracker(t, true)
-	for _, epics := range []bool{false, true} {
-		setState(t, dir, func(s *fakeState) { s.Epics = epics })
-		_, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"})
-		if !errors.Is(err, tracker.ErrUnsupported) || !strings.Contains(err.Error(), "Epic") {
-			t.Errorf("epics=%v: err = %v", epics, err)
-		}
-	}
-	for _, c := range readCalls(t, dir) {
-		if strings.Contains(c.Stdin, "RigCreate") || slices.Contains(c.Args, "POST") {
-			t.Errorf("write made: %v", c.Args)
-		}
-	}
+func TestCreateWithNonIIDParentRejected(t *testing.T) {
+	tr, _ := newTracker(t, true)
 	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", ParentKey: "a b"}); err == nil {
 		t.Error("non-iid ParentKey accepted")
 	}
@@ -473,4 +494,203 @@ func TestCreateReadFailureReturnsKey(t *testing.T) {
 		t.Errorf("made = %+v, err = %v; want Key, URL and an error", made, err)
 	}
 	lastCreate(t, dir) // exactly one workItemCreate
+}
+
+// AC1: the accepted key forms.
+func TestValidateKey(t *testing.T) {
+	for _, k := range []string{"1", "42", "epic-1", "epic-42", "epic-9223372036854775807"} {
+		if err := validateKey(k); err != nil {
+			t.Errorf("validateKey(%q) = %v", k, err)
+		}
+	}
+	for _, k := range []string{"", "epic-", "epic-01", "epic-0", "Epic-1", "epic-1x", "epic-9223372036854775808", "epic_1", "e-1"} {
+		if err := validateKey(k); err == nil {
+			t.Errorf("validateKey(%q) accepted", k)
+		}
+	}
+}
+
+func noEpicInREST(t *testing.T, dir string) {
+	t.Helper()
+	for _, c := range readCalls(t, dir) {
+		for _, a := range c.Args {
+			if strings.Contains(a, "epic") || strings.HasPrefix(a, "groups/") {
+				if a != "groups/"+url.PathEscape(fakeGroup)+"/labels" {
+					t.Errorf("epic in a REST argument: %q", a)
+				}
+			}
+		}
+	}
+}
+
+// AC3, AC4: Create Epic writes to the group; group labels; Rev matches Issue.
+func TestCreateEpic(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true })
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e", Labels: []string{"rig-e1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Key != "epic-1" || !strings.Contains(made.URL, "/groups/"+fakeGroup+"/-/epics/1") || made.Rev == "" {
+		t.Errorf("made = %+v", made)
+	}
+	if in := lastCreate(t, dir); in["namespacePath"] != fakeGroup {
+		t.Errorf("namespacePath = %v, want the group", in["namespacePath"])
+	}
+	if n := len(labelPosts(t, dir)); n != 0 {
+		t.Errorf("%d project label creates, want 0", n)
+	}
+	var group int
+	for _, c := range readCalls(t, dir) {
+		if slices.Contains(c.Args, "groups/"+url.PathEscape(fakeGroup)+"/labels") && slices.Contains(c.Args, "POST") {
+			group++
+		}
+	}
+	if group != 1 {
+		t.Errorf("%d group label creates, want 1", group)
+	}
+	got, err := tr.Issue(ctx, made.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rev != made.Rev || got.Key != "epic-1" || got.Type != "epic" || !slices.Contains(got.Labels, "rig-e1") || got.Status != "opened" {
+		t.Errorf("Issue = %+v, made.Rev = %q", got, made.Rev)
+	}
+	noEpicInREST(t, dir)
+}
+
+// AC2: an epic with a parent is unsupported, with no write.
+func TestCreateEpicWithParentUnsupported(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true; s.GroupLabels = nil })
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e", ParentKey: "1"}); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("epic with parent err = %v", err)
+	}
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") {
+			t.Errorf("work item written")
+		}
+	}
+}
+
+// AC4: epic-1 and issue 1 are different work items.
+func TestEpicAndIssueWithSameIID(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true })
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "the epic"}); err != nil {
+		t.Fatal(err)
+	}
+	e, err := tr.Issue(ctx, "epic-1")
+	if err != nil || e.Title != "the epic" {
+		t.Errorf("Issue(epic-1) = %+v, %v", e, err)
+	}
+	i, err := tr.Issue(ctx, "1")
+	if err != nil || i.Title != "parent" || i.Key != "1" {
+		t.Errorf("Issue(1) = %+v, %v", i, err)
+	}
+	if _, err := tr.Issue(ctx, "epic-9"); !errors.Is(err, tracker.ErrNotFound) {
+		t.Errorf("Issue(epic-9) err = %v", err)
+	}
+	noEpicInREST(t, dir)
+}
+
+// AC5: a child created under an epic reports it as its parent.
+func TestEpicParentAndChildren(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true })
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "the epic"}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := tr.Create(ctx, tracker.NewIssue{Type: "Issue", Title: "kid", ParentKey: "epic-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := createInputs(t, dir)
+	in := ins[len(ins)-1]
+	if hw, _ := in["hierarchyWidget"].(map[string]any); hw["parentId"] != "gid://gitlab/WorkItem/e1" {
+		t.Errorf("hierarchyWidget = %v", in["hierarchyWidget"])
+	}
+	got, err := tr.Issue(ctx, child.Key)
+	if err != nil || got.Parent == nil || got.Parent.Key != "epic-1" {
+		t.Errorf("Issue(child).Parent = %+v, %v", got.Parent, err)
+	}
+	kids, err := tr.Children(ctx, "epic-1")
+	if err != nil || len(kids) != 1 || kids[0].Key != child.Key {
+		t.Errorf("Children(epic-1) = %+v, %v", kids, err)
+	}
+	if kids, err := tr.Children(ctx, "1"); err != nil || len(kids) != 1 || kids[0].Key != "2" {
+		t.Errorf("Children(1) = %+v, %v", kids, err)
+	}
+	noEpicInREST(t, dir)
+}
+
+// AC6, AC8: label search returns group epics, not another group's.
+func TestSearchReturnsEpics(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) {
+		s.Epics = true
+		s.EpicItems = []fakeIssue{{IID: 1, WebURL: epicURL(1), Title: "ours", State: "opened", Labels: []string{"rig"}}}
+		s.Foreign = []fakeIssue{
+			{IID: 7, WebURL: "https://gitlab.example/groups/grp/-/epics/7", Title: "ancestor", Labels: []string{"rig"}},
+			{IID: 8, WebURL: "https://gitlab.example/groups/other/-/epics/8", Title: "other", Labels: []string{"rig"}},
+		}
+	})
+	refs, err := tr.Search(ctx, tracker.Query{Labels: []string{"rig"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range refs {
+		keys = append(keys, r.Key)
+	}
+	if !slices.Equal(keys, []string{"1", "2", "epic-1"}) {
+		t.Errorf("keys = %v, want [1 2 epic-1]", keys)
+	}
+}
+
+// AC8: an ancestor group's epic as a parent is dropped.
+func TestForeignEpicParentDropped(t *testing.T) {
+	tr, _ := newTracker(t, true)
+	tr.base = "https://gitlab.example/" + fakeProject
+	tr.group, tr.groupLoaded = fakeGroup, true
+	for url, ok := range map[string]bool{
+		"https://gitlab.example/groups/grp/sub/-/epics/3":      true,
+		"https://gitlab.example/groups/grp/sub/-/work_items/3": true,
+		"https://gitlab.example/groups/grp/-/epics/3":          false,
+		"https://gitlab.example/groups/grp/sub/sub2/-/epics/3": false,
+		"https://gitlab.example/groups/grp/sub/-/epics/30":     false,
+		"https://other/groups/grp/sub/-/epics/3":               false,
+	} {
+		r, got := tr.workItem(workItemRef{IID: "3", WebURL: url})
+		if got != ok || (ok && r.Key != "epic-3") {
+			t.Errorf("%s: %+v, %v; want ok=%v", url, r, got, ok)
+		}
+	}
+}
+
+// AC7: Comment and SetStatus on an epic act on the group epic.
+func TestEpicCommentAndSetStatus(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) {
+		s.Epics = true
+		s.EpicItems = []fakeIssue{{IID: 1, WebURL: epicURL(1), Title: "ours", State: "opened", Updated: "2026-01-01T00:00:00Z"}}
+	})
+	c, err := tr.Comment(ctx, "epic-1", tracker.Comment{Body: "hi"})
+	if err != nil || c.ID == "" || !strings.Contains(c.URL, "/epics/1#note_"+c.ID) {
+		t.Errorf("Comment = %+v, %v", c, err)
+	}
+	r, err := tr.SetStatus(ctx, "epic-1", "closed")
+	if err != nil || !r.Changed || r.From != "opened" || r.To != "closed" {
+		t.Errorf("SetStatus = %+v, %v", r, err)
+	}
+	if r, err := tr.SetStatus(ctx, "epic-1", "closed"); err != nil || r.Changed {
+		t.Errorf("second SetStatus = %+v, %v", r, err)
+	}
+	if got, _ := tr.Issue(ctx, "1"); got.Status != "opened" {
+		t.Errorf("project issue 1 changed: %+v", got)
+	}
+	if _, err := tr.Comment(ctx, "epic-9", tracker.Comment{Body: "x"}); !errors.Is(err, tracker.ErrNotFound) {
+		t.Errorf("Comment(epic-9) err = %v", err)
+	}
+	noEpicInREST(t, dir)
 }

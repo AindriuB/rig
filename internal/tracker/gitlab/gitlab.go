@@ -60,6 +60,10 @@ type Tracker struct {
 	mu        sync.Mutex
 	probed    bool
 	hierarchy bool
+
+	gmu         sync.Mutex
+	groupLoaded bool
+	group       string // the project's direct group path, "" when it has none
 }
 
 var _ tracker.Tracker = (*Tracker)(nil)
@@ -82,22 +86,45 @@ func New(o Options) (*Tracker, error) {
 	return t, nil
 }
 
-// validateKey applies tracker.ValidateKey and the GitLab rule: a key is an
-// issue iid, decimal digits with no leading zero that fit in an int64.
+// validateKey applies tracker.ValidateKey and the GitLab rule: a key is
+// "<n>", a project issue iid, or "epic-<n>", a group epic iid; n is decimal
+// digits with no leading zero that fit in an int64.
 func validateKey(key string) error {
+	_, _, err := parseKey(key)
+	return err
+}
+
+const epicPrefix = "epic-"
+
+// parseKey returns the iid in key and whether key names a group epic.
+func parseKey(key string) (iid string, epic bool, err error) {
 	if err := tracker.ValidateKey(key); err != nil {
-		return err
+		return "", false, err
 	}
-	for _, r := range key {
+	iid = key
+	if rest, ok := strings.CutPrefix(key, epicPrefix); ok {
+		iid, epic = rest, true
+	}
+	if err := checkIID(iid); err != nil {
+		return "", false, fmt.Errorf("issue key %q: %w", key, err)
+	}
+	return iid, epic, nil
+}
+
+func checkIID(n string) error {
+	if n == "" {
+		return errors.New("no issue number")
+	}
+	for _, r := range n {
 		if r < '0' || r > '9' {
-			return fmt.Errorf("issue key %q is not an issue number", key)
+			return errors.New("not an issue number")
 		}
 	}
-	if key[0] == '0' {
-		return fmt.Errorf("issue key %q has a leading zero", key)
+	if n[0] == '0' {
+		return errors.New("leading zero")
 	}
-	if _, err := strconv.ParseInt(key, 10, 64); err != nil {
-		return fmt.Errorf("issue key %q does not fit in 64 bits", key)
+	if _, err := strconv.ParseInt(n, 10, 64); err != nil {
+		return errors.New("does not fit in 64 bits")
 	}
 	return nil
 }
@@ -216,6 +243,9 @@ func (t *Tracker) rest(iid string) string { return "projects/" + t.path + "/issu
 
 func (t *Tracker) fetch(ctx context.Context, key string) (issueJSON, error) {
 	var is issueJSON
+	if err := checkIID(key); err != nil { // never an epic key in a REST path
+		return is, fmt.Errorf("gitlab tracker: issue key %q: %w", key, err)
+	}
 	err := t.get(ctx, &is, t.rest(key))
 	return is, err
 }
@@ -298,10 +328,11 @@ type workItemRef struct {
 	} `json:"workItemType"`
 }
 
-// workItem converts a work item to an IssueRef, or reports false for one that is not
-// an issue of a project (an epic lives in a group and has no key here).
+// workItem converts a work item to an IssueRef, or reports false for one that
+// is neither an issue of this project nor an epic of its direct group (an
+// epic's key is "epic-<iid>").
 func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
-	if validateKey(w.IID) != nil {
+	if checkIID(w.IID) != nil {
 		return tracker.IssueRef{}, false
 	}
 	u, err := url.Parse(w.WebURL)
@@ -312,8 +343,12 @@ func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
 	if err != nil || t.base == "" || !strings.EqualFold(u.Scheme, b.Scheme) || !strings.EqualFold(u.Host, b.Host) {
 		return tracker.IssueRef{}, false
 	}
+	typ := strings.ToLower(w.WorkItemType.Name)
 	rest, ok := cutPrefixFold(u.Path, strings.TrimSuffix(b.Path, "/")+"/-/")
 	if !ok {
+		if t.isGroupEpic(u.Path, b.Path, w.IID) {
+			return tracker.IssueRef{Key: epicPrefix + w.IID, URL: w.WebURL, Title: w.Title, Type: typ}, true
+		}
 		return tracker.IssueRef{}, false
 	}
 	n, ok := strings.CutPrefix(rest, "issues/")
@@ -323,7 +358,34 @@ func (t *Tracker) workItem(w workItemRef) (tracker.IssueRef, bool) {
 	if !ok || n != w.IID {
 		return tracker.IssueRef{}, false
 	}
-	return tracker.IssueRef{Key: w.IID, URL: w.WebURL, Title: w.Title, Type: strings.ToLower(w.WorkItemType.Name)}, true
+	return tracker.IssueRef{Key: w.IID, URL: w.WebURL, Title: w.Title, Type: typ}, true
+}
+
+// isGroupEpic reports whether urlPath is the page of epic iid in the
+// project's own direct group. basePath is the project's web path, which ends
+// with the project path; what precedes that is the relative URL root.
+func (t *Tracker) isGroupEpic(urlPath, basePath, iid string) bool {
+	t.gmu.Lock()
+	group := t.group
+	t.gmu.Unlock()
+	if group == "" {
+		return false
+	}
+	bp := strings.TrimSuffix(basePath, "/")
+	suffix := "/" + t.project
+	if len(bp) < len(suffix) || !strings.EqualFold(bp[len(bp)-len(suffix):], suffix) {
+		return false
+	}
+	root := bp[:len(bp)-len(suffix)]
+	rest, ok := cutPrefixFold(urlPath, root+"/groups/"+group+"/-/")
+	if !ok {
+		return false
+	}
+	n, ok := strings.CutPrefix(rest, "epics/")
+	if !ok {
+		n, ok = strings.CutPrefix(rest, "work_items/")
+	}
+	return ok && n == iid
 }
 
 // projectBase learns this project's own web URL once, so a ref is accepted only
@@ -375,6 +437,9 @@ func (t *Tracker) family(ctx context.Context, key string) (parent *tracker.Issue
 	if err = t.projectBase(ctx); err != nil {
 		return nil, nil, false, err
 	}
+	if _, err = t.groupPath(ctx); err != nil {
+		return nil, nil, false, err
+	}
 	if err = t.graphql(ctx, hierarchyQuery, map[string]any{"path": t.project, "iid": key}, &data); err != nil {
 		return nil, nil, false, err
 	}
@@ -402,6 +467,9 @@ func (t *Tracker) family(ctx context.Context, key string) (parent *tracker.Issue
 func (t *Tracker) Issue(ctx context.Context, key string) (tracker.Issue, error) {
 	if err := validateKey(key); err != nil {
 		return tracker.Issue{}, err
+	}
+	if iid, epic, _ := parseKey(key); epic {
+		return t.epicIssue(ctx, key, iid)
 	}
 	is, err := t.fetch(ctx, key)
 	if err != nil {
@@ -449,6 +517,13 @@ func (t *Tracker) Search(ctx context.Context, q tracker.Query) ([]tracker.IssueR
 	for _, i := range list {
 		refs = append(refs, i.ref())
 	}
+	if len(q.Labels) > 0 {
+		epics, err := t.searchEpics(ctx, q, limit)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, epics...)
+	}
 	if len(refs) > limit {
 		refs = refs[:limit]
 	}
@@ -467,7 +542,13 @@ func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef,
 	if !h {
 		return nil, fmt.Errorf("gitlab tracker: work-item hierarchy is not available here: %w", tracker.ErrUnsupported)
 	}
-	_, kids, found, err := t.family(ctx, key)
+	var kids []tracker.IssueRef
+	var found bool
+	if iid, epic, _ := parseKey(key); epic {
+		kids, found, err = t.epicChildren(ctx, iid)
+	} else {
+		_, kids, found, err = t.family(ctx, key)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -481,6 +562,9 @@ func (t *Tracker) Children(ctx context.Context, key string) ([]tracker.IssueRef,
 func (t *Tracker) Comment(ctx context.Context, key string, c tracker.Comment) (tracker.CommentResult, error) {
 	if err := validateKey(key); err != nil {
 		return tracker.CommentResult{}, err
+	}
+	if iid, epic, _ := parseKey(key); epic {
+		return t.epicComment(ctx, iid, c)
 	}
 	is, err := t.fetch(ctx, key)
 	if err != nil {
@@ -513,6 +597,9 @@ func (t *Tracker) SetStatus(ctx context.Context, key, status string) (tracker.St
 		want, event = "closed", "close"
 	default:
 		return tracker.StatusResult{}, fmt.Errorf("gitlab tracker: %w %q: GitLab issues are \"opened\" or \"closed\"", tracker.ErrNoTransition, status)
+	}
+	if iid, epic, _ := parseKey(key); epic {
+		return t.epicSetStatus(ctx, iid, want, event)
 	}
 	is, err := t.fetch(ctx, key)
 	if err != nil {
