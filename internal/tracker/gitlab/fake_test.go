@@ -35,18 +35,20 @@ type fakeIssue struct {
 }
 
 type fakeState struct {
-	Hierarchy bool        `json:"hierarchy"`
-	Group     bool        `json:"group"`
-	Epics     bool        `json:"epics"`
-	NoAuth    bool        `json:"noauth"`
-	GQLFail   bool        `json:"gqlfail"`
-	TypesFail bool        `json:"typesfail"`
-	FailLabel string      `json:"faillabel"`
-	FailNew   bool        `json:"failnew"`
-	Labels    []string    `json:"labels"`
-	BaseURL   string      `json:"base_url"`
-	Counter   int         `json:"counter"`
-	Issues    []fakeIssue `json:"issues"`
+	Hierarchy bool   `json:"hierarchy"`
+	Group     bool   `json:"group"`
+	Epics     bool   `json:"epics"`
+	NoAuth    bool   `json:"noauth"`
+	GQLFail   bool   `json:"gqlfail"`
+	TypesFail bool   `json:"typesfail"`
+	FailLabel string `json:"faillabel"`
+	FailNew   bool   `json:"failnew"`
+	// FailEpicRead fails the epic read-back once an epic exists.
+	FailEpicRead bool        `json:"failepicread"`
+	Labels       []string    `json:"labels"`
+	BaseURL      string      `json:"base_url"`
+	Counter      int         `json:"counter"`
+	Issues       []fakeIssue `json:"issues"`
 	// Group epics (iid is group-scoped, so 1 may also be a project issue) and
 	// labels created in the group.
 	EpicItems   []fakeIssue `json:"epic_items"`
@@ -263,6 +265,10 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 		}
 		return out(map[string]any{"data": map[string]any{"project": p}})
 	case strings.Contains(req.Query, "RigEpicRead"):
+		if st.FailEpicRead && len(st.EpicItems) > 0 {
+			fmt.Fprintln(os.Stderr, "glab: 500 epic read boom")
+			return 1
+		}
 		nodes := []any{}
 		for _, e := range st.EpicItems {
 			if strconv.FormatInt(e.IID, 10) != fmt.Sprint(req.Variables["iid"]) {

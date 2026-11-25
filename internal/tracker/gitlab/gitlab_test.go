@@ -496,6 +496,17 @@ func TestCreateReadFailureReturnsKey(t *testing.T) {
 	lastCreate(t, dir) // exactly one workItemCreate
 }
 
+// AC3: the epic was written but the revision read failed.
+func TestCreateEpicReadFailureReturnsKey(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true; s.FailEpicRead = true })
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"})
+	if err == nil || made.Key != "epic-1" || !strings.Contains(made.URL, "/groups/"+fakeGroup+"/-/epics/1") {
+		t.Errorf("made = %+v, err = %v; want epic-1, its URL and an error", made, err)
+	}
+	lastCreate(t, dir) // exactly one workItemCreate
+}
+
 // AC1: the accepted key forms.
 func TestValidateKey(t *testing.T) {
 	for _, k := range []string{"1", "42", "epic-1", "epic-42", "epic-9223372036854775807"} {
