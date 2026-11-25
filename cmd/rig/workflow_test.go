@@ -286,3 +286,31 @@ func TestWorkflowValidateFileOutsideRepo(t *testing.T) {
 		t.Fatalf("invalid file outside repo: %d %s", code, out)
 	}
 }
+
+func TestWorkflowShowPush(t *testing.T) {
+	st := memstore.New(store.Options{})
+	src := `{"name":"p","version":1,"initial":"a","states":{"a":{},"b":{"final":true}},"transitions":[{"from":"a","to":"b"}],
+"tracker":{"push":{"levels":["Initiative","Epic","Story","Subtask"],"types":["Bug","Spike"]}}}`
+	file := writeWF(t, t.TempDir(), "push.json", src)
+	a, out, errOut := wfApp(t, st, file, "")
+	if code := a.run(ctx, []string{"workflow", "show"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	for _, want := range []string{"push levels: Initiative > Epic > Story > Subtask\n", "push types: Bug, Spike\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("lacks %q:\n%s", want, out)
+		}
+	}
+	a, out, _ = wfApp(t, st, file, "")
+	if code := a.run(ctx, []string{"workflow", "show", "--json"}); code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(out.String(), `"push"`) || !strings.Contains(out.String(), `"Subtask"`) {
+		t.Fatalf("json lacks push:\n%s", out)
+	}
+	a, out, _ = wfApp(t, st, "basic", "")
+	a.run(ctx, []string{"workflow", "show"})
+	if strings.Contains(out.String(), "push") {
+		t.Fatalf("basic shows push:\n%s", out)
+	}
+}
