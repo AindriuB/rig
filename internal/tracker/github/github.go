@@ -182,7 +182,7 @@ func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
 		return tracker.Caps{}, fmt.Errorf("gh api users/%s: unreadable JSON: %w", t.owner, err)
 	}
 	return tracker.Caps{
-		Parent: true, Children: true, Search: true, Comment: true, SetStatus: true,
+		Parent: true, Children: true, Search: true, Comment: true, SetStatus: true, Create: true,
 		Types:  u.Type == "Organization",
 		Levels: []string{},
 	}, nil

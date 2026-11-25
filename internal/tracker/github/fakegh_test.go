@@ -57,6 +57,10 @@ type fakeState struct {
 	Clock    int                  `json:"clock"`
 	Comments int                  `json:"comments"`
 	Issues   map[string]fakeIssue `json:"issues"`
+	// Types are the organisation's issue types.
+	Types []string `json:"types"`
+	// FailSub makes the sub-issues call fail.
+	FailSub bool `json:"failSub"`
 }
 
 // fakeGH installs the fake gh on PATH and returns the state file path and a
@@ -241,6 +245,31 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 			items = append(items, fmt.Sprintf(`{"number":%s,"html_url":%s,"repository_url":%s,"title":%s,"type":%s}`, k, jstr("https://github.com/"+repoPath+"/issues/"+k), jstr("https://api.github.com/repos/"+repoPath), jstr(c.Title), typ))
 		}
 		return reply(`{"total_count":` + strconv.Itoa(len(items)) + `,"items":[` + strings.Join(items, ",") + `]}`)
+	case endpoint == "orgs/"+st.Owner+"/issue-types" && method == "GET":
+		if !st.OwnerOrg {
+			return fail("gh: Not Found (HTTP 404)")
+		}
+		var ts []string
+		for i, n := range st.Types {
+			ts = append(ts, fmt.Sprintf(`{"id":%d,"name":%s}`, 900+i, jstr(n)))
+		}
+		return reply("[" + strings.Join(ts, ",") + "]")
+	case endpoint == repo+"/issues" && method == "POST":
+		var req struct {
+			Title  string   `json:"title"`
+			Body   string   `json:"body"`
+			Labels []string `json:"labels"`
+			Type   string   `json:"type"`
+		}
+		_ = json.Unmarshal([]byte(stdin), &req)
+		n := 1
+		for _, k := range sortedKeys(st.Issues) {
+			a, _ := strconv.Atoi(k)
+			n = max(n, a+1)
+		}
+		k := strconv.Itoa(n)
+		st.Issues[k] = fakeIssue{Title: req.Title, Body: req.Body, State: "OPEN", Updated: tick(st), Labels: req.Labels, Type: req.Type}
+		return reply(fmt.Sprintf(`{"number":%d,"id":%d,"html_url":%s,"updated_at":%s}`, n, 5000+n, jstr(issueURL(st, k)), jstr(fmt.Sprintf("2024-01-01T00:00:%02dZ", st.Issues[k].Updated))))
 	case strings.HasPrefix(endpoint, repo+"/issues/"):
 		tail := strings.TrimPrefix(endpoint, repo+"/issues/")
 		n, sub, _ := strings.Cut(tail, "/")
@@ -251,6 +280,22 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 		var body map[string]string
 		_ = json.Unmarshal([]byte(stdin), &body)
 		switch {
+		case method == "POST" && sub == "sub_issues":
+			if st.FailSub {
+				return fail("gh: Validation Failed (HTTP 422)")
+			}
+			var req struct {
+				ID int `json:"sub_issue_id"`
+			}
+			_ = json.Unmarshal([]byte(stdin), &req)
+			c := strconv.Itoa(req.ID - 5000)
+			ci, ok := st.Issues[c]
+			if !ok {
+				return fail("gh: Not Found (HTTP 404)")
+			}
+			ci.Parent, _ = strconv.Atoi(n)
+			st.Issues[c] = ci
+			return reply(`{}`)
 		case method == "POST" && sub == "comments":
 			st.Comments++
 			is.Updated = tick(st)
