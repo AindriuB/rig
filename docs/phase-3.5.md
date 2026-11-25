@@ -55,11 +55,12 @@ added by a later task.
 
 ### Tasks
 
-1. 01: release signing and the runbook.
-2. 02 and 03: verification, release lookup and replacement (internal/selfupdate).
-3. 04: the `rig update` command.
-4. 05: `update.auto`.
-5. 06: these docs.
+1. 01 release-signing: sign `SHA256SUMS` in the release workflow.
+2. 02 selfupdate-fetch-verify: find, download and verify a signed release.
+3. 03 selfupdate-replace: stage and atomically replace the binary.
+4. 04 rig-update-command: `rig update`.
+5. 05 update-auto-mode: `update.auto` and the post-command pass.
+6. 06 docs-052: these docs.
 
 ## 0.6.0
 
