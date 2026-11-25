@@ -224,6 +224,8 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 				s.parentKey, s.parentType = p.External.Key, p.External.Type
 			case inRun[p.ID] != nil:
 				s.parentTask = p.ID
+			default:
+				refuse(t, "its parent task %s is not linked to an issue; push it first, or use --tree", p.Short)
 			}
 		}
 		steps = append(steps, s)
@@ -344,6 +346,12 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 					}
 					return []store.Event{ev}, nil
 				})
+			}
+			if errors.Is(err, store.ErrPushIntent) {
+				// Stamp saw an intent we did not: another push of this task
+				// got in between our read and our append.
+				stop(i, s, "another push of this task is under way; not creating a second issue")
+				break
 			}
 			if err != nil {
 				stop(i, s, "record the intent: %v", err)

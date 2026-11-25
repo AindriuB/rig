@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/AindriuB/rig/internal/secret"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
 	"github.com/AindriuB/rig/internal/tracker/fake"
@@ -390,5 +394,154 @@ func TestAcceptanceOf(t *testing.T) {
 func TestTrackerPushInHelp(t *testing.T) {
 	if r := rig(t, t.TempDir(), nil, nil, "help"); r.code != 0 || !strings.Contains(r.out, "rig tracker push <task>") {
 		t.Fatalf("help: %+v", r)
+	}
+}
+
+// pushAcceptanceWorkflow maps the list field "ac" to the acceptance attribute
+// when mapped is set.
+func pushAcceptanceWorkflow(t *testing.T, mapped bool) string {
+	t.Helper()
+	m := `"tracker": {"push": {"levels": ["Epic"]}}`
+	if mapped {
+		m = `"tracker": {"push": {"levels": ["Epic"]}, "map": {"title": "title", "body": "description", "ac": "acceptance"}}`
+	}
+	wf := `{
+  "name": "pw", "version": 1, "initial": "todo",
+  "states": {"todo": {"action": "start"}, "done": {"final": true}},
+  "transitions": [{"from": "todo", "to": "done"}],
+  "fields": {"ac": {"type": "list"}},
+  "findings": {"severities": ["hi"]},
+  ` + m + `
+}`
+	path := filepath.Join(t.TempDir(), "pa.json")
+	if err := os.WriteFile(path, []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// AC6: acceptance is sent only when tracker.jira.acceptanceField is set and a
+// workflow field is mapped to it; findings and notes never appear in a field.
+func TestTrackerPushPayloadScope(t *testing.T) {
+	jira := map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG", "jira": map[string]any{"acceptanceField": "customfield_10020"}}
+	noAcc := map[string]any{"kind": "jira", "url": "https://acme.example.com", "project": "RIG"}
+	for _, tc := range []struct {
+		name   string
+		cfg    map[string]any
+		mapped bool
+		want   []string
+	}{
+		{"field set and mapped", jira, true, []string{"first", "second"}},
+		{"field not set", noAcc, true, nil},
+		{"not mapped", jira, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &pushEnv{trkEnv: newTrkEnv(t, tc.cfg)}
+			e.stores[storeKeychain].Set(ctx, "jira:acme.example.com", secret.Secret{User: "me@example.com", Token: "t"})
+			e.envVars["RIG_WORKFLOW"] = pushAcceptanceWorkflow(t, tc.mapped)
+			e.fk = fake.New(pushCaps, nil, nil)
+			e.fk.Types = []tracker.IssueType{{Name: "Epic"}}
+			e.tr = e.fk
+			epic := e.task("epic", "", `ac=["first","second"]`)
+			if code := e.run("finding", "add", epic, "--severity", "hi", "--summary", "FINDING-SUMMARY"); code != 0 {
+				t.Fatalf("finding: %d %s", code, e.err.String())
+			}
+			if code := e.run("note", "add", epic, "--kind", "decision", "--text", "NOTE-TEXT"); code != 0 {
+				t.Fatalf("note: %d %s", code, e.err.String())
+			}
+			if code := e.run("tracker", "push", epic); code != 0 || len(e.fk.Created) != 1 {
+				t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
+			}
+			ni := e.fk.Created[0]
+			if !slices.Equal(ni.Acceptance, tc.want) {
+				t.Fatalf("acceptance %v, want %v", ni.Acceptance, tc.want)
+			}
+			if ni.Title != "Title epic" || ni.Body != "Body epic" || ni.Type != "Epic" || ni.ParentKey != "" || !slices.Equal(ni.Labels, []string{"rig-" + epic}) {
+				t.Fatalf("payload %+v", ni)
+			}
+			all := strings.Join(append(append([]string{ni.Type, ni.Title, ni.Body, ni.ParentKey}, ni.Labels...), ni.Acceptance...), "\n")
+			if strings.Contains(all, "FINDING-SUMMARY") || strings.Contains(all, "NOTE-TEXT") {
+				t.Fatalf("finding or note leaked: %+v", ni)
+			}
+		})
+	}
+}
+
+// AC13: a child whose parent task is not linked is refused when pushed alone,
+// before any write.
+func TestTrackerPushRefusesUnlinkedParent(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	epic, story, _ := e.tree()
+	before := e.eventsByTask()
+	if code := e.run("tracker", "push", story); code != 1 || len(e.fk.Created) != 0 ||
+		!strings.Contains(e.err.String(), epic) || !strings.Contains(e.err.String(), "--tree") || len(e.newEvents(before)) != 0 {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
+	}
+	// With the parent linked it goes ahead, under the parent's issue. (Pushed
+	// alone it is depth 0, so the tracker's types are left out of it.)
+	e.fk.Types = nil
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push parent: %d", code)
+	}
+	if code := e.run("tracker", "push", story); code != 0 || len(e.fk.Created) != 2 || e.fk.Created[1].ParentKey != e.linkOf(epic).Key {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// gate holds every caller of Capabilities until n have arrived, so that
+// racing pushes reach the intent step together.
+type gate struct {
+	*fake.Tracker
+	wg *sync.WaitGroup
+}
+
+func (g gate) Capabilities(ctx context.Context) (tracker.Caps, error) {
+	g.wg.Done()
+	g.wg.Wait()
+	return g.Tracker.Capabilities(ctx)
+}
+
+// Create is slow, so a push that lost the race would otherwise find the link
+// already written.
+func (g gate) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issue, error) {
+	time.Sleep(400 * time.Millisecond)
+	return g.Tracker.Create(ctx, ni)
+}
+
+// AC14: two pushes of one unlinked task racing make exactly one create.
+func TestTrackerPushRaceMakesOneCreate(t *testing.T) {
+	for round := 0; round < 2; round++ {
+		e := newPushEnv(t, pushCaps)
+		epic := e.task("epic", "")
+		var wg sync.WaitGroup
+		wg.Add(2)
+		g := gate{e.fk, &wg}
+		codes := make([]int, 2)
+		var done sync.WaitGroup
+		// The first append waits, holding the store's lock, so that the
+		// other push has read the log (no intent yet) before it lands.
+		var slow sync.Once
+		now := e.a.now
+		slowNow := func() time.Time {
+			slow.Do(func() { time.Sleep(300 * time.Millisecond) })
+			return now()
+		}
+		for i := range codes {
+			a2 := *e.a
+			a2.stdout, a2.stderr, a2.now = &bytes.Buffer{}, &bytes.Buffer{}, slowNow
+			a2.tracker = func(context.Context, trackerSpec) (tracker.Tracker, error) { return g, nil }
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				codes[i] = a2.run(ctx, []string{"tracker", "push", epic})
+			}()
+		}
+		done.Wait()
+		if len(e.fk.Created) != 1 {
+			t.Fatalf("round %d: %d creates, exits %v", round, len(e.fk.Created), codes)
+		}
+		if e.intents(epic) != 1 {
+			t.Fatalf("round %d: %d intents", round, e.intents(epic))
+		}
 	}
 }

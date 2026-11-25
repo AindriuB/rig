@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
@@ -43,4 +44,24 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// A second intent for the tracker an intent already names is refused, so
+// racing pushes of one task cannot both create; another tracker's is not.
+func TestStampTrackerPushRefusesSecond(t *testing.T) {
+	o := Options{Now: func() time.Time { return t0 }}
+	d := TrackerPushData{Marker: "rig-t-0001", Kind: "jira", Host: "j.example", Project: "AB"}
+	first, err := o.Stamp(sampleLog(t), []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := append(sampleLog(t), first...)
+	d.Host = "J.EXAMPLE"
+	if _, err := o.Stamp(log, []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}}); !errors.Is(err, ErrPushIntent) {
+		t.Fatalf("same tracker: %v", err)
+	}
+	d.Host = "other.example"
+	if _, err := o.Stamp(log, []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}}); err != nil {
+		t.Fatalf("other tracker: %v", err)
+	}
 }
