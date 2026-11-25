@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -40,6 +41,14 @@ func newAutoRig(t *testing.T, mode string, env map[string]string) *autoRig {
 	r.a.cwd = t.TempDir()
 	r.a.exe = func() (string, error) { return filepath.Join(r.home, "rig"), nil }
 	r.a.stderrTTY = func() bool { return true }
+	// no test reaches the network: a fake updater and a transport that refuses
+	r.a.updater = func(context.Context, selfupdate.Options) selfupdate.Result {
+		return selfupdate.Result{Action: selfupdate.ActionUpToDate, Message: "fake updater"}
+	}
+	r.a.updateTransport = updRT(func(*http.Request) (*http.Response, error) {
+		r.reqs++
+		return nil, errors.New("test refuses network access")
+	})
 	r.a.autoRun = func(_ context.Context, o selfupdate.AutoOptions) {
 		r.order = append(r.order, "auto")
 		r.calls = append(r.calls, o)
@@ -59,30 +68,40 @@ func (r *autoRig) writeGlobal(t *testing.T, body string) {
 
 func TestAutoUpdateGatingRows(t *testing.T) {
 	cases := []struct {
-		name string
-		mode string
-		env  map[string]string
-		tty  bool
-		args []string
-		want bool // the pass runs
+		name      string
+		mode      string
+		env       map[string]string
+		tty       bool
+		args      []string
+		cancelled bool
+		want      bool // the pass runs
 	}{
-		{"unset", "", nil, true, []string{"workflow", "show"}, false},
-		{"off", "off", nil, true, []string{"workflow", "show"}, false},
-		{"notify", "notify", nil, true, []string{"workflow", "show"}, true},
-		{"install", "install", nil, true, []string{"workflow", "show"}, true},
-		{"CI", "install", map[string]string{"CI": "true"}, true, []string{"workflow", "show"}, false},
-		{"not a terminal", "install", nil, false, []string{"workflow", "show"}, false},
-		{"json", "install", nil, true, []string{"workflow", "show", "--json"}, false},
-		{"update", "install", nil, true, []string{"update", "--check"}, false},
-		{"version", "install", nil, true, []string{"version"}, false},
+		{"unset", "", nil, true, []string{"workflow", "show"}, false, false},
+		{"off", "off", nil, true, []string{"workflow", "show"}, false, false},
+		{"notify", "notify", nil, true, []string{"workflow", "show"}, true, false},
+		{"install", "install", nil, true, []string{"workflow", "show"}, true, false},
+		{"CI", "install", map[string]string{"CI": "true"}, true, []string{"workflow", "show"}, false, false},
+		{"not a terminal", "install", nil, false, []string{"workflow", "show"}, false, false},
+		{"json", "install", nil, true, []string{"workflow", "show", "--json"}, false, false},
+		{"format json", "install", nil, true, []string{"workflow", "show", "--format", "json"}, false, false},
+		{"format=json", "install", nil, true, []string{"workflow", "show", "--format=json"}, false, false},
+		{"json=true", "install", nil, true, []string{"workflow", "show", "--json=true"}, false, false},
+		{"cancelled ctx", "install", nil, true, []string{"workflow", "show"}, false, true},
+		{"update", "install", nil, true, []string{"update", "--check"}, false, false},
+		{"version", "install", nil, true, []string{"version"}, false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newAutoRig(t, c.mode, c.env)
 			r.a.stderrTTY = func() bool { return c.tty }
 			ref := newAutoRig(t, "off", c.env)
-			code := r.a.runAndAutoUpdate(context.Background(), c.args)
-			refCode := ref.a.runAndAutoUpdate(context.Background(), c.args)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if c.cancelled {
+				cancel()
+			}
+			code := r.a.runAndAutoUpdate(ctx, c.args)
+			refCode := ref.a.runAndAutoUpdate(ctx, c.args)
 			if (len(r.calls) == 1) != c.want {
 				t.Fatalf("pass ran %d times, want run=%v", len(r.calls), c.want)
 			}
@@ -150,5 +169,13 @@ func TestAutoUpdateNotifyEndToEnd(t *testing.T) {
 	r.a.runAndAutoUpdate(context.Background(), []string{"workflow", "show"})
 	if r.reqs != 1 {
 		t.Fatalf("second run made a request: %d", r.reqs)
+	}
+}
+
+// I6: under the guard the default transport cannot reach the network.
+func TestGuardRefusesTheNetwork(t *testing.T) {
+	_, err := selfupdate.NewClient(nil).Lookup(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "tests refuse network access") {
+		t.Fatalf("got %v", err)
 	}
 }

@@ -34,8 +34,9 @@ added by a later task.
 - **`update.auto`:** `off` (default), `notify` or `install`. Global file only,
   so a repository cannot turn it on. At most one check per 24 h, run after the
   command, with a 2 s timeout, one stderr line, and never a change of exit code.
-  Silent in CI, without a terminal, with `--json`, and offline. A lock file
-  stops two processes installing at once.
+  Silent in CI, without a terminal, with `--json` or `--format json`, and
+  offline. A kernel lock file beside the binary (`.<name>.update.lock`) stops
+  two processes installing at once; `rig update` takes it too.
 
 ### Security and trust
 

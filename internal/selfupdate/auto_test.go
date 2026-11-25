@@ -126,20 +126,27 @@ func TestAutoInstallUpdatesAndNamesVersion(t *testing.T) {
 	if got := e.errOut.String(); lines(got) != 1 || !strings.Contains(got, "0.5.3") {
 		t.Fatalf("stderr %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(e.dir, lockFile)); !os.IsNotExist(err) {
-		t.Fatal("lock left behind")
+}
+
+func TestAutoFailedInstallLeavesBinaryAndPrintsOneLine(t *testing.T) {
+	e := newAutoEnv(t)
+	o := e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig"))
+	o.Install.verify = func(*Download) error { return &CheckError{Check: "signature", Detail: "bad\nmultiline"} }
+	Auto(context.Background(), o)
+	unchanged(t, e.exe, e.old)
+	if got := e.errOut.String(); lines(got) != 1 || !strings.Contains(got, "automatic update failed") {
+		t.Fatalf("stderr %q", got)
 	}
 }
 
-func TestAutoHeldLockMeansNoDownload(t *testing.T) {
+// I1: a held lock means no download, no stderr and no cache.
+func TestAutoHeldLockMeansNoDownloadNoStderrNoCache(t *testing.T) {
 	e := newAutoEnv(t)
-	lock := filepath.Join(e.dir, lockFile)
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+	l, err := tryLock(e.exe)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chtimes(lock, e.now.Add(-time.Minute), e.now.Add(-time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	defer l.release()
 	downloads := 0
 	inner := fakeRelease("v0.5.3", "new rig", "sig")
 	o := e.opts("install", "0.5.2", rt(func(r *http.Request) (*http.Response, error) {
@@ -152,35 +159,94 @@ func TestAutoHeldLockMeansNoDownload(t *testing.T) {
 	if downloads != 0 || e.errOut.Len() != 0 {
 		t.Fatalf("downloads %d, stderr %q", downloads, e.errOut.String())
 	}
-	unchanged(t, e.exe, e.old)
-}
-
-func TestAutoStaleLockIsTakenOver(t *testing.T) {
-	e := newAutoEnv(t)
-	lock := filepath.Join(e.dir, lockFile)
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
-		t.Fatal(err)
+	if b, _ := os.ReadFile(e.exe); !bytes.Equal(b, e.old) {
+		t.Fatalf("binary changed: %q", b)
 	}
-	stale := e.now.Add(-11 * time.Minute)
-	if err := os.Chtimes(lock, stale, stale); err != nil {
-		t.Fatal(err)
+	b, err := os.ReadFile(filepath.Join(e.dir, cacheFile))
+	if err != nil {
+		t.Fatalf("the completed lookup should be cached: %v", err)
 	}
-	Auto(context.Background(), e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig")))
-	if b, _ := os.ReadFile(e.exe); string(b) != "new rig" {
-		t.Fatalf("stale lock not taken over: %q", b)
+	if strings.Contains(string(b), `"latest":""`) || !strings.Contains(string(b), "0.5.3") {
+		t.Fatalf("cache %s", b)
 	}
 }
 
-func TestAutoFailedInstallLeavesBinaryAndPrintsOneLine(t *testing.T) {
+// I3: no time-based takeover, however far the clock jumps.
+func TestAutoDoesNotTakeOverABusyHolderAfterAnHour(t *testing.T) {
 	e := newAutoEnv(t)
-	o := e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig"))
-	o.Install.verify = func(*Download) error { return &CheckError{Check: "signature", Detail: "bad\nmultiline"} }
+	inDownload, release := make(chan struct{}), make(chan struct{})
+	inner := fakeRelease("v0.5.3", "new rig", "sig")
+	blocking := rt(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/rig-linux-amd64") {
+			close(inDownload)
+			<-release
+		}
+		return inner.RoundTrip(r)
+	})
+	done := make(chan Result)
+	go func() { done <- Update(context.Background(), opts(e.exe, "0.5.2", "", blocking)) }()
+	<-inDownload
+	e.now = e.now.Add(time.Hour)
+	downloads := 0
+	o := e.opts("install", "0.5.2", rt(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/rig-linux-amd64") {
+			downloads++
+		}
+		return inner.RoundTrip(r)
+	}))
 	Auto(context.Background(), o)
-	unchanged(t, e.exe, e.old)
-	if got := e.errOut.String(); lines(got) != 1 || !strings.Contains(got, "automatic update failed") {
-		t.Fatalf("stderr %q", got)
+	if downloads != 0 || e.errOut.Len() != 0 {
+		t.Fatalf("holder taken over: downloads %d, stderr %q", downloads, e.errOut.String())
 	}
-	if _, err := os.Stat(filepath.Join(e.dir, lockFile)); !os.IsNotExist(err) {
-		t.Fatal("lock left behind")
+	close(release)
+	if r := <-done; r.Action != ActionUpdated {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestAutoCancelledBeforeMakesNoRequestAndNoCache(t *testing.T) {
+	e := newAutoEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	Auto(ctx, e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig")))
+	if e.reqs != 0 || e.errOut.Len() != 0 {
+		t.Fatalf("%d requests, stderr %q", e.reqs, e.errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, cacheFile)); !os.IsNotExist(err) {
+		t.Fatal("cache written")
+	}
+}
+
+func TestAutoCancelledDuringLookupWritesNothing(t *testing.T) {
+	e := newAutoEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	o := e.opts("install", "0.5.2", rt(func(r *http.Request) (*http.Response, error) {
+		cancel()
+		return nil, r.Context().Err()
+	}))
+	Auto(ctx, o)
+	if e.errOut.Len() != 0 {
+		t.Fatalf("stderr %q", e.errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, cacheFile)); !os.IsNotExist(err) {
+		t.Fatal("cache written")
+	}
+}
+
+func TestAutoCancelledDuringInstallWritesNothingMore(t *testing.T) {
+	e := newAutoEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	o := e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig"))
+	o.Update = func(context.Context, Options) Result {
+		cancel()
+		return Result{Action: ActionFailed, Message: "interrupted"}
+	}
+	Auto(ctx, o)
+	if e.errOut.Len() != 0 {
+		t.Fatalf("stderr %q", e.errOut.String())
+	}
+	b, err := os.ReadFile(filepath.Join(e.dir, cacheFile))
+	if err != nil || !strings.Contains(string(b), "0.5.3") {
+		t.Fatalf("the lookup's cache should be untouched: %q %v", b, err)
 	}
 }
