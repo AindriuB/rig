@@ -873,3 +873,38 @@ func TestTaskStartMarkerFailureAfterOriginStartRemovesTheBranch(t *testing.T) {
 		t.Fatal("the branch was left behind")
 	}
 }
+
+// A repo with no origin and no default branch, at a detached HEAD, starts from
+// that commit and labels it HEAD.
+func TestTaskStartFromADetachedHead(t *testing.T) {
+	isolate(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	gitc(t, root, "init", "-q", "-b", "work", repo)
+	writeTask(t, repo, "08-bar.md")
+	gitc(t, repo, "add", ".")
+	gitc(t, repo, "commit", "-q", "-m", "first")
+	sha := gitc(t, repo, "rev-parse", "HEAD")
+	gitc(t, repo, "checkout", "-q", "--detach")
+
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	line := "BASE:     HEAD @ " + sha[:7] + " (HEAD)\n"
+	if r.code != 0 || !strings.Contains(r.out, line) {
+		t.Fatalf("start: %+v want %q", r, line)
+	}
+	wt := filepath.Join(repo, ".worktrees", "repo", "08-bar")
+	if h := gitc(t, wt, "rev-parse", "HEAD"); h != sha {
+		t.Fatalf("worktree HEAD %s, want %s", h, sha)
+	}
+
+	gitc(t, repo, "worktree", "remove", "--force", wt)
+	gitc(t, repo, "branch", "-D", "task/08-bar")
+	r = rig(t, repo, nil, nil, "task", "start", "08-bar", "--json")
+	var got map[string]string
+	if err := json.Unmarshal([]byte(r.out), &got); r.code != 0 || err != nil || got["baseSha"] != sha {
+		t.Fatalf("json start: %+v %v want baseSha %s", r, err, sha)
+	}
+}
