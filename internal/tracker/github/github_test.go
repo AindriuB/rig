@@ -17,7 +17,7 @@ var ctx = context.Background()
 
 func seedState(org bool) fakeState {
 	return fakeState{
-		Owner: "o", Name: "r", OwnerOrg: org,
+		Owner: "o", Name: "r", OwnerOrg: org, Types: []string{"Feature", "Task"},
 		Issues: map[string]fakeIssue{
 			"1": {Title: "parent", Body: "the parent", State: "OPEN", Updated: 1, Labels: []string{"rig"}, Type: "Feature"},
 			"2": {Title: "child", State: "OPEN", Updated: 2, Labels: []string{"rig"}, Type: "Task", Parent: 1},
@@ -66,6 +66,126 @@ func TestContract(t *testing.T) {
 					ParentKey: "1", ChildKey: "2", Label: "rig", MissingKey: "999"}
 			})
 		})
+	}
+}
+
+// requests returns the stdin bodies of the calls whose argv contains endpoint.
+func requests(calls [][]string, endpoint string) []string {
+	var out []string
+	for _, c := range calls {
+		for _, a := range c {
+			if a == endpoint {
+				for _, x := range c {
+					if s, ok := strings.CutPrefix(x, "STDIN="); ok {
+						out = append(out, s)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// AC1
+func TestIssueTypes(t *testing.T) {
+	tr := newTracker(t, seedState(true))
+	types, err := tr.IssueTypes(ctx)
+	if err != nil || len(types) != 2 || types[0].Name != "Feature" || types[0].Level != nil {
+		t.Fatalf("types = %+v, %v", types, err)
+	}
+	st := seedState(true)
+	st.Types = nil
+	if _, err := newTracker(t, st).IssueTypes(ctx); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Fatalf("no types: %v", err)
+	}
+	if _, err := newTracker(t, seedState(false)).IssueTypes(ctx); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Fatalf("user owner: %v", err)
+	}
+}
+
+// AC2, AC4, AC5
+func TestCreateNoParent(t *testing.T) {
+	st := seedState(true)
+	_, calls := fakeGH(t, st)
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "task", Title: "T", Body: "B", Labels: []string{"a"}})
+	if err != nil || made.Key != "5" || made.URL != "https://github.com/o/r/issues/5" || made.Rev == "" {
+		t.Fatalf("made = %+v, %v", made, err)
+	}
+	reqs := requests(calls(), "repos/o/r/issues")
+	if len(reqs) != 1 || reqs[0] != `{"body":"B","labels":["a"],"title":"T","type":"Task"}` {
+		t.Fatalf("requests = %q", reqs)
+	}
+	if len(requests(calls(), "repos/o/r/issues/1/sub_issues")) != 0 {
+		t.Fatal("sub-issue call without a parent")
+	}
+	got, _ := tr.Issue(ctx, made.Key)
+	if got.Type != "Task" {
+		t.Fatalf("type = %q", got.Type)
+	}
+}
+
+// AC2
+func TestCreateUnknownTypeWritesNothing(t *testing.T) {
+	_, calls := fakeGH(t, seedState(true))
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Nope", Title: "T"}); err == nil {
+		t.Fatal("want error")
+	}
+	if len(requests(calls(), "repos/o/r/issues")) != 0 {
+		t.Fatal("wrote before refusing the type")
+	}
+}
+
+func TestCreateUserOwnerSendsNoType(t *testing.T) {
+	_, calls := fakeGH(t, seedState(false))
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := requests(calls(), "repos/o/r/issues"); len(r) != 1 || strings.Contains(r[0], "type") {
+		t.Fatalf("requests = %q", r)
+	}
+}
+
+// AC3, AC5
+func TestCreateWithParent(t *testing.T) {
+	_, calls := fakeGH(t, seedState(true))
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	made, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := requests(calls(), "repos/o/r/issues/1/sub_issues"); len(r) != 1 || r[0] != `{"sub_issue_id":5005}` {
+		t.Fatalf("sub requests = %q", r)
+	}
+	got, _ := tr.Issue(ctx, made.Key)
+	if got.Parent == nil || got.Parent.Key != "1" {
+		t.Fatalf("parent = %+v", got.Parent)
+	}
+	if made.Rev != got.Rev {
+		t.Fatalf("Create Rev %q != Issue Rev %q", made.Rev, got.Rev)
+	}
+}
+
+func TestCreateAttachFailureNamesKey(t *testing.T) {
+	st := seedState(true)
+	st.FailSub = true
+	tr := newTracker(t, st)
+	_, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if err == nil || !strings.Contains(err.Error(), "issue 5 was created but not attached") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateMissingParentWritesNothing(t *testing.T) {
+	_, calls := fakeGH(t, seedState(true))
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if _, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "999"}); !errors.Is(err, tracker.ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(requests(calls(), "repos/o/r/issues")) != 0 {
+		t.Fatal("wrote with a missing parent")
 	}
 }
 
