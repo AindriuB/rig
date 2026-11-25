@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,7 +37,20 @@ func TestMain(m *testing.M) {
 		code, _ := strconv.Atoi(os.Getenv("RIG_CMD_EXIT"))
 		os.Exit(code)
 	}
+	http.DefaultTransport = loopbackOnly{next: http.DefaultTransport}
 	os.Exit(m.Run())
+}
+
+// loopbackOnly refuses every request that is not to a loopback host, so a
+// test cannot reach the real network. httptest servers keep working.
+type loopbackOnly struct{ next http.RoundTripper }
+
+func (l loopbackOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+	h := r.URL.Hostname()
+	if ip := net.ParseIP(h); h == "localhost" || ip != nil && ip.IsLoopback() {
+		return l.next.RoundTrip(r)
+	}
+	return nil, errors.New("tests refuse network access (loopback only): " + r.URL.Host)
 }
 
 // testWorkflow is a workflow with a sha-bound state, a field gate, a command

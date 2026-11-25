@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 
 	"github.com/AindriuB/rig/internal/config"
 	"github.com/AindriuB/rig/internal/selfupdate"
@@ -19,12 +19,26 @@ func (a *app) runAndAutoUpdate(ctx context.Context, args []string) int {
 	return code
 }
 
+// machineOutput reports whether args ask for JSON: --json, --json=..., --format
+// json or --format=json.
+func machineOutput(args []string) bool {
+	for i, s := range args {
+		switch {
+		case s == "--json", strings.HasPrefix(s, "--json="), s == "--format=json":
+			return true
+		case s == "--format" && i+1 < len(args) && args[i+1] == "json":
+			return true
+		}
+	}
+	return false
+}
+
 // autoUpdate is the update.auto hook. It prints at most one line to stderr
 // and swallows every failure, including a panic.
 func (a *app) autoUpdate(ctx context.Context, args []string) {
 	defer func() { _ = recover() }()
-	if len(args) == 0 || args[0] == "update" || args[0] == "version" || args[0] == "--version" ||
-		slices.Contains(args, "--json") || a.getenv("CI") != "" {
+	if ctx.Err() != nil || len(args) == 0 || args[0] == "update" || args[0] == "version" || args[0] == "--version" ||
+		machineOutput(args) || a.getenv("CI") != "" {
 		return
 	}
 	isTTY := a.stderrTTY

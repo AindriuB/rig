@@ -3,7 +3,6 @@ package selfupdate
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,15 +15,13 @@ import (
 const (
 	autoInterval = 24 * time.Hour
 	autoTimeout  = 2 * time.Second
-	lockStale    = 10 * time.Minute
 	cacheFile    = "update-check.json"
-	lockFile     = "update.lock"
 )
 
 // AutoOptions is one automatic update pass.
 type AutoOptions struct {
 	Mode    string // "notify" or "install"; anything else does nothing
-	Dir     string // the global ~/.rig directory: cache and lock live here
+	Dir     string // the global ~/.rig directory: the cache lives here
 	Now     func() time.Time
 	Stderr  io.Writer
 	Install Options // Exe, Current and Client; To and Check are ignored
@@ -43,7 +40,7 @@ type checkCache struct {
 // one, prints a notice or installs it. It never returns an error and writes
 // only one line to Stderr.
 func Auto(ctx context.Context, o AutoOptions) {
-	if o.Mode != "notify" && o.Mode != "install" || o.Dir == "" {
+	if o.Mode != "notify" && o.Mode != "install" || o.Dir == "" || ctx.Err() != nil {
 		return
 	}
 	now := o.Now
@@ -60,6 +57,9 @@ func Auto(ctx context.Context, o AutoOptions) {
 		latest = c.Latest
 	} else {
 		latest = lookupLatest(ctx, o)
+		if ctx.Err() != nil {
+			return // cancelled: not a completed check
+		}
 		writeCache(path, checkCache{Checked: t, Latest: latest})
 	}
 	if latest == "" {
@@ -105,15 +105,10 @@ func writeCache(path string, c checkCache) {
 	_ = os.WriteFile(path, b, 0o600)
 }
 
-// install runs the update under the lock. A busy lock means nothing happens.
-// A failed install clears the cached version so it is not retried until the
-// next check.
+// install runs the update. The update takes the lock beside the binary; a
+// busy lock means nothing happens. A failed install clears the cached version
+// so it is not retried until the next check. A cancelled pass writes nothing.
 func install(ctx context.Context, o AutoOptions, now func() time.Time, cachePath string) {
-	release, ok := takeLock(filepath.Join(o.Dir, lockFile), now)
-	if !ok {
-		return
-	}
-	defer release()
 	run := o.Update
 	if run == nil {
 		run = Update
@@ -126,35 +121,12 @@ func install(ctx context.Context, o AutoOptions, now func() time.Time, cachePath
 		fmt.Fprintf(o.Stderr, "%s\n", msg)
 		return
 	}
+	if res.Action == ActionRefused && res.Check == "lock" || ctx.Err() != nil {
+		return
+	}
 	writeCache(cachePath, checkCache{Checked: now()})
 	if msg == "" {
 		msg = res.Action
 	}
 	fmt.Fprintf(o.Stderr, "rig: automatic update failed: %s\n", msg)
-}
-
-// takeLock creates the lock file exclusively. A lock older than 10 minutes
-// is taken over. It reports false when another process holds it.
-func takeLock(path string, now func() time.Time) (func(), bool) {
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return nil, false
-	}
-	for range 2 {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_ = f.Close()
-			return func() { _ = os.Remove(path) }, true
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, false
-		}
-		st, err := os.Stat(path)
-		if err != nil || now().Sub(st.ModTime()) < lockStale {
-			return nil, false
-		}
-		if os.Remove(path) != nil {
-			return nil, false
-		}
-	}
-	return nil, false
 }
