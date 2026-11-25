@@ -2,3 +2,5 @@
 /rig.exe
 /dist/
 .DS_Store
+/cmd/rig/rig
+/cmd/rig/rig.exe
