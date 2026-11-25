@@ -1,0 +1,112 @@
+usage: rig <command>
+
+Tasks:
+  rig task new                              Create a task from a slug and a title
+      --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]...
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task new                              Create a task from a tracker issue
+      --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--actor <name>]
+      [--json] [--repo <dir>]
+  rig task show <task>                      Show a task, with its findings, notes or history
+      [--findings] [--notes] [--history] [--children]
+      [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
+  rig task edit <task>                      Edit a task in your editor
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task list                             List tasks, as a flat list or a tree
+      [--state <s>]... [--all] [--parent <task> | --roots | --tree]
+      [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
+  rig task parent <task> <parent|none>      Set a task's parent, or clear it with none
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task link <task> [<kind>:]<key>       Link a task to a tracker issue
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task unlink <task>                    Remove a task's tracker link
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task move <task> <state>              Move a task to another workflow state
+      [--sha <sha>] [--pr <n>] [--reason <text>] [--actor <name>] [--json] [--repo <dir>]
+  rig task set <task>                       Set fields on a task
+      --field <name>=<value>... [--actor <name>] [--json] [--repo <dir>]
+  rig task count <task> <counter>           Increment a task counter
+      [--actor <name>] [--json] [--repo <dir>]
+  rig task start <slug>                     Create the task's branch and worktree
+      [--task-file <path>] [--json] [--repo <dir>]
+  rig task finish <task>                    Merge a task's verified commit, remove worktree
+      --sha <sha> [--json] [--repo <dir>]
+  rig task is <task> <state>                Exit 0 when the task is in the given state
+      [--repo <dir>]
+  rig task log <task>                       Show a task's history
+      [--json] [--repo <dir>]
+
+Findings and notes:
+  rig finding add <task>                    Record a review finding on a task
+      --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]...
+      [--actor <name>] [--json] [--repo <dir>]
+  rig finding list <task>                   List a task's findings
+      [--status <s>]... [--blocking] [--json] [--repo <dir>]
+  rig finding set <task> <finding>          Change a finding's status
+      --status <s> [--actor <name>] [--json] [--repo <dir>]
+  rig note add [<task>]                     Add a note to a task
+      --kind <k> --text <text> [--actor <name>] [--json] [--repo <dir>]
+  rig note list [<task>]                    List notes
+      [--kind <k>] [--limit <n>] [--json] [--repo <dir>]
+
+Planning:
+  rig workflow show                         Show the workflow definition
+      [--json] [--repo <dir>]
+  rig workflow validate [<file>]            Check a workflow file for errors
+      [--json] [--repo <dir>]
+  rig next                                  List the tasks that are ready to work on
+      [--who agent|human] [--limit <n>] [--json] [--repo <dir>]
+  rig context <task>                        Print the context an agent needs for a task
+      [--budget <tokens>] [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
+  rig status                                Show a summary of tasks by state
+      [--json]
+
+Branches and pull requests:
+  rig push <task-id|branch>                 Push a task or record branch to origin
+      [--worktree <path>]
+  rig pr view                               Show a pull request
+      [<pr|branch> | --task <id>] [--json] [--repo <dir>]
+  rig pr list                               List pull requests
+      [--mine] [--head <branch>] [--state open|closed|merged] [--limit <n>] [--json] [--repo <dir>]
+  rig pr checks                             Show a pull request's CI checks
+      [<pr|branch> | --task <id>] [--json] [--repo <dir>]
+  rig pr open                               Open a pull request
+      --head <branch> --title <text> [--base <branch>] [--body <text>] [--draft] [--repo <dir>]
+  rig pr wait                               Wait for CI on a pull request or run to finish
+      <pr-number | --run <run-id>> [--repo <dir>]
+
+Tracker:
+  rig tracker pull                          Import tracker issues as tasks
+      <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>]
+      [--actor <name>] [--json] [--repo <dir>]
+  rig tracker push <task>                   Create or update tracker issues from tasks
+      [--tree] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
+  rig tracker refresh                       Refresh tasks from their tracker issues
+      [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
+  rig tracker report <task>                 Post a task's status or a comment to its tracker issue
+      [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run]
+      [--actor <name>] [--json] [--repo <dir>]
+  rig tracker show <key>                    Show a tracker issue
+      [--json] [--repo <dir>]
+  rig tracker status                        Check the tracker connection and configuration
+      [--json] [--repo <dir>]
+
+Setup:
+  rig config get <key>                      Print a config value
+      [--global|--repo|--local] [--json]
+  rig config set <key> <value>              Set a config value
+      --global|--repo|--local
+  rig config unset <key>                    Remove a config value
+      --global|--repo|--local
+  rig config list                           List config values
+      [--global|--repo|--local] [--show-origin] [--json]
+  rig login                                 Log in to the forge, then Jira when tracker.kind is jira
+  rig login <service>                       Log in to github, gitlab or jira; the flags are for jira
+      [--url <site>] [--user <email>] [--token] [--repo] [--store keychain|file]
+  rig login status                          Show which services you are logged in to
+      [--json]
+  rig logout <service>                      Log out of jira; github/gitlab print the gh/glab command
+      [--url <site>] [--repo]
+  rig update                                Update rig to the latest release
+      [--check] [--to <version>] [--json]
+  rig version                               Print the rig version

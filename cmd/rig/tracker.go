@@ -24,7 +24,7 @@ import (
 	"github.com/AindriuB/rig/internal/workflow"
 )
 
-const trackerUsage = "usage: rig tracker pull|refresh|report|show|status ..."
+const trackerUsage = "usage: rig tracker pull|push|refresh|report|show|status ..."
 
 // Why a tracker cannot be used. Each is exit 2; `rig tracker status` reports
 // the last two instead.
@@ -301,6 +301,8 @@ func (a *app) trackerCmd(ctx context.Context, args []string) int {
 	switch args[0] {
 	case "pull":
 		return a.trackerPull(ctx, rest)
+	case "push":
+		return a.trackerPush(ctx, rest)
 	case "refresh":
 		return a.trackerRefresh(ctx, rest)
 	case "report":

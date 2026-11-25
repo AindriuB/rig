@@ -23,6 +23,7 @@ const (
 	KindExternal      = "external"
 	KindTrackerSync   = "tracker-sync"
 	KindTrackerReport = "tracker-report"
+	KindTrackerPush   = "tracker-push"
 )
 
 // knownKind reports whether this rig understands kind.
@@ -30,7 +31,7 @@ func knownKind(kind string) bool {
 	switch kind {
 	case KindCreated, KindTransition, KindField, KindCount,
 		KindFinding, KindFindingStatus, KindNote,
-		KindParent, KindExternal, KindTrackerSync, KindTrackerReport:
+		KindParent, KindExternal, KindTrackerSync, KindTrackerReport, KindTrackerPush:
 		return true
 	}
 	return false
@@ -133,6 +134,17 @@ type ReportComment struct {
 	Kind   string `json:"kind"`
 	ID     string `json:"id"`
 	Digest string `json:"digest"`
+}
+
+// TrackerPushData is the intent `rig tracker push` writes before it creates an
+// issue: the marker label the issue will carry, and the tracker it goes to. A
+// task with an intent and no link may already have an issue on the tracker; a
+// retry finds it by the marker.
+type TrackerPushData struct {
+	Marker  string `json:"marker"`
+	Kind    string `json:"kind"`
+	Host    string `json:"host,omitempty"`
+	Project string `json:"project,omitempty"`
 }
 
 // TransitionData moves a task from one state to another. Sha, PR and Reason

@@ -63,18 +63,26 @@ func TestHelpListsPhase2Commands(t *testing.T) {
 }
 
 // TestHelpUsageShowsFormatFlags: the commands that take --format name it, and
-// --markdown, in their usage line.
+// --markdown, in their usage entry (the command line and its continuation lines).
 func TestHelpUsageShowsFormatFlags(t *testing.T) {
 	r := rig(t, t.TempDir(), nil, nil, "help")
 	for _, prefix := range []string{"  rig task show ", "  rig task list ", "  rig context "} {
-		var line string
+		var entry []string
+		in := false
 		for _, l := range strings.Split(r.out, "\n") {
-			if strings.HasPrefix(l, prefix) {
-				line = l
+			switch {
+			case strings.HasPrefix(l, prefix):
+				in = true
+				entry = append(entry, l)
+			case in && strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "  rig "):
+				entry = append(entry, l)
+			default:
+				in = false
 			}
 		}
-		if !strings.Contains(line, "--format <text|json|markdown>") || !strings.Contains(line, "--markdown") {
-			t.Errorf("usage line %q lacks --format and --markdown: %q", prefix, line)
+		text := strings.Join(entry, "\n")
+		if !strings.Contains(text, "--format <text|json|markdown>") || !strings.Contains(text, "--markdown") {
+			t.Errorf("usage entry %q lacks --format and --markdown: %q", prefix, text)
 		}
 	}
 }
