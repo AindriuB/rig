@@ -95,7 +95,7 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		}
 		b.WriteString("## Acceptance\n")
 		for _, a := range ni.Acceptance {
-			b.WriteString("- [ ] " + a + "\n")
+			b.WriteString("- [ ] " + strings.Join(strings.Fields(a), " ") + "\n")
 		}
 		body = b.String()
 	}
@@ -125,6 +125,7 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	}
 	key := strconv.FormatInt(out.Number, 10)
 	rev := out.UpdatedAt
+	var parentRef *tracker.IssueRef
 	if parent != 0 {
 		sub, err := json.Marshal(map[string]json.Number{"sub_issue_id": out.ID})
 		if err != nil {
@@ -140,11 +141,12 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 			return tracker.Issue{}, fmt.Errorf("issue %s was created and attached to parent %s but its revision could not be read: %w", key, ni.ParentKey, err)
 		}
 		rev = got.Rev
+		parentRef = got.Parent
 	}
 	is := tracker.Issue{
 		Key: key, URL: out.HTMLURL, Title: ni.Title, Description: body, Type: typeName,
 		Acceptance: []string{}, Labels: append([]string{}, ni.Labels...),
-		Status: "open", Rev: rev,
+		Status: "open", Rev: rev, Parent: parentRef,
 	}
 	return is, nil
 }

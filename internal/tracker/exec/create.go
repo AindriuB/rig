@@ -48,12 +48,18 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	if is.Key == "" {
 		return tracker.Issue{}, errors.New("exec tracker create: response issue has no key")
 	}
+	if err := tracker.ValidateKey(is.Key); err != nil {
+		return tracker.Issue{}, fmt.Errorf("exec tracker create: the program answered an invalid key (the issue may have been created): %w", err)
+	}
 	return is, nil
 }
 
 // IssueTypes lists issue types through the types op. A program that predates
 // the op answers unsupported, which is ErrUnsupported.
 func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {
+	if err := t.need(ctx, "types", func(c tracker.Caps) bool { return c.Types }); err != nil {
+		return nil, err
+	}
 	var types []tracker.IssueType
 	if err := t.call(ctx, request{Op: "types"}, func(r *response) json.RawMessage { return r.Types }, &types); err != nil {
 		return nil, err
