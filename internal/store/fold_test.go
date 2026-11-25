@@ -111,6 +111,10 @@ func TestFoldSkipsUnknownVersionAndKind(t *testing.T) {
 		t.Fatalf("skipped = %d, want 4", skipped)
 	}
 	want, wantFindings, _, _ := Fold(log)
+	if task.Skipped != 4 {
+		t.Fatalf("task.Skipped = %d, want 4", task.Skipped)
+	}
+	want.Skipped = 4
 	if !reflect.DeepEqual(task, want) || !reflect.DeepEqual(findings, wantFindings) {
 		t.Fatalf("skipped events changed the fold:\n%+v\nwant\n%+v", task, want)
 	}

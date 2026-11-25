@@ -64,8 +64,11 @@ type Task struct {
 	Reason       string         `json:"reason,omitempty"`
 	Counters     map[string]int `json:"counters"`
 	OpenFindings int            `json:"openFindings"`
-	Created      time.Time      `json:"created"`
-	Updated      time.Time      `json:"updated"`
+	// Skipped counts log lines and events rig could not read; the task's
+	// state is then only what the readable part says.
+	Skipped int       `json:"skipped,omitempty"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 }
 
 // External is a task's link to a tracker issue. SyncedAt, Rev and Snapshot
