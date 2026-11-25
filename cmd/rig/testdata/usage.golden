@@ -29,7 +29,7 @@ Tasks:
       [--actor <name>] [--json] [--repo <dir>]
   rig task start <slug>                     Create the task's branch and worktree
       [--task-file <path>] [--json] [--repo <dir>]
-  rig task finish <task>                    Record that a task's work is done at a commit
+  rig task finish <task>                    Merge a task's verified commit, remove worktree
       --sha <sha> [--json] [--repo <dir>]
   rig task is <task> <state>                Exit 0 when the task is in the given state
       [--repo <dir>]

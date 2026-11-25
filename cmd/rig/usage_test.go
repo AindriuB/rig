@@ -205,8 +205,17 @@ func TestUsageNamesSubcommands(t *testing.T) {
 	}
 	lits := func(n ast.Node) string {
 		var b strings.Builder
+		skip := map[ast.Node]bool{}
 		ast.Inspect(n, func(x ast.Node) bool {
-			if l, ok := x.(*ast.BasicLit); ok && l.Kind == token.STRING {
+			switch x := x.(type) {
+			case *ast.CaseClause:
+				for _, e := range x.List {
+					skip[e] = true
+				}
+			case *ast.KeyValueExpr:
+				skip[x.Key] = true
+			}
+			if l, ok := x.(*ast.BasicLit); ok && l.Kind == token.STRING && !skip[l] {
 				s, _ := strconv.Unquote(l.Value)
 				b.WriteString(s + "\n")
 			}
