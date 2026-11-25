@@ -29,6 +29,9 @@ func (l *Layers) Set(scope, key, value string) error {
 	if err := checkSettable(key); err != nil {
 		return err
 	}
+	if err := checkScope(scope, key); err != nil {
+		return err
+	}
 	if err := checkValue(key, value); err != nil {
 		return err
 	}
@@ -44,6 +47,9 @@ func (l *Layers) Set(scope, key, value string) error {
 // error and writes nothing.
 func (l *Layers) Unset(scope, key string) error {
 	if err := checkSettable(key); err != nil {
+		return err
+	}
+	if err := checkScope(scope, key); err != nil {
 		return err
 	}
 	return l.write(scope, key, nil)

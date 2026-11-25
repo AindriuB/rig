@@ -54,6 +54,10 @@ type app struct {
 	exe func() (string, error)
 	// goos is the OS rig believes it runs on; empty is runtime.GOOS.
 	goos string
+	// stderrTTY says whether stderr is a terminal; nil asks the OS.
+	stderrTTY func() bool
+	// autoRun is the update.auto pass; nil is selfupdate.Auto.
+	autoRun func(context.Context, selfupdate.AutoOptions)
 }
 
 const usage = `usage: rig <command>
@@ -118,7 +122,7 @@ func main() {
 	a.store = a.openStore
 	a.stdin, a.secrets, a.interactive = os.Stdin, a.openSecrets, proc.Interactive
 	a.httpClient = &http.Client{Timeout: 15 * time.Second}
-	os.Exit(a.run(ctx, os.Args[1:]))
+	os.Exit(a.runAndAutoUpdate(ctx, os.Args[1:]))
 }
 
 func (a *app) run(ctx context.Context, args []string) int {

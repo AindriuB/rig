@@ -365,3 +365,31 @@ func TestLocalSetRefusesSymlinks(t *testing.T) {
 		})
 	}
 }
+
+// AC1: update.auto is written only to the global file.
+func TestUpdateAutoScopeRefusedOutsideGlobal(t *testing.T) {
+	e := repoEnv(t)
+	l := open(t, e)
+	for _, scope := range []string{ScopeLocal, ScopeRepo} {
+		if err := l.Set(scope, KeyUpdateAuto, "notify"); err == nil || !strings.Contains(err.Error(), "--global") {
+			t.Errorf("Set(%s) = %v", scope, err)
+		}
+		if err := l.Unset(scope, KeyUpdateAuto); err == nil || !strings.Contains(err.Error(), "--global") {
+			t.Errorf("Unset(%s) = %v", scope, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.root, ".rig")); !os.IsNotExist(err) {
+		t.Error("a refused Set created .rig")
+	}
+}
+
+func TestUpdateAutoScopeGlobalAllowed(t *testing.T) {
+	e := repoEnv(t)
+	l := open(t, e)
+	if err := l.Set(ScopeGlobal, KeyUpdateAuto, "notify"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Unset(ScopeGlobal, KeyUpdateAuto); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -259,6 +259,7 @@ func TestNoFilesIsLocalTracker(t *testing.T) {
 	want := []Value{
 		{Key: KeyPushPrefixes, Value: []string{"task", "record"}, Scope: ScopeDefault},
 		{Key: KeyTrackerKind, Value: "local", Scope: ScopeDefault},
+		{Key: KeyUpdateAuto, Value: "off", Scope: ScopeDefault},
 		{Key: KeyWorkflow, Value: "basic", Scope: ScopeDefault},
 	}
 	if got := l.List(); !reflect.DeepEqual(got, want) {
@@ -356,5 +357,28 @@ func TestEmptyHomeIsNotTheCurrentDirectory(t *testing.T) {
 	}
 	if v, ok := l.Get(KeyForgeKind); ok && v.Scope == ScopeGlobal {
 		t.Errorf("forge.kind = %+v from the current directory", v)
+	}
+}
+
+// update.auto is looked up in the global file alone, so Get agrees with UpdateAuto.
+func TestUpdateAutoLookupGlobalOnly(t *testing.T) {
+	e := newEnv(t)
+	e.local(t, `{"update":{"auto":"off"}}`)
+	e.global(t, `{"update":{"auto":"install"},"repos":{"github.com/acme/rig":{"update":{"auto":"off"}}}}`)
+	l := open(t, e)
+	v, _ := l.Get(KeyUpdateAuto)
+	if v.Scope != ScopeGlobal || v.Value != l.UpdateAuto() || v.Value == "off" {
+		t.Errorf("update.auto = %+v, UpdateAuto = %q", v, l.UpdateAuto())
+	}
+
+	e = newEnv(t)
+	e.global(t, `{"repos":{"github.com/acme/rig":{"update":{"auto":"install"}}}}`)
+	if v, _ := open(t, e).Get(KeyUpdateAuto); v.Value != "off" || v.Scope != ScopeDefault {
+		t.Errorf("repos only = %+v", v)
+	}
+	e = newEnv(t)
+	e.local(t, `{"update":{"auto":"install"}}`)
+	if v, _ := open(t, e).Get(KeyUpdateAuto); v.Value != "off" || v.Scope != ScopeDefault {
+		t.Errorf("local only = %+v", v)
 	}
 }

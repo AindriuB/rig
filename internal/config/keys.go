@@ -29,6 +29,17 @@ const (
 	// KeyWorktreesRoot is where `rig task start` puts worktrees: relative to
 	// the repository's top level, or absolute.
 	KeyWorktreesRoot = "worktrees.root"
+
+	// KeyUpdateAuto is the automatic update mode: off, notify or install.
+	// Global file only; a repository can never switch it on.
+	KeyUpdateAuto = "update.auto"
+)
+
+// Automatic update modes.
+const (
+	UpdateAutoOff     = "off"
+	UpdateAutoNotify  = "notify"
+	UpdateAutoInstall = "install"
 )
 
 // DefaultWorktreesRoot is the worktrees.root used when none is configured.
@@ -53,7 +64,7 @@ const DefaultWorkflow = "basic"
 var keys = []string{
 	KeyForgeHost, KeyForgeKind, KeyPushPrefixes,
 	KeyTrackerCommand, KeyTrackerJiraAcceptanceField, KeyTrackerJiraAPI, KeyTrackerJiraEpicField,
-	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyWorkflow, KeyWorktreesRoot,
+	KeyTrackerKind, KeyTrackerProject, KeyTrackerURL, KeyUpdateAuto, KeyWorkflow, KeyWorktreesRoot,
 }
 
 // WorktreesRoot is worktrees.root, DefaultWorktreesRoot when unset. A value
@@ -92,7 +103,7 @@ func Keys() []string { return slices.Clone(keys) }
 
 // globalOnly are the keys that widen what rig does without asking: read only
 // from the global file and never written by Set or Unset.
-var globalOnly = []string{KeyPushPrefixes, KeyTrackerCommand, KeyWorkflow}
+var globalOnly = []string{KeyPushPrefixes, KeyTrackerCommand, KeyUpdateAuto, KeyWorkflow}
 
 var (
 	credentialRE = regexp.MustCompile(`(?i)token|secret|password|apikey|key|auth|credential`)
@@ -232,6 +243,10 @@ func checkValue(key, v string) error {
 		if !presetRE.MatchString(v) && !filepath.IsAbs(v) {
 			return bad("a preset name or an absolute path")
 		}
+	case KeyUpdateAuto:
+		if v != UpdateAutoOff && v != UpdateAutoNotify && v != UpdateAutoInstall {
+			return bad(`"off", "notify" or "install"`)
+		}
 	case KeyWorktreesRoot:
 		if v == "" || strings.ContainsRune(v, 0) {
 			return bad("a non-empty directory path")
@@ -260,6 +275,25 @@ func checkProject(kind, project string) error {
 	}
 	if !re.MatchString(project) {
 		return fmt.Errorf("%s for tracker %q must be %s, not %q", KeyTrackerProject, kind, want, project)
+	}
+	return nil
+}
+
+// UpdateAuto is update.auto from the global file alone, "off" when unset or
+// not a valid mode. A repository or local file never supplies it.
+func (l *Layers) UpdateAuto() string {
+	v, ok := l.GetIn(ScopeGlobal, KeyUpdateAuto)
+	s, _ := v.Value.(string)
+	if !ok || checkValue(KeyUpdateAuto, s) != nil {
+		return UpdateAutoOff
+	}
+	return s
+}
+
+// checkScope refuses a global-only-scope key in any scope but the global file.
+func checkScope(scope, key string) error {
+	if key == KeyUpdateAuto && scope != ScopeGlobal {
+		return fmt.Errorf("%q is read only from the global file ~/.rig/config.json; set it with --global", key)
 	}
 	return nil
 }
