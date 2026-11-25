@@ -29,8 +29,45 @@ rig needs Go 1.24 or later, `git`, and `gh` (GitHub) or `glab` (GitLab).
 go install github.com/AindriuB/rig/cmd/rig@latest
 ```
 
-Release binaries for five platforms, with a `SHA256SUMS` file, are on the
-project's GitHub release page.
+Release binaries for five platforms, with a `SHA256SUMS` file and its
+`SHA256SUMS.sig` signature, are on the project's GitHub release page. Releases
+are signed from 0.5.2; earlier releases are not, and `rig update` will not
+install them.
+
+### Updating
+
+```bash
+rig update            # install the latest release
+rig update --check    # report only; exit 1 when a newer release exists
+rig update --to 0.5.2 # install a given release
+```
+
+`rig update` replaces the running binary with the release binary for your
+platform. That includes a copy you built with `go install`: it is replaced by
+the release binary built from the same tag, not rebuilt from source. It
+downloads only from the project's GitHub releases, and installs only after the
+signature, the checksum and a run of the new binary's `version` all pass. If
+any of them fails, or the directory is not writable, the installed file is
+untouched.
+
+A process that is already running keeps the old binary: on Linux and macOS the
+old file is replaced, not edited, so a running process keeps its inode, and on
+Windows the old binary is moved to `rig.exe.old` (removed on a later run).
+Start rig again to use the new one.
+
+#### Automatic updates
+
+`update.auto` sets what rig does after a command finishes:
+
+- `off` (the default): nothing.
+- `notify`: when a newer release exists, print one line to stderr.
+- `install`: install it, and print one line to stderr.
+
+Set it in the global file only (`rig config set update.auto notify --global`);
+a repository cannot turn it on. rig checks at most once every 24 hours, and
+never changes the command's exit code. It does nothing in CI (`CI` set), when
+stderr is not a terminal, with `--json`, for `rig update` and `rig version`,
+and when the check cannot reach GitHub within 2 seconds.
 
 ## Commands
 
@@ -80,6 +117,7 @@ rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store 
 rig login status [--json]
 rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
 rig version
+rig update [--check] [--to <version>] [--json]
 ```
 
 `--actor <name>` (alias `--role <name>`) is accepted by the commands above that
@@ -169,6 +207,7 @@ The keys of `rig config` (see `rig config list`) are:
 | `tracker.jira.api` | `auto`, `v2` or `v3` | `auto` |
 | `tracker.jira.epicField` | The Jira Server or Data Center "Epic Link" field id | found by name |
 | `tracker.jira.acceptanceField` | The Jira field id that holds acceptance criteria | none |
+| `update.auto` | `off`, `notify` or `install`: what rig does after a command when a newer release exists. Global file only | `off` |
 | `worktrees.root` | Where `rig task start` puts worktrees: `<root>/<repo name>/<slug>` | `.worktrees` |
 
 `worktrees.root` is relative to the repository's main checkout, or absolute.
