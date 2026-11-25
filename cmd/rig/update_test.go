@@ -135,8 +135,28 @@ func osArch() string {
 
 func TestUpdateHelpListsIt(t *testing.T) {
 	a, out, _ := updApp(t, "", selfupdate.Result{}, nil)
-	if a.run(context.Background(), []string{"help"}) != 0 || !strings.Contains(out.String(), "rig update [--check] [--to <version>] [--json]") {
-		t.Fatal("help does not list rig update")
+	if a.run(context.Background(), []string{"help"}) != 0 {
+		t.Fatal("help failed")
+	}
+	// The entry is the command line plus its continuation lines.
+	var entry []string
+	in := false
+	for _, l := range strings.Split(out.String(), "\n") {
+		switch {
+		case strings.HasPrefix(l, "  rig update "):
+			in = true
+			entry = append(entry, l)
+		case in && strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "  rig "):
+			entry = append(entry, l)
+		default:
+			in = false
+		}
+	}
+	text := strings.Join(entry, "\n")
+	for _, f := range []string{"--check", "--to <version>", "--json"} {
+		if !strings.Contains(text, f) {
+			t.Fatalf("help does not list rig update %s: %q", f, text)
+		}
 	}
 }
 
