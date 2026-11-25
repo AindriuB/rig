@@ -228,4 +228,70 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 			t.Errorf("SetStatus(missing) = %v, want ErrNotFound", err)
 		}
 	})
+
+	t.Run("Create", func(t *testing.T) {
+		tr, s, caps := setup(t)
+		_, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "rig contract create"})
+		if !caps.Create {
+			if !errors.Is(err, tracker.ErrUnsupported) {
+				t.Errorf("Create = %v, want ErrUnsupported", err)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// An invalid ParentKey is refused before any write: nothing carrying
+		// the refused label may exist afterwards. (An empty ParentKey means
+		// no parent, so it is not in the list.)
+		refused := "rig-create-refused"
+		for _, k := range []string{"a b", "a/b", "a?b", "a#b", "a%b", "..", "a\u200bb", "a\u200fb", "\ufeffa", "a\xffb"} {
+			_, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "rig refused", Labels: []string{refused}, ParentKey: k})
+			if err == nil {
+				t.Errorf("Create with ParentKey %q succeeded", k)
+			} else if errors.Is(err, tracker.ErrNotFound) {
+				t.Errorf("Create with ParentKey %q = %v: looked the key up instead of refusing it", k, err)
+			}
+		}
+		if caps.Search {
+			found, err := tr.Search(ctx, tracker.Query{Labels: []string{refused}})
+			if err != nil {
+				t.Fatalf("Search(refused label): %v", err)
+			}
+			if len(found) != 0 {
+				t.Errorf("refused Create left issues behind: %v", found)
+			}
+		}
+		label := "rig-create-label"
+		ni := tracker.NewIssue{Type: "Task", Title: "rig contract created", Labels: []string{label}}
+		if caps.Parent {
+			ni.ParentKey = s.ParentKey
+		}
+		made, err := tr.Create(ctx, ni)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if made.Key == "" || made.URL == "" || made.Rev == "" {
+			t.Errorf("Create returned %+v, want Key, URL and Rev", made)
+		}
+		got, err := tr.Issue(ctx, made.Key)
+		if err != nil {
+			t.Fatalf("Issue(created): %v", err)
+		}
+		if got.Title != ni.Title || !slices.Contains(got.Labels, label) {
+			t.Errorf("created issue = %+v, want title %q and label %q", got, ni.Title, label)
+		}
+		if caps.Parent && (got.Parent == nil || got.Parent.Key != s.ParentKey) {
+			t.Errorf("created issue Parent = %v, want %s", got.Parent, s.ParentKey)
+		}
+		if caps.Search {
+			found, err := tr.Search(ctx, tracker.Query{Labels: []string{label}})
+			if err != nil {
+				t.Fatalf("Search(created label): %v", err)
+			}
+			if !slices.ContainsFunc(found, func(r tracker.IssueRef) bool { return r.Key == made.Key }) {
+				t.Errorf("Search(%q) = %v, missing %s", label, found, made.Key)
+			}
+		}
+	})
 }

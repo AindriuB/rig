@@ -31,6 +31,21 @@ type Tracker struct {
 	// method works.
 	ProjectErr error
 
+	// Types is what IssueTypes returns; empty means ErrUnsupported.
+	Types []tracker.IssueType
+
+	// FailCreateN, when above zero, makes the Nth Create call (counting
+	// every call, from 1) return CreateErr.
+	FailCreateN int
+	// CreateErr is the error for the FailCreateN-th call; nil means a
+	// generic error.
+	CreateErr error
+
+	// Created records the NewIssue of every successful Create call.
+	Created []tracker.NewIssue
+
+	creates int
+
 	// Comments records every successful Comment call.
 	Comments []CommentCall
 	// StatusCalls records every successful SetStatus call.
@@ -231,4 +246,70 @@ func (t *Tracker) SetStatus(ctx context.Context, key, status string) (tracker.St
 	}
 	t.StatusCalls = append(t.StatusCalls, StatusCall{Key: key, Status: status})
 	return res, nil
+}
+
+// Create stores a new issue in memory and records ni in Created.
+func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issue, error) {
+	if t.Err != nil {
+		return tracker.Issue{}, t.Err
+	}
+	if !t.caps.Create {
+		return tracker.Issue{}, fmt.Errorf("create: %w", tracker.ErrUnsupported)
+	}
+	if ni.ParentKey != "" {
+		if err := tracker.ValidateKey(ni.ParentKey); err != nil {
+			return tracker.Issue{}, err
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.creates++
+	if t.FailCreateN > 0 && t.creates == t.FailCreateN {
+		if t.CreateErr != nil {
+			return tracker.Issue{}, t.CreateErr
+		}
+		return tracker.Issue{}, fmt.Errorf("create %d: injected failure", t.creates)
+	}
+	var parent *tracker.IssueRef
+	if ni.ParentKey != "" {
+		p, err := t.get(ni.ParentKey)
+		if err != nil {
+			return tracker.Issue{}, err
+		}
+		r := ref(p)
+		parent = &r
+	}
+	t.rev++
+	key := "NEW-" + strconv.Itoa(len(t.order)+1)
+	for t.issues[key] != nil {
+		key += "x"
+	}
+	is := &tracker.Issue{
+		Key:         key,
+		URL:         "fake://" + key,
+		Title:       ni.Title,
+		Description: ni.Body,
+		Acceptance:  append([]string(nil), ni.Acceptance...),
+		Labels:      append([]string(nil), ni.Labels...),
+		Type:        ni.Type,
+		Parent:      parent,
+		Rev:         strconv.Itoa(t.rev),
+	}
+	t.issues[key] = is
+	t.order = append(t.order, key)
+	t.Created = append(t.Created, ni)
+	return *is, nil
+}
+
+// IssueTypes returns Types, or ErrUnsupported when it is empty.
+func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {
+	if t.Err != nil {
+		return nil, t.Err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.Types) == 0 {
+		return nil, fmt.Errorf("issue types: %w", tracker.ErrUnsupported)
+	}
+	return append([]tracker.IssueType(nil), t.Types...), nil
 }

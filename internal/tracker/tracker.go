@@ -8,6 +8,7 @@
 //     response or a fake process.
 //   - No token, password or Authorization header appears in a returned error,
 //     a log line or a test failure message.
+//   - Create validates NewIssue.ParentKey with ValidateKey before any write.
 //   - A method the tracker lacks returns ErrUnsupported and Capabilities
 //     reports false for it.
 //   - Errors wrap the port sentinels with %w, so errors.Is works.
@@ -44,6 +45,34 @@ type Tracker interface {
 	// Caps.SetStatus is false, and ErrNoTransition for a status the tracker
 	// cannot reach.
 	SetStatus(ctx context.Context, key, status string) (StatusResult, error)
+	// Create makes a new issue and returns it, including Key, URL and Rev.
+	// It calls ValidateKey on ni.ParentKey when set, before any write. It
+	// returns ErrUnsupported when Caps.Create is false.
+	Create(ctx context.Context, ni NewIssue) (Issue, error)
+	// IssueTypes lists the project's issue types with their hierarchy
+	// levels. It returns ErrUnsupported when the project has no issue types.
+	IssueTypes(ctx context.Context) ([]IssueType, error)
+}
+
+// NewIssue is an issue to create.
+type NewIssue struct {
+	// Type is an issue type name, as IssueTypes lists it.
+	Type, Title string
+	// Body is Markdown; the adapter converts it to the tracker's markup.
+	Body       string
+	Acceptance []string
+	Labels     []string
+	// ParentKey is the key of the parent issue; empty for none.
+	ParentKey string
+}
+
+// IssueType is one issue type of a project.
+type IssueType struct {
+	Name string `json:"name"`
+	// Level places the type in the hierarchy: a higher Level is higher. Nil
+	// means the tracker puts no level on this type, so no level check
+	// applies.
+	Level *int `json:"level"`
 }
 
 // ProjectChecker is an optional interface: a tracker that can check the
@@ -144,6 +173,8 @@ type Caps struct {
 	Search    bool `json:"search"`
 	Comment   bool `json:"comment"`
 	SetStatus bool `json:"setStatus"`
+	// Create is true when Create works.
+	Create bool `json:"create"`
 	// Levels names the tracker's issue hierarchy, top first (for example
 	// epic, story, task). It is empty for a flat tracker.
 	Levels []string `json:"levels"`
