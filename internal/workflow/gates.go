@@ -22,6 +22,10 @@ type Env struct {
 	Runner Runner
 }
 
+// GateHistory names the result Check prepends for a task with unreadable
+// history. It is not a configurable gate.
+const GateHistory = "history"
+
 // GateResult is one gate's verdict.
 type GateResult struct {
 	Gate    string `json:"gate"`
@@ -46,7 +50,10 @@ func (w *Workflow) Check(ctx context.Context, env Env, t store.Task, findings []
 		}
 		return out
 	}
-	out := make([]GateResult, 0, len(tr.Gates))
+	out := make([]GateResult, 0, len(tr.Gates)+1)
+	if t.Skipped > 0 {
+		out = append(out, GateResult{Gate: GateHistory, Message: fmt.Sprintf("%d log entries could not be read; upgrade rig", t.Skipped)})
+	}
 	for _, g := range tr.Gates {
 		r := GateResult{Gate: g.Kind}
 		if g.problem != "" {
@@ -117,6 +124,9 @@ func (w *Workflow) check(ctx context.Context, env Env, t store.Task, findings []
 			dep, err := env.Task(ctx, ref)
 			if err != nil {
 				return false, fmt.Sprintf("dependency %s: %v", ref, err)
+			}
+			if dep.Skipped > 0 {
+				return false, fmt.Sprintf("dependency %s has %d log entries rig could not read; upgrade rig", ref, dep.Skipped)
 			}
 			state := dep.State
 			if w.States[state].ShaBound {

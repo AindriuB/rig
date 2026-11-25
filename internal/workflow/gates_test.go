@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -203,5 +204,40 @@ func TestCheckRefusesInvalidWorkflow(t *testing.T) {
 	res = w.Check(ctx, Env{}, store.Task{}, nil, Transition{From: StateList{"ci_green"}, To: "ready"}, Args{})
 	if len(res) != 1 || res[0].OK || res[0].Gate != "workflow" {
 		t.Fatalf("no gates: %+v", res)
+	}
+}
+
+func TestCheckHistoryGate(t *testing.T) {
+	w := fixture(t)
+	tr := w.AllTransitions[1]
+	clean := w.Check(ctx, Env{}, store.Task{State: tr.From[0]}, nil, tr, Args{})
+	for _, r := range clean {
+		if r.Gate == GateHistory {
+			t.Fatalf("history gate on a clean task: %+v", clean)
+		}
+	}
+	got := w.Check(ctx, Env{}, store.Task{State: tr.From[0], Skipped: 3}, nil, tr, Args{})
+	if len(got) != len(clean)+1 || got[0].Gate != "history" || got[0].OK ||
+		!strings.Contains(got[0].Message, "3") || !strings.Contains(got[0].Message, "upgrade rig") {
+		t.Fatalf("got %+v", got)
+	}
+	if !reflect.DeepEqual(got[1:], clean) {
+		t.Fatalf("own gates changed: %+v vs %+v", got[1:], clean)
+	}
+}
+
+func TestDependsInDegradedDependency(t *testing.T) {
+	w := fixture(t)
+	var g Gate
+	if err := g.UnmarshalJSON([]byte(`{"dependsIn": ["merged"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Task: func(context.Context, string) (store.Task, error) {
+		return store.Task{State: "merged", Skipped: 1}, nil
+	}}
+	task := store.Task{Fields: map[string]any{"depends": []any{"t-dep1"}}}
+	ok, msg := w.check(ctx, env, task, nil, Transition{}, Args{}, g)
+	if ok || !strings.Contains(msg, "t-dep1") || !strings.Contains(msg, "upgrade rig") {
+		t.Fatalf("ok=%v msg=%q", ok, msg)
 	}
 }
