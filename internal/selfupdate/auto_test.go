@@ -152,14 +152,7 @@ func TestAutoHeldLockMeansNoDownload(t *testing.T) {
 	if downloads != 0 || e.errOut.Len() != 0 {
 		t.Fatalf("downloads %d, stderr %q", downloads, e.errOut.String())
 	}
-	unchanged2(t, e)
-}
-
-func unchanged2(t *testing.T, e *autoEnv) {
-	t.Helper()
-	if b, _ := os.ReadFile(e.exe); !bytes.Equal(b, e.old) {
-		t.Fatalf("binary changed: %q", b)
-	}
+	unchanged(t, e.exe, e.old)
 }
 
 func TestAutoStaleLockIsTakenOver(t *testing.T) {
@@ -183,7 +176,7 @@ func TestAutoFailedInstallLeavesBinaryAndPrintsOneLine(t *testing.T) {
 	o := e.opts("install", "0.5.2", fakeRelease("v0.5.3", "new rig", "sig"))
 	o.Install.verify = func(*Download) error { return &CheckError{Check: "signature", Detail: "bad\nmultiline"} }
 	Auto(context.Background(), o)
-	unchanged2(t, e)
+	unchanged(t, e.exe, e.old)
 	if got := e.errOut.String(); lines(got) != 1 || !strings.Contains(got, "automatic update failed") {
 		t.Fatalf("stderr %q", got)
 	}
