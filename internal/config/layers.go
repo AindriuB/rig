@@ -160,6 +160,9 @@ func order(key string) []string {
 		// rig.json's pushPrefixes wins when present; a project .rig file
 		// never sets it.
 		return []string{ScopeRigJSON, ScopeRepo, ScopeGlobal, ScopeDefault}
+	case KeyUpdateAuto:
+		// Read from the global file alone, as UpdateAuto does.
+		return []string{ScopeGlobal, ScopeDefault}
 	case KeyWorkflow, KeyTrackerCommand:
 		return []string{ScopeRepo, ScopeGlobal, ScopeDefault}
 	}
@@ -188,6 +191,7 @@ var defaults = map[string]any{
 	KeyTrackerKind:  TrackerLocal,
 	KeyWorkflow:     DefaultWorkflow,
 	KeyPushPrefixes: DefaultPushPrefixes,
+	KeyUpdateAuto:   UpdateAutoOff,
 }
 
 // Get returns the value of key in effect and its scope. It is false for a
