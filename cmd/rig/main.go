@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -51,6 +52,8 @@ type app struct {
 	updater func(context.Context, selfupdate.Options) selfupdate.Result
 	// exe is the path of the running rig; nil is os.Executable.
 	exe func() (string, error)
+	// goos is the OS rig believes it runs on; empty is runtime.GOOS.
+	goos string
 }
 
 const usage = `usage: rig <command>
@@ -122,7 +125,10 @@ func (a *app) run(ctx context.Context, args []string) int {
 	// --actor belongs to this run only; a reused app (tests) must not
 	// stamp one run's events with another run's flag.
 	a.actorFlag = ""
-	cleanupOld(a.executable)
+	// Only the Windows swap leaves <rig>.old; elsewhere it is the user's file.
+	if a.goos == "windows" || (a.goos == "" && runtime.GOOS == "windows") {
+		cleanupOld(a.executable)
+	}
 	if len(args) == 0 {
 		fmt.Fprint(a.stderr, usage)
 		return 2

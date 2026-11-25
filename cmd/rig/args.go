@@ -38,8 +38,8 @@ func (f *flagSet) boolean(name string) *bool {
 // is missing here, whether it is registered with str/boolean or named in a
 // []string literal handed to splitRepeated or takeRepeated.
 var knownOptions = map[string]bool{
-	"--actor": true, "--all": true, "--base": true, "--blocking": true, "--body": true, "--check": true,
-	"--body-file": true, "--budget": true, "--children": true, "--comment": true,
+	"--actor": true, "--all": true, "--base": true, "--blocking": true, "--body": true,
+	"--body-file": true, "--budget": true, "--check": true, "--children": true, "--comment": true,
 	"--draft": true, "--dry-run": true, "--field": true, "--findings": true, "--format": true,
 	"--from": true, "--global": true, "--head": true, "--help": true, "--history": true,
 	"--include": true, "--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
