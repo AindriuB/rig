@@ -511,7 +511,7 @@ func (g gate) Capabilities(ctx context.Context) (tracker.Caps, error) {
 }
 
 // Create is slow, so a push that lost the race would otherwise find the link
-// already written.
+// already written. The per-task lock, not the store, is what stops the loser.
 func (g gate) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issue, error) {
 	time.Sleep(400 * time.Millisecond)
 	return g.Tracker.Create(ctx, ni)
@@ -708,5 +708,30 @@ func TestTrackerPushSettleWindow(t *testing.T) {
 	e.err.Reset()
 	if code := e.run("tracker", "push", epic); code != 0 || len(e.fk.Created) != 1 || !strings.Contains(e.err.String(), "duplicate is possible") {
 		t.Fatalf("past: exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
+	}
+}
+
+// AC14, AC18: a retry past the window records a fresh intent before it
+// creates, so if that create fails too, the window runs from the new attempt.
+func TestTrackerPushSettleRunsFromLatestIntent(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	epic := e.task("epic", "")
+	e.fk.FailCreateN = 1
+	if code := e.run("tracker", "push", epic); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	base := e.a.now()
+	late := base.Add(pushSettle + time.Minute)
+	e.a.now = func() time.Time { return late }
+	e.fk.FailCreateN = 2
+	if code := e.run("tracker", "push", epic); code != 2 {
+		t.Fatalf("second attempt exit %d: %s", code, e.err.String())
+	}
+	// Past the first intent's window but inside the second's.
+	e.a.now = func() time.Time { return late.Add(time.Minute) }
+	e.fk.FailCreateN = 0
+	e.err.Reset()
+	if code := e.run("tracker", "push", epic); code != 2 || len(e.fk.Created) != 0 || !strings.Contains(e.err.String(), "re-run after") {
+		t.Fatalf("exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
 	}
 }

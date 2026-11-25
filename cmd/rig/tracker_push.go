@@ -421,25 +421,25 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			break
 		}
 		intent, intentAt, retry := pushIntent(log, spec.Link)
-		if !retry {
+		// Every Create attempt first appends a fresh intent, under the task's
+		// lock, so pushSettle runs from the latest attempt.
+		appendIntent := func() error {
 			ev, err := store.NewEvent(store.KindTrackerPush, store.TrackerPushData{
 				Marker: s.marker, Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project,
 			})
-			if err == nil {
-				_, err = w.st.Update(ctx, s.task.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
-					if cur.External != nil {
-						return nil, errors.New("the task was linked during the push")
-					}
-					return []store.Event{ev}, nil
-				})
-			}
-			if errors.Is(err, store.ErrPushIntent) {
-				// Stamp saw an intent we did not: another push of this task
-				// got in between our read and our append.
-				stop(i, s, "another push of this task is under way; not creating a second issue")
-				break
-			}
 			if err != nil {
+				return err
+			}
+			_, err = w.st.Update(ctx, s.task.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+				if cur.External != nil {
+					return nil, errors.New("the task was linked during the push")
+				}
+				return []store.Event{ev}, nil
+			})
+			return err
+		}
+		if !retry {
+			if err := appendIntent(); err != nil {
 				stop(i, s, "record the intent: %v", err)
 				break
 			}
@@ -485,6 +485,10 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 				break
 			}
 			fmt.Fprintf(a.stderr, "rig %s: warning: task %s: no issue carries %s, so creating one; a duplicate is possible if the tracker was slow to list the earlier one\n", cmd, s.task.Short, intent.Marker)
+			if err := appendIntent(); err != nil {
+				stop(i, s, "record the intent: %v", err)
+				break
+			}
 		}
 
 		// Step 8: create.

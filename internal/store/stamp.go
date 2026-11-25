@@ -161,12 +161,6 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 				if !validPush(*d) {
 					return errors.New("no marker or kind")
 				}
-				// The same compare-and-swap that appends the first intent
-				// for a tracker refuses a second, so two pushes racing on
-				// one task cannot both go on to create an issue.
-				if PushIntentFor(log, *d) {
-					return ErrPushIntent
-				}
 				return nil
 			})
 		case KindFinding:

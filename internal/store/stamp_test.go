@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 )
@@ -46,22 +45,26 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-// A second intent for the tracker an intent already names is refused, so
-// racing pushes of one task cannot both create; another tracker's is not.
-func TestStampTrackerPushRefusesSecond(t *testing.T) {
+// Every Create attempt records its own intent, so a second intent for the
+// same tracker is accepted and both are kept.
+func TestStampTrackerPushRecordsSequentialIntents(t *testing.T) {
 	o := Options{Now: func() time.Time { return t0 }}
 	d := TrackerPushData{Marker: "rig-t-0001", Kind: "jira", Host: "j.example", Project: "AB"}
-	first, err := o.Stamp(sampleLog(t), []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}})
-	if err != nil {
-		t.Fatal(err)
+	log := sampleLog(t)
+	for i := 0; i < 2; i++ {
+		out, err := o.Stamp(log, []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}})
+		if err != nil {
+			t.Fatalf("intent %d: %v", i+1, err)
+		}
+		log = append(log, out...)
 	}
-	log := append(sampleLog(t), first...)
-	d.Host = "J.EXAMPLE"
-	if _, err := o.Stamp(log, []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}}); !errors.Is(err, ErrPushIntent) {
-		t.Fatalf("same tracker: %v", err)
+	n := 0
+	for _, e := range log {
+		if e.Kind == KindTrackerPush {
+			n++
+		}
 	}
-	d.Host = "other.example"
-	if _, err := o.Stamp(log, []Event{{Kind: KindTrackerPush, Data: mustJSON(t, d)}}); err != nil {
-		t.Fatalf("other tracker: %v", err)
+	if n != 2 {
+		t.Fatalf("%d intents recorded, want 2", n)
 	}
 }

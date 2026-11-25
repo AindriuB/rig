@@ -2,9 +2,7 @@ package store
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -147,28 +145,6 @@ type TrackerPushData struct {
 	Kind    string `json:"kind"`
 	Host    string `json:"host,omitempty"`
 	Project string `json:"project,omitempty"`
-}
-
-// ErrPushIntent is the error Options.Stamp returns for a tracker-push intent
-// when the log already holds one for the same tracker.
-var ErrPushIntent = errors.New("a tracker-push intent for this tracker is already recorded")
-
-// PushIntentFor reports whether log holds a tracker-push intent for the same
-// tracker as d: the same kind, and the same host and project in any case.
-func PushIntentFor(log []Event, d TrackerPushData) bool {
-	for _, e := range log {
-		if e.Kind != KindTrackerPush || e.V != Version {
-			continue
-		}
-		var x TrackerPushData
-		if json.Unmarshal(e.Data, &x) != nil || !validPush(x) {
-			continue
-		}
-		if x.Kind == d.Kind && strings.EqualFold(x.Host, d.Host) && strings.EqualFold(x.Project, d.Project) {
-			return true
-		}
-	}
-	return false
 }
 
 // TransitionData moves a task from one state to another. Sha, PR and Reason
