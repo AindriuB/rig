@@ -134,6 +134,7 @@ anything in the tables below raises the major version.
 | Command | Exit codes |
 |---|---|
 | `rig version` | 0 |
+| `rig update [--check] [--to <version>] [--json]` | 0 updated, or already current (with `--check`: no newer release, or the target is before 0.5.2); 1 refused (the latest release is older than the running rig, `--to` names a version before 0.5.2 or one that is not a version, or the binary's directory is not writable), or with `--check` a newer release exists; 2 a usage error (an extra argument, an unknown flag, or `--to` with no value), a network error, a failed check, or with `--check` a `--to` that is not a version |
 | `rig push <task-id\|branch> [--worktree <path>]` | 0 pushed; 1 git ran and the push failed; 2 refused, git push never started |
 | `rig pr view [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error, including no such pull request |
 | `rig pr checks [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error |
@@ -179,6 +180,29 @@ anything in the tables below raises the major version.
 | `rig login status [--json]` | 0; 2 on any error |
 | `rig logout jira [--url <site>] [--repo]` | 0, also when already logged out; 2 on any error, including a store that could not be checked when the entry was found nowhere |
 | `rig logout github\|gitlab` | 2: prints the `gh`/`glab` command that does it |
+
+`rig update --json` prints one object: `{current, target, action, path,
+check?}`. `action` is `updated`, `up-to-date`, `available`, `refused` or
+`failed`; `check` is `signature`, `checksum` or `version` and is present only
+when that check failed. Without `--json` the one-line message is printed.
+
+**Self-update.** `rig update` takes releases from one fixed source, the
+`AindriuB/rig` releases on the GitHub API. No flag, environment variable or
+config key changes it. Every request, and every redirect, must be `https` to
+`api.github.com`, `github.com`, `objects.githubusercontent.com` or
+`release-assets.githubusercontent.com` on the default port, or rig refuses it.
+Drafts and prereleases are never installed. rig downloads `SHA256SUMS`,
+`SHA256SUMS.sig` and the platform binary, then verifies in this order: the
+Ed25519 signature (a raw 64-byte `.sig`) over `SHA256SUMS` against the keys
+built into rig; the binary's SHA-256 against its `SHA256SUMS` line; and the
+staged binary's `rig version`, which must print the target version. Only then
+is the file replaced. The embedded keys are a list, so a key can be rotated.
+
+`update.auto` (`off`, `notify`, `install`; default `off`) is read from the
+global config only. After a command returns, rig checks for a release at most
+every 24 h (2 s timeout) and prints one stderr line. It is silent in CI, when
+stderr is not a terminal, with `--json` and offline, and never changes the exit
+code.
 
 An unknown flag is always exit 2: rig never ignores an argument it does not
 understand. In the phase-2 commands, exit 1 means refused by a gate or the
@@ -512,6 +536,7 @@ an example workflow file, shown in phase-2.md as the worked example.
 | 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
 | 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0**: `rig tracker report` |
+| 3.5 | Self-update, see [phase-3.5.md](phase-3.5.md). **0.5.2**: signed releases, `rig update`, `update.auto` |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |
