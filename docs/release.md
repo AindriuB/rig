@@ -4,6 +4,7 @@
 
 ## Version bump
 - File: `cmd/rig/version.go` — set `version` to `<version>`.
+- Changelog: in the release commit, move `## [Unreleased]` entries of `CHANGELOG.md` under `## [<version>] - <date>` and add its compare link, before the tag.
 - Commit: `release: <version>` on a `task/release-<version>` branch; PR to `main`.
 - Wait: CI `ci.yml` green on the PR, then merge.
 - Skip when `go run ./cmd/rig version` on `main` already prints `<version>`.
@@ -17,6 +18,7 @@
 |---|---|---|---|
 | GitHub release (draft, 5 binaries + SHA256SUMS + SHA256SUMS.sig) | tag push | `release.yml` | `RIG_SIGNING_KEY` (Ed25519 seed, base64; make with `go run ./tools/rigsign keygen <dir>`) |
 | GitHub release published | `gh release edit v<version> --draft=false --latest` | none (manual) | none |
+| rig-site rebuild | GitHub release published | `site-dispatch.yml` | `RIG_SITE_DISPATCH_TOKEN` |
 
 ## Verify the published state
 - `gh release view v<version> --json isDraft,assets --jq '.isDraft, [.assets[].name]'`
