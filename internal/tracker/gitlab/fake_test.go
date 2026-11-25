@@ -30,21 +30,31 @@ type fakeIssue struct {
 	IssueType string   `json:"issue_type"`
 	Updated   string   `json:"updated_at"`
 	Parent    int64    `json:"parent_iid"`
+	// ParentEpic is the iid of a group epic that is this issue's parent.
+	ParentEpic int64 `json:"parent_epic"`
 }
 
 type fakeState struct {
-	Hierarchy bool        `json:"hierarchy"`
-	Group     bool        `json:"group"`
-	Epics     bool        `json:"epics"`
-	NoAuth    bool        `json:"noauth"`
-	GQLFail   bool        `json:"gqlfail"`
-	TypesFail bool        `json:"typesfail"`
-	FailLabel string      `json:"faillabel"`
-	FailNew   bool        `json:"failnew"`
-	Labels    []string    `json:"labels"`
-	BaseURL   string      `json:"base_url"`
-	Counter   int         `json:"counter"`
-	Issues    []fakeIssue `json:"issues"`
+	Hierarchy bool   `json:"hierarchy"`
+	Group     bool   `json:"group"`
+	Epics     bool   `json:"epics"`
+	NoAuth    bool   `json:"noauth"`
+	GQLFail   bool   `json:"gqlfail"`
+	TypesFail bool   `json:"typesfail"`
+	FailLabel string `json:"faillabel"`
+	FailNew   bool   `json:"failnew"`
+	// FailEpicRead fails the epic read-back once an epic exists.
+	FailEpicRead bool        `json:"failepicread"`
+	Labels       []string    `json:"labels"`
+	BaseURL      string      `json:"base_url"`
+	Counter      int         `json:"counter"`
+	Issues       []fakeIssue `json:"issues"`
+	// Group epics (iid is group-scoped, so 1 may also be a project issue) and
+	// labels created in the group.
+	EpicItems   []fakeIssue `json:"epic_items"`
+	GroupLabels []string    `json:"group_labels"`
+	// Foreign is a work item of another group that the epic search returns.
+	Foreign []fakeIssue `json:"foreign"`
 }
 
 type fakeCall struct {
@@ -52,6 +62,12 @@ type fakeCall struct {
 	Stdin     string   `json:"stdin"`
 	TokenSeen bool     `json:"token_seen"`
 }
+
+func epicURL(iid int64) string {
+	return "https://gitlab.example/groups/" + fakeGroup + "/-/epics/" + strconv.FormatInt(iid, 10)
+}
+
+const fakeGroup = "grp/sub"
 
 func issueURL(iid int64) string {
 	return "https://gitlab.example/" + fakeProject + "/-/issues/" + strconv.FormatInt(iid, 10)
@@ -149,6 +165,16 @@ func fakeGlab(dir string, args []string) int {
 		st.Labels = append(st.Labels, name)
 		save()
 		return out(map[string]string{"name": name, "color": field("color")})
+	case endpoint == "groups/"+url.PathEscape(fakeGroup)+"/labels" && method == "POST":
+		name := field("name")
+		if slices.Contains(st.GroupLabels, name) {
+			return fail("glab: 409 Label already exists")
+		}
+		st.GroupLabels = append(st.GroupLabels, name)
+		save()
+		return out(map[string]string{"name": name, "color": field("color")})
+	case strings.HasPrefix(endpoint, "groups/") || strings.Contains(endpoint, "epic"):
+		return fail("fake glab: REST call to a group or epic: " + endpoint)
 	case endpoint == "graphql":
 		return fakeGraphQL(&st, stdin, out)
 	case endpoint == base && method == "GET":
@@ -232,6 +258,89 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 			p["group"] = g
 		}
 		return out(map[string]any{"data": map[string]any{"project": p}})
+	case strings.Contains(req.Query, "RigGroup("):
+		p := map[string]any{"group": nil}
+		if st.Group {
+			p["group"] = map[string]string{"fullPath": fakeGroup}
+		}
+		return out(map[string]any{"data": map[string]any{"project": p}})
+	case strings.Contains(req.Query, "RigEpicRead"):
+		if st.FailEpicRead && len(st.EpicItems) > 0 {
+			fmt.Fprintln(os.Stderr, "glab: 500 epic read boom")
+			return 1
+		}
+		nodes := []any{}
+		for _, e := range st.EpicItems {
+			if strconv.FormatInt(e.IID, 10) != fmt.Sprint(req.Variables["iid"]) {
+				continue
+			}
+			lbls := []any{}
+			for _, l := range e.Labels {
+				lbls = append(lbls, map[string]string{"title": l})
+			}
+			kids := []any{}
+			for _, k := range st.Issues {
+				if k.ParentEpic == e.IID {
+					kids = append(kids, map[string]any{"iid": strconv.FormatInt(k.IID, 10), "webUrl": k.WebURL, "title": k.Title,
+						"workItemType": map[string]string{"name": "Issue"}})
+				}
+			}
+			state := "OPEN"
+			if e.State == "closed" {
+				state = "CLOSED"
+			}
+			nodes = append(nodes, map[string]any{"id": "gid://gitlab/WorkItem/e" + strconv.FormatInt(e.IID, 10),
+				"iid": strconv.FormatInt(e.IID, 10), "webUrl": e.WebURL, "title": e.Title, "state": state, "updatedAt": e.Updated,
+				"widgets": []any{
+					map[string]any{"type": "DESCRIPTION", "description": "epic body"},
+					map[string]any{"type": "LABELS", "labels": map[string]any{"nodes": lbls}},
+					map[string]any{"type": "HIERARCHY", "children": map[string]any{"nodes": kids}},
+				}})
+		}
+		return out(map[string]any{"data": map[string]any{"group": map[string]any{"workItems": map[string]any{"nodes": nodes}}}})
+	case strings.Contains(req.Query, "RigEpicSearch"):
+		nodes := []any{}
+		want, _ := req.Variables["labels"].([]any)
+		for _, e := range append(append([]fakeIssue{}, st.EpicItems...), st.Foreign...) {
+			ok := true
+			for _, w := range want {
+				ok = ok && slices.Contains(e.Labels, fmt.Sprint(w))
+			}
+			if ok {
+				nodes = append(nodes, map[string]any{"iid": strconv.FormatInt(e.IID, 10), "webUrl": e.WebURL, "title": e.Title,
+					"workItemType": map[string]string{"name": "Epic"}})
+			}
+		}
+		return out(map[string]any{"data": map[string]any{"group": map[string]any{"workItems": map[string]any{"nodes": nodes}}}})
+	case strings.Contains(req.Query, "RigGroupLabels"):
+		term := fmt.Sprint(req.Variables["term"])
+		nodes := []any{}
+		if slices.Contains(st.GroupLabels, term) {
+			nodes = append(nodes, map[string]string{"id": "gid://gitlab/GroupLabel/" + term, "title": term})
+		}
+		return out(map[string]any{"data": map[string]any{"group": map[string]any{"labels": map[string]any{"nodes": nodes}}}})
+	case strings.Contains(req.Query, "RigNote"):
+		in, _ := req.Variables["input"].(map[string]any)
+		if !strings.HasPrefix(fmt.Sprint(in["noteableId"]), "gid://gitlab/WorkItem/e") {
+			fmt.Fprintln(os.Stderr, "fake glab: note on a non-epic")
+			return 1
+		}
+		st.Counter++
+		saveFake(st)
+		return out(map[string]any{"data": map[string]any{"createNote": map[string]any{
+			"note": map[string]string{"id": "gid://gitlab/Note/" + strconv.Itoa(500+st.Counter)}, "errors": []string{}}}})
+	case strings.Contains(req.Query, "RigState"):
+		in, _ := req.Variables["input"].(map[string]any)
+		id, _ := strconv.ParseInt(strings.TrimPrefix(fmt.Sprint(in["id"]), "gid://gitlab/WorkItem/e"), 10, 64)
+		for i := range st.EpicItems {
+			if st.EpicItems[i].IID == id {
+				st.Counter++
+				st.EpicItems[i].Updated = "2026-01-01T00:00:" + fmt.Sprintf("%02d", st.Counter) + "Z"
+				st.EpicItems[i].State = map[string]string{"CLOSE": "closed", "REOPEN": "opened"}[fmt.Sprint(in["stateEvent"])]
+			}
+		}
+		saveFake(st)
+		return out(map[string]any{"data": map[string]any{"workItemUpdate": map[string]any{"workItem": map[string]string{"id": fmt.Sprint(in["id"])}, "errors": []string{}}}})
 	case strings.Contains(req.Query, "RigParent"):
 		nodes := []any{}
 		for _, is := range st.Issues {
@@ -250,9 +359,26 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 	case strings.Contains(req.Query, "RigCreate"):
 		in, _ := req.Variables["input"].(map[string]any)
 		if in["workItemTypeId"] == "gid://gitlab/WorkItems::Type/8" {
-			// A group epic must never become a project issue (its iid is group-scoped).
-			fmt.Fprintln(os.Stderr, "fake glab: epic create reached the fake")
-			return 1
+			// A group epic is written to the group, never to the project.
+			if in["namespacePath"] != fakeGroup {
+				fmt.Fprintln(os.Stderr, "fake glab: epic create outside the group")
+				return 1
+			}
+			st.Counter++
+			e := fakeIssue{IID: int64(len(st.EpicItems) + 1), State: "opened", IssueType: "epic",
+				Updated: "2026-01-01T00:00:" + fmt.Sprintf("%02d", st.Counter) + "Z"}
+			e.Title, _ = in["title"].(string)
+			e.WebURL = epicURL(e.IID)
+			if lw, ok := in["labelsWidget"].(map[string]any); ok {
+				for _, id := range lw["labelIds"].([]any) {
+					e.Labels = append(e.Labels, strings.TrimPrefix(fmt.Sprint(id), "gid://gitlab/GroupLabel/"))
+				}
+			}
+			st.EpicItems = append(st.EpicItems, e)
+			b, _ := json.Marshal(st)
+			_ = os.WriteFile(filepath.Join(os.Getenv("RIG_FAKE_GLAB_DIR"), "state.json"), b, 0o644)
+			return out(map[string]any{"data": map[string]any{"workItemCreate": map[string]any{
+				"workItem": map[string]any{"iid": strconv.FormatInt(e.IID, 10), "webUrl": e.WebURL, "updatedAt": "2000-01-01T00:00:00Z"}, "errors": []string{}}}})
 		}
 		st.Counter++
 		is := fakeIssue{IID: int64(100 + st.Counter), State: "opened", IssueType: "issue",
@@ -265,8 +391,12 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 			}
 		}
 		if hw, ok := in["hierarchyWidget"].(map[string]any); ok {
-			n, _ := strconv.ParseInt(strings.TrimPrefix(fmt.Sprint(hw["parentId"]), "gid://gitlab/WorkItem/"), 10, 64)
-			is.Parent = n
+			pid := strings.TrimPrefix(fmt.Sprint(hw["parentId"]), "gid://gitlab/WorkItem/")
+			if e, isEpic := strings.CutPrefix(pid, "e"); isEpic {
+				is.ParentEpic, _ = strconv.ParseInt(e, 10, 64)
+			} else {
+				is.Parent, _ = strconv.ParseInt(pid, 10, 64)
+			}
 		}
 		st.Issues = append(st.Issues, is)
 		b, _ := json.Marshal(st)
@@ -302,6 +432,12 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 			}
 		}
 		widget["children"] = map[string]any{"nodes": kids}
+		for _, e := range st.EpicItems {
+			if e.IID == is.ParentEpic {
+				widget["parent"] = map[string]any{"iid": strconv.FormatInt(e.IID, 10), "webUrl": e.WebURL, "title": e.Title,
+					"workItemType": map[string]string{"name": "Epic"}}
+			}
+		}
 		if is.Parent != 0 {
 			for _, p := range st.Issues {
 				if p.IID == is.Parent {
@@ -358,4 +494,9 @@ func readCalls(t *testing.T, dir string) []fakeCall {
 		calls = append(calls, c)
 	}
 	return calls
+}
+
+func saveFake(st *fakeState) {
+	b, _ := json.Marshal(st)
+	_ = os.WriteFile(filepath.Join(os.Getenv("RIG_FAKE_GLAB_DIR"), "state.json"), b, 0o644)
 }
