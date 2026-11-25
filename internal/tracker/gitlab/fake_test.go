@@ -220,6 +220,9 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 			map[string]string{"id": "gid://gitlab/WorkItems::Type/5", "name": "Task"},
 			map[string]string{"id": "gid://gitlab/WorkItems::Type/9", "name": "Incident"},
 		}}
+		if st.Epics {
+			proj["nodes"] = append(proj["nodes"].([]any), map[string]string{"id": "gid://gitlab/WorkItems::Type/8", "name": "Epic"})
+		}
 		p := map[string]any{"workItemTypes": proj}
 		if st.Group {
 			g := map[string]any{"fullPath": "grp/sub", "workItemTypes": map[string]any{"nodes": []any{}}}
