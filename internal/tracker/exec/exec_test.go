@@ -445,7 +445,7 @@ func TestIssueTypesKeepsOmittedLevelNil(t *testing.T) {
 	if len(types) != 3 || types[0].Level == nil || *types[0].Level != 2 || types[1].Level == nil || *types[1].Level != 0 || types[2].Level != nil {
 		t.Errorf("types = %+v", types)
 	}
-	if got := requests(t, dir); len(got) != 1 || got[0] != `{"v":1,"op":"types"}` {
+	if got := requests(t, dir); len(got) != 2 || got[1] != `{"v":1,"op":"types"}` {
 		t.Errorf("requests = %v", got)
 	}
 }
