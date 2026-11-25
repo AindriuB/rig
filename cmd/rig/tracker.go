@@ -301,6 +301,8 @@ func (a *app) trackerCmd(ctx context.Context, args []string) int {
 	switch args[0] {
 	case "pull":
 		return a.trackerPull(ctx, rest)
+	case "push":
+		return a.trackerPush(ctx, rest)
 	case "refresh":
 		return a.trackerRefresh(ctx, rest)
 	case "report":
