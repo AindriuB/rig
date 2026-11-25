@@ -192,6 +192,16 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 // resolveStart picks the commit a task starts from: the newer of local <base>
 // and origin/<base>, local when they have diverged (said on warn).
 func resolveStart(ctx context.Context, repo git.Repo, base string, warn io.Writer) (sha, label string, err error) {
+	if base == "HEAD" {
+		sha, ok, err := repo.ResolveRef(ctx, "HEAD^{commit}")
+		if err != nil {
+			return "", "", err
+		}
+		if !ok {
+			return "", "", fmt.Errorf("base branch %s does not exist", base)
+		}
+		return sha, "HEAD", nil
+	}
 	local, haveLocal, err := repo.ResolveRef(ctx, "refs/heads/"+base+"^{commit}")
 	if err != nil {
 		return "", "", err
