@@ -218,7 +218,7 @@ func TestCreateAttachFailureReturnsKeyAndURL(t *testing.T) {
 	st.FailSub = true
 	tr := newTracker(t, st)
 	is, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
-	if err == nil || !strings.Contains(err.Error(), "issue 5") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" {
+	if err == nil || !strings.Contains(err.Error(), "issue 5") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" || is.Rev != "" {
 		t.Fatalf("issue = %+v, err = %v", is, err)
 	}
 }
@@ -235,7 +235,7 @@ func TestCreateReadBackFailureReturnsKeyAndURL(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	is, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
-	if err == nil || !strings.Contains(err.Error(), "revision could not be read") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" {
+	if err == nil || !strings.Contains(err.Error(), "revision could not be read") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" || is.Rev != "" {
 		t.Fatalf("issue = %+v, err = %v", is, err)
 	}
 }
