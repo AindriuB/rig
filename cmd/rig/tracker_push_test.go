@@ -375,6 +375,15 @@ func TestTrackerPushCreateWithErrorLinks(t *testing.T) {
 	if e.linkOf(epic).Key != out.Pushed[0].Key {
 		t.Fatal("the first task was created again")
 	}
+
+	// Text mode reports the same outcome.
+	e2 := newPushEnv(t, pushCaps)
+	epic2, _, _ := e2.tree()
+	e2.tr = createsThenFails{e2.fk}
+	e2.out.Reset()
+	if code := e2.run("tracker", "push", epic2, "--tree"); code != 2 || !strings.Contains(e2.out.String(), epic2+"  created-with-error") {
+		t.Fatalf("text: exit %d %q", code, e2.out.String())
+	}
 }
 
 // Acceptance comes only from the field the workflow maps to the acceptance
