@@ -134,7 +134,7 @@ anything in the tables below raises the major version.
 | Command | Exit codes |
 |---|---|
 | `rig version` | 0 |
-| `rig update [--check] [--to <version>] [--json]` | 0 updated, or already current (with `--check`: no newer release, or the target is before 0.5.2); 1 refused (the latest release is older than the running rig, `--to` names a version before 0.5.2 or one that is not a version, or the binary's directory is not writable), or with `--check` a newer release exists; 2 a network error, a failed check, or with `--check` a `--to` that is not a version |
+| `rig update [--check] [--to <version>] [--json]` | 0 updated, or already current (with `--check`: no newer release, or the target is before 0.5.2); 1 refused (the latest release is older than the running rig, `--to` names a version before 0.5.2 or one that is not a version, or the binary's directory is not writable), or with `--check` a newer release exists; 2 a usage error (an extra argument, an unknown flag, or `--to` with no value), a network error, a failed check, or with `--check` a `--to` that is not a version |
 | `rig push <task-id\|branch> [--worktree <path>]` | 0 pushed; 1 git ran and the push failed; 2 refused, git push never started |
 | `rig pr view [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error, including no such pull request |
 | `rig pr checks [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error |
