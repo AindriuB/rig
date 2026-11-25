@@ -244,7 +244,7 @@ func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
 	if err != nil {
 		return tracker.Caps{}, err
 	}
-	return tracker.Caps{Parent: h, Children: h, Types: true, Search: true, Comment: true, SetStatus: true}, nil
+	return tracker.Caps{Parent: h, Children: h, Types: true, Create: true, Search: true, Comment: true, SetStatus: true}, nil
 }
 
 func (t *Tracker) hasHierarchy(ctx context.Context) (bool, error) {

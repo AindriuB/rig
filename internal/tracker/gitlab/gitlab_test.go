@@ -251,3 +251,143 @@ func TestFamilyUnderRelativeURLRoot(t *testing.T) {
 		t.Errorf("Issue(2).Parent = %+v, %v; want 1", iss.Parent, err)
 	}
 }
+
+func setState(t *testing.T, dir string, mutate func(*fakeState)) {
+	t.Helper()
+	var st fakeState
+	b, _ := os.ReadFile(filepath.Join(dir, "state.json"))
+	_ = json.Unmarshal(b, &st)
+	mutate(&st)
+	b, _ = json.Marshal(st)
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func level(l *int) int {
+	if l == nil {
+		return -1
+	}
+	return *l
+}
+
+// AC1: levels, and Epic only where the group reports it.
+func TestIssueTypesLevels(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.Epics = true })
+	types, err := tr.IssueTypes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, it := range types {
+		got[it.Name] = level(it.Level)
+	}
+	want := map[string]int{"Epic": 2, "Issue": 1, "Task": 0, "Incident": -1}
+	if len(got) != len(want) {
+		t.Errorf("types = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok || g != v {
+			t.Errorf("type %s level = %v (present %v), want %d", k, g, ok, v)
+		}
+	}
+	for _, mode := range []func(*fakeState){
+		func(s *fakeState) { s.Epics = false },                 // tier has no epics
+		func(s *fakeState) { s.Group = false; s.Epics = true }, // not a group
+	} {
+		setState(t, dir, mode)
+		types, err := tr.IssueTypes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range types {
+			if it.Name == "Epic" {
+				t.Errorf("Epic offered when unavailable")
+			}
+		}
+	}
+}
+
+func lastCreate(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	var found []map[string]any
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") {
+			var req struct {
+				Variables struct{ Input map[string]any }
+			}
+			if err := json.Unmarshal([]byte(c.Stdin), &req); err != nil {
+				t.Fatal(err)
+			}
+			found = append(found, req.Variables.Input)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d create writes, want 1", len(found))
+	}
+	return found[0]
+}
+
+// AC2, AC4, AC5: one write carrying only the agreed fields.
+func TestCreateWithParent(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "task", Title: "t", Body: "body", Acceptance: []string{"a"}, Labels: []string{"rig"}, ParentKey: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Key == "" || made.URL == "" || made.Rev == "" {
+		t.Errorf("made = %+v", made)
+	}
+	in := lastCreate(t, dir)
+	for k := range in {
+		switch k {
+		case "namespacePath", "workItemTypeId", "title", "descriptionWidget", "labelsWidget", "hierarchyWidget":
+		default:
+			t.Errorf("request carries unagreed field %q", k)
+		}
+	}
+	if in["workItemTypeId"] != "gid://gitlab/WorkItems::Type/5" || in["title"] != "t" {
+		t.Errorf("input = %v", in)
+	}
+	if hw, _ := in["hierarchyWidget"].(map[string]any); hw["parentId"] != "gid://gitlab/WorkItem/1" || len(hw) != 1 {
+		t.Errorf("hierarchyWidget = %v", in["hierarchyWidget"])
+	}
+	if dw, _ := in["descriptionWidget"].(map[string]any); !strings.Contains(dw["description"].(string), "body") || !strings.Contains(dw["description"].(string), "- [ ] a") {
+		t.Errorf("descriptionWidget = %v", in["descriptionWidget"])
+	}
+	got, err := tr.Issue(ctx, made.Key)
+	if err != nil || got.Parent == nil || got.Parent.Key != "1" {
+		t.Errorf("created issue = %+v, %v", got, err)
+	}
+}
+
+// AC3: an unavailable Epic is ErrUnsupported and nothing is written.
+func TestCreateUnavailableEpic(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	_, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"})
+	if !errors.Is(err, tracker.ErrUnsupported) || !strings.Contains(err.Error(), "Epic") {
+		t.Errorf("err = %v", err)
+	}
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") {
+			t.Errorf("write made: %s", c.Stdin)
+		}
+	}
+	setState(t, dir, func(s *fakeState) { s.Epics = true })
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"}); err != nil {
+		t.Errorf("Epic with a group: %v", err)
+	}
+}
+
+func TestCreateUnknownLabelWritesNothing(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", Labels: []string{"no-such-label"}}); !errors.Is(err, tracker.ErrNotFound) {
+		t.Errorf("err = %v", err)
+	}
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") {
+			t.Errorf("write made")
+		}
+	}
+}
