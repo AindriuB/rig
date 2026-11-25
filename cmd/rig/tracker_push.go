@@ -5,13 +5,71 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
 	"github.com/AindriuB/rig/internal/workflow"
 )
+
+// pushSettle is how long after an earlier push's intent a retry with no
+// search hit waits before it creates, so the tracker's search index can catch
+// up with an issue that push made.
+const pushSettle = 2 * time.Minute
+
+// errPushBusy means another push holds the task's lock.
+var errPushBusy = errors.New("another push of this task is under way")
+
+// pushLock is a kernel advisory lock on one task's push lock file. The file
+// is never deleted; the kernel drops the lock when the holder closes it or dies.
+type pushLock struct{ f *os.File }
+
+// tryPushLock takes the lock for task without waiting: errPushBusy when
+// another holder has it.
+func tryPushLock(ctx context.Context, w *work, task string) (*pushLock, error) {
+	common, err := w.repo.CommonDir(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(common, "rig", "push")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return tryPushLockAt(filepath.Join(dir, task+".lock"))
+}
+
+func tryPushLockAt(path string) (*pushLock, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, fmt.Errorf("opening %s: %w", path, err)
+		}
+		return nil, err
+	}
+	if err := pushLockFileNB(f); err != nil {
+		_ = f.Close()
+		if errors.Is(err, errPushBusy) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("locking %s: %w", path, err)
+	}
+	return &pushLock{f: f}, nil
+}
+
+// release unlocks and closes. The file stays.
+func (l *pushLock) release() {
+	if l == nil || l.f == nil {
+		return
+	}
+	pushUnlockFile(l.f)
+	_ = l.f.Close()
+	l.f = nil
+}
 
 const pushUsage = "usage: rig tracker push <task> [--tree] [--dry-run] [--actor <name>] [--json] [--repo <dir>]"
 
@@ -128,8 +186,9 @@ func acceptanceOf(wf *workflow.Workflow, t store.Task) []string {
 	return nil
 }
 
-// pushIntent returns the latest tracker-push intent in log for the tracker.
-func pushIntent(log []store.Event, l trackerLink) (store.TrackerPushData, bool) {
+// pushIntent returns the latest tracker-push intent in log for the tracker,
+// and the time it was recorded.
+func pushIntent(log []store.Event, l trackerLink) (store.TrackerPushData, time.Time, bool) {
 	for i := len(log) - 1; i >= 0; i-- {
 		if log[i].Kind != store.KindTrackerPush || log[i].V != store.Version {
 			continue
@@ -139,10 +198,10 @@ func pushIntent(log []store.Event, l trackerLink) (store.TrackerPushData, bool) 
 			continue
 		}
 		if d.Kind == l.Kind && strings.EqualFold(d.Host, l.Host) && strings.EqualFold(d.Project, l.Project) {
-			return d, true
+			return d, log[i].Time, true
 		}
 	}
-	return store.TrackerPushData{}, false
+	return store.TrackerPushData{}, time.Time{}, false
 }
 
 // trackerPush implements `rig tracker push`. Exit codes: 0 pushed (or nothing
@@ -321,12 +380,39 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			out.NotPushed = append(out.NotPushed, item)
 		}
 	}
+	var held *pushLock
+	release := func() { held.release(); held = nil }
+	defer release()
 	for i, s := range steps {
+		release() // the previous task's lock, held through its step 9
 		parentKey := s.parentKey
 		if s.parentTask != "" {
 			parentKey = keys[s.parentTask]
 		}
 		item := pushItem{Task: s.task.Short, Title: s.task.Title, Type: s.typ, Parent: parentKey}
+
+		// Step 5b: the task's lock, so a push that finds an intent without a
+		// link knows its writer is dead.
+		lk, err := tryPushLock(ctx, w, s.task.ID)
+		if errors.Is(err, errPushBusy) {
+			stop(i, s, "another push of this task is under way; not creating a second issue")
+			break
+		}
+		if err != nil {
+			stop(i, s, "lock: %v", err)
+			break
+		}
+		held = lk
+		cur, err := w.st.Task(ctx, s.task.ID)
+		if err != nil {
+			stop(i, s, "%v", err)
+			break
+		}
+		if cur.External != nil {
+			keys[s.task.ID] = cur.External.Key
+			out.Skipped = append(out.Skipped, pushItem{Task: s.task.Short, Title: s.task.Title, Key: cur.External.Key, Type: cur.External.Type, Status: "skipped"})
+			continue
+		}
 
 		// Steps 6 and 7: the intent, and a retry's search for what it made.
 		log, err := w.st.Events(ctx, s.task.ID)
@@ -334,7 +420,7 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			stop(i, s, "%v", err)
 			break
 		}
-		intent, retry := pushIntent(log, spec.Link)
+		intent, intentAt, retry := pushIntent(log, spec.Link)
 		if !retry {
 			ev, err := store.NewEvent(store.KindTrackerPush, store.TrackerPushData{
 				Marker: s.marker, Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project,
@@ -391,6 +477,14 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 				out.Pushed = append(out.Pushed, item)
 				continue
 			}
+			// Zero hits: the earlier push made nothing, or the tracker does
+			// not list it yet.
+			if age := a.now().Sub(intentAt); age < pushSettle {
+				stop(i, s, "an earlier push ended %s ago; the tracker may not list its issue yet; re-run after %s",
+					age.Round(time.Second), intentAt.Add(pushSettle).UTC().Format(time.RFC3339))
+				break
+			}
+			fmt.Fprintf(a.stderr, "rig %s: warning: task %s: no issue carries %s, so creating one; a duplicate is possible if the tracker was slow to list the earlier one\n", cmd, s.task.Short, intent.Marker)
 		}
 
 		// Step 8: create.

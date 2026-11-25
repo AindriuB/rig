@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -242,11 +246,16 @@ func TestTrackerPushPartialFailure(t *testing.T) {
 	if e.linkOf(epic) == nil || e.linkOf(story) != nil {
 		t.Fatal("links after the failure")
 	}
-	if code := e.run("tracker", "push", epic, "--tree"); code != 2 && code != 0 {
-		t.Fatalf("re-run exit %d", code)
+	// Inside pushSettle the tracker may not list an earlier issue yet: stop.
+	if code := e.run("tracker", "push", epic, "--tree"); code != 2 || len(e.fk.Created) != 1 {
+		t.Fatalf("re-run inside pushSettle: exit %d, %d creates", code, len(e.fk.Created))
 	}
-	// The failed create left an intent and no issue: the search finds nothing,
-	// and the create goes ahead.
+	// Past it, the failed create's intent found no issue: the create goes ahead.
+	base := e.a.now()
+	e.a.now = func() time.Time { return base.Add(pushSettle + time.Minute) }
+	if code := e.run("tracker", "push", epic, "--tree"); code != 0 {
+		t.Fatalf("re-run exit %d: %s", code, e.err.String())
+	}
 	if e.linkOf(story) == nil || e.linkOf(sub) == nil || len(e.fk.Created) != 3 {
 		t.Fatalf("re-run: %s, %d creates", e.err.String(), len(e.fk.Created))
 	}
@@ -543,5 +552,161 @@ func TestTrackerPushRaceMakesOneCreate(t *testing.T) {
 		if e.intents(epic) != 1 {
 			t.Fatalf("round %d: %d intents", round, e.intents(epic))
 		}
+	}
+}
+
+// blockCreate holds Create until release is closed, after signalling entered,
+// and counts Search calls.
+type blockCreate struct {
+	*fake.Tracker
+	entered  chan struct{}
+	release  chan struct{}
+	searches *int32
+}
+
+func (b blockCreate) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issue, error) {
+	close(b.entered)
+	<-b.release
+	return b.Tracker.Create(ctx, ni)
+}
+
+func (b blockCreate) Search(ctx context.Context, q tracker.Query) ([]tracker.IssueRef, error) {
+	atomic.AddInt32(b.searches, 1)
+	return b.Tracker.Search(ctx, q)
+}
+
+// AC14 (f-q2sq): push B starts while A is blocked in Create, after A's intent
+// is recorded: B exits 2 with the in-flight message, never searches, and only
+// A creates.
+func TestTrackerPushRefusesWhileAnotherPushIsInFlight(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	epic := e.task("epic", "")
+	var searches int32
+	bc := blockCreate{e.fk, make(chan struct{}), make(chan struct{}), &searches}
+	a1 := *e.a
+	a1.stdout, a1.stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	a1.tracker = func(context.Context, trackerSpec) (tracker.Tracker, error) { return bc, nil }
+	var codeA int
+	done := make(chan struct{})
+	go func() { defer close(done); codeA = a1.run(ctx, []string{"tracker", "push", epic}) }()
+	<-bc.entered
+	if e.intents(epic) != 1 {
+		t.Fatalf("%d intents", e.intents(epic))
+	}
+	var errB bytes.Buffer
+	a2 := *e.a
+	a2.stdout, a2.stderr = &bytes.Buffer{}, &errB
+	a2.tracker = func(context.Context, trackerSpec) (tracker.Tracker, error) { return bc, nil }
+	codeB := a2.run(ctx, []string{"tracker", "push", epic})
+	close(bc.release)
+	<-done
+	if codeB != 2 || !strings.Contains(errB.String(), "another push of this task is under way") {
+		t.Fatalf("B: exit %d: %s", codeB, errB.String())
+	}
+	if atomic.LoadInt32(&searches) != 0 || len(e.fk.Created) != 1 || codeA != 0 {
+		t.Fatalf("searches %d, creates %d, A exit %d", searches, len(e.fk.Created), codeA)
+	}
+}
+
+// With RIG_PUSH_LOCK_HELPER set to a lock file path, the test binary takes
+// that lock, prints "locked" and holds it until stdin closes. Otherwise this
+// test does nothing.
+func TestTrackerPushLockHelper(t *testing.T) {
+	path := os.Getenv("RIG_PUSH_LOCK_HELPER")
+	if path == "" {
+		t.Skip("child helper")
+	}
+	l, err := tryPushLockAt(path)
+	if err != nil {
+		os.Stdout.WriteString("busy: " + err.Error() + "\n")
+		os.Exit(3)
+	}
+	os.Stdout.WriteString("locked\n")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	l.release()
+	os.Exit(0)
+}
+
+// AC15: a child process holds a task's push lock and is killed; a push of the
+// task then takes the lock and goes ahead.
+func TestTrackerPushLockFreedWhenHolderIsKilled(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	epic := e.task("epic", "")
+	tk, err := e.st().Task(ctx, epic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := e.a.openWork(ctx, e.repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	common, err := w.repo.CommonDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(common, "rig", "push")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestTrackerPushLockHelper$")
+	cmd.Env = append(os.Environ(), "RIG_PUSH_LOCK_HELPER="+filepath.Join(dir, tk.ID+".lock"))
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.StdinPipe(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	if line, _ := bufio.NewReader(out).ReadString('\n'); line != "locked\n" {
+		t.Fatalf("child did not take the lock: %q", line)
+	}
+	if code := e.run("tracker", "push", epic); code != 2 || len(e.fk.Created) != 0 || !strings.Contains(e.err.String(), "another push of this task is under way") {
+		t.Fatalf("held: exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		e.err.Reset()
+		if code := e.run("tracker", "push", epic); code == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lock not freed: %s", e.err.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(e.fk.Created) != 1 || e.linkOf(epic) == nil {
+		t.Fatalf("%d creates", len(e.fk.Created))
+	}
+}
+
+// AC16: an intent with no link and no search hit: inside pushSettle the push
+// stops with no create; past it, it creates once and warns of a duplicate.
+func TestTrackerPushSettleWindow(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	epic := e.task("epic", "")
+	e.fk.FailCreateN = 1
+	if code := e.run("tracker", "push", epic); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	e.fk.FailCreateN = 0
+	e.err.Reset()
+	if code := e.run("tracker", "push", epic); code != 2 || len(e.fk.Created) != 0 || !strings.Contains(e.err.String(), "re-run after") {
+		t.Fatalf("inside: exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
+	}
+	base := e.a.now()
+	e.a.now = func() time.Time { return base.Add(pushSettle + time.Minute) }
+	e.err.Reset()
+	if code := e.run("tracker", "push", epic); code != 0 || len(e.fk.Created) != 1 || !strings.Contains(e.err.String(), "duplicate is possible") {
+		t.Fatalf("past: exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
 	}
 }
