@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ var pushCaps = tracker.Caps{Parent: true, Children: true, Types: true, Search: t
 type pushEnv struct {
 	*trkEnv
 	fk *fake.Tracker
+	// ids maps a slug made by task to its full ULID.
+	ids map[string]string
 }
 
 func newPushEnv(t *testing.T, caps tracker.Caps) *pushEnv {
@@ -73,10 +76,14 @@ func (e *pushEnv) task(slug, parent string, fields ...string) string {
 	for _, f := range fields {
 		args = append(args, "--field", f)
 	}
-	var v struct{ Short string }
+	var v struct{ Short, ID string }
 	if code := e.json(&v, args...); code != 0 {
 		e.t.Fatalf("task new %s: %d %s", slug, code, e.err.String())
 	}
+	if e.ids == nil {
+		e.ids = map[string]string{}
+	}
+	e.ids[slug] = v.ID
 	if parent != "" {
 		if code := e.run("task", "parent", v.Short, parent); code != 0 {
 			e.t.Fatalf("task parent: %d %s", code, e.err.String())
@@ -101,9 +108,15 @@ func (e *pushEnv) tree() (epic, story, sub string) {
 	return
 }
 
-// marker is the label a pushed task with this slug carries (short slugs, no hash).
+// marker is the label a pushed task made with this slug carries, computed
+// here from the task's ULID without calling pushMarker.
 func (e *pushEnv) marker(slug string) string {
-	return "rig/" + pushLabelPart(filepath.Base(e.repo), 24) + "/" + slug
+	id := e.ids[slug]
+	if id == "" {
+		e.t.Fatalf("no task made with slug %q", slug)
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "rig/" + pushLabelPart(filepath.Base(e.repo), 24) + "/" + slug + "-" + hex.EncodeToString(sum[:4])
 }
 
 func (e *pushEnv) linkOf(short string) *store.External {
@@ -611,7 +624,7 @@ func TestTrackerPushLinkedRootTakesOwnLevel(t *testing.T) {
 	}
 }
 
-// AC7-AC9: the marker is rig/<repo>/<slug>, shortened with a hash of the ULID.
+// The marker is rig/<repo>/<slug>-<8 hex of SHA-256(ULID)>, within 50 chars.
 func TestTrackerPushMarker(t *testing.T) {
 	tk := store.Task{ID: "01JD0000000000000000000001", Short: "t-1", Slug: "12-checkout-form"}
 	if got := pushRepoName("/x/Shop_App/.git"); got != "shop-app" {
@@ -620,16 +633,25 @@ func TestTrackerPushMarker(t *testing.T) {
 	if got := pushRepoName("/x/" + strings.Repeat("a", 30) + "/.git"); len(got) != 24 {
 		t.Fatalf("repo %q", got)
 	}
-	if got := pushMarker("shop-app", tk); got != "rig/shop-app/12-checkout-form" {
+	sum := sha256.Sum256([]byte(tk.ID))
+	h := hex.EncodeToString(sum[:])[:8]
+	if got := pushMarker("shop-app", tk); got != "rig/shop-app/12-checkout-form-"+h {
 		t.Fatalf("marker %q", got)
 	}
-	if a, b := pushMarker("shop", tk), pushMarker("admin", tk); a != "rig/shop/12-checkout-form" || b != "rig/admin/12-checkout-form" {
+	if a, b := pushMarker("shop", tk), pushMarker("admin", tk); a != "rig/shop/12-checkout-form-"+h || b != "rig/admin/12-checkout-form-"+h {
 		t.Fatalf("markers %q %q", a, b)
 	}
+	// AC1: same slug, same repo, different tasks.
+	other := tk
+	other.ID = "01JD0000000000000000000002"
+	if pushMarker("shop", tk) == pushMarker("shop", other) {
+		t.Fatal("two tasks with one slug share a label")
+	}
+	// AC3: a long slug is cut, ends in -<8 hex>, and is stable.
 	tk.Slug = "40-rewrite-the-checkout-form-validation"
 	m := pushMarker("storefront-backend", tk)
-	if len(m) > 50 || !strings.HasPrefix(m, "rig/storefront-backend/40-rewrite-the-che") ||
-		!regexp.MustCompile(`-[0-9a-f]{8}$`).MatchString(m) || m != pushMarker("storefront-backend", tk) {
+	if len(m) > 50 || !strings.HasPrefix(m, "rig/storefront-backend/40-rewrite-the-") ||
+		!strings.HasSuffix(m, "-"+h) || m != pushMarker("storefront-backend", tk) {
 		t.Fatalf("marker %q", m)
 	}
 }

@@ -59,20 +59,18 @@ func pushLabelPart(s string, max int) string {
 	return out
 }
 
-// pushMarker is the label that finds a task's issue again: rig/<repo>/<slug>,
-// cut to GitHub's 50-character label limit with a hash of the task's ULID.
+// pushMarker is the label that finds a task's issue again:
+// rig/<repo>/<slug>-<h>, where <h> is the first 8 hex characters of the
+// SHA-256 of the task's ULID, so two tasks never share a label. A long slug is
+// shortened so the whole label stays within GitHub's 50-character limit.
 func pushMarker(repo string, t store.Task) string {
 	slug := t.Slug
 	if slug == "" {
 		slug = t.Short
 	}
-	prefix := "rig/" + repo + "/"
-	m := prefix + slug
-	if len(m) <= 50 {
-		return m
-	}
 	sum := sha256.Sum256([]byte(t.ID))
 	suffix := "-" + hex.EncodeToString(sum[:])[:8]
+	prefix := "rig/" + repo + "/"
 	keep := 50 - len(prefix) - len(suffix)
 	if keep < 0 {
 		keep = 0
