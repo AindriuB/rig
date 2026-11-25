@@ -880,9 +880,9 @@ func TestTrackerPushTreeRefusesUntypedChildUnderUnlistedRootType(t *testing.T) {
 	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
 	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
 	bug := e.task("bug-report", "", "type=Bug")
-	e.task("repro", bug)
+	repro := e.task("repro", bug)
 	if code := e.run("tracker", "push", bug, "--tree"); code != 1 || len(e.fk.Created) != 0 ||
-		!strings.Contains(e.err.String(), "repro") || !strings.Contains(e.err.String(), "Bug") {
+		!strings.Contains(e.err.String(), repro) || !strings.Contains(e.err.String(), `"Bug"`) {
 		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
 	}
 }
