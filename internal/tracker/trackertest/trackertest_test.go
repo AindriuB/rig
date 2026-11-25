@@ -26,7 +26,7 @@ func build(caps tracker.Caps) func(t *testing.T) (tracker.Tracker, trackertest.S
 
 // AC1: the fake passes the contract with all caps on and with each off.
 func TestFakePassesContract(t *testing.T) {
-	all := tracker.Caps{Parent: true, Children: true, Types: true, Search: true, Comment: true, SetStatus: true}
+	all := tracker.Caps{Parent: true, Children: true, Types: true, Search: true, Comment: true, SetStatus: true, Create: true}
 	t.Run("all", func(t *testing.T) { trackertest.Run(t, build(all)) })
 	offs := map[string]func(*tracker.Caps){
 		"Parent":    func(c *tracker.Caps) { c.Parent = false },
@@ -35,6 +35,7 @@ func TestFakePassesContract(t *testing.T) {
 		"Search":    func(c *tracker.Caps) { c.Search = false },
 		"Comment":   func(c *tracker.Caps) { c.Comment = false },
 		"SetStatus": func(c *tracker.Caps) { c.SetStatus = false },
+		"Create":    func(c *tracker.Caps) { c.Create = false },
 	}
 	for name, off := range offs {
 		c := all
@@ -121,5 +122,31 @@ func TestFakeErr(t *testing.T) {
 		if len(f.Comments) != 0 || len(f.StatusCalls) != 0 {
 			t.Errorf("a failing fake recorded calls: %v %v", f.Comments, f.StatusCalls)
 		}
+	}
+}
+
+func TestFakeCreateRecordsAndFails(t *testing.T) {
+	lvl := 2
+	f := fake.New(tracker.Caps{Create: true}, nil, nil)
+	f.Types = []tracker.IssueType{{Name: "Epic", Level: &lvl}, {Name: "Task"}}
+	f.FailCreateN = 2
+	if _, err := f.Create(t.Context(), tracker.NewIssue{Title: "a"}); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	if _, err := f.Create(t.Context(), tracker.NewIssue{Title: "b"}); err == nil {
+		t.Fatal("second Create succeeded, want injected error")
+	}
+	if _, err := f.Create(t.Context(), tracker.NewIssue{Title: "c"}); err != nil {
+		t.Fatalf("third Create: %v", err)
+	}
+	if len(f.Created) != 2 || f.Created[1].Title != "c" {
+		t.Errorf("Created = %+v", f.Created)
+	}
+	types, err := f.IssueTypes(t.Context())
+	if err != nil || len(types) != 2 || *types[0].Level != 2 || types[1].Level != nil {
+		t.Errorf("IssueTypes = %+v, %v", types, err)
+	}
+	if _, err := fake.New(tracker.Caps{}, nil, nil).IssueTypes(t.Context()); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("IssueTypes without types = %v", err)
 	}
 }
