@@ -574,3 +574,37 @@ func TestContextCommitsPassGlobsToLog(t *testing.T) {
 		}
 	}
 }
+
+// A section with candidates is never hidden: its heading and "… n more" line
+// are reserved and counted in overBudget.
+func TestFitBudgetNeverHidesSection(t *testing.T) {
+	p1 := strings.Repeat("p", 175)
+	body := make([]string, 100)
+	for i := range body {
+		body[i] = "body line"
+	}
+	for _, n := range []int{4, 5} {
+		fs := make([]string, n)
+		rk := make([]int, n)
+		for i := range fs {
+			fs[i], rk[i] = p1, rankFixed
+		}
+		secs := []ctxSection{
+			{Name: "Header", Items: []string{"h1", "h2"}},
+			{Name: "Body", Items: body},
+			{Name: "Findings", Items: fs, rank: rk},
+			{Name: "Notes", Items: []string{"n"}},
+			{Name: "Paths", Items: []string{"p"}},
+			{Name: "Commits", Items: []string{"c"}},
+		}
+		o := fitBudget("x", 200, secs)
+		for _, s := range o.Sections {
+			if s.hidden {
+				t.Errorf("n=%d: section %s hidden", n, s.Name)
+			}
+		}
+		if !strings.Contains(renderContext(o), "… ") {
+			t.Errorf("n=%d: no more line", n)
+		}
+	}
+}

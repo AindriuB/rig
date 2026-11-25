@@ -217,23 +217,18 @@ func fitBudgetIn(l mdLayout, short string, budget int, secs []ctxSection) ctxOut
 		}
 		return sz
 	}
+	// A section with candidates is never hidden: its heading and "… n more"
+	// line are reserved, and counted in over.
+	for i, s := range secs {
+		if len(s.Items) > 0 {
+			visible[i] = true
+		}
+	}
 	total := 0
 	for i := range secs {
 		total += size(i)
 	}
 	over := total > limit
-	for i, s := range secs {
-		if visible[i] || len(s.Items) == 0 {
-			continue
-		}
-		visible[i] = true
-		sz := size(i)
-		if total+sz > limit {
-			visible[i] = false
-			continue
-		}
-		total += sz
-	}
 	for _, rank := range []int{rankDecision, rankBody, rankRest} {
 		for i, s := range secs {
 			if !visible[i] {

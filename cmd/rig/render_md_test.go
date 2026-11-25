@@ -281,7 +281,7 @@ func TestContextMarkdownGolden(t *testing.T) {
 		t.Fatal("200 tokens should fit all")
 	}
 	got := renderContextMD(fitBudgetIn(markdownLayout, "abc", 1, small)) // only the header is fixed
-	if !strings.HasPrefix(got, "## Header\n\n- abc") || strings.Contains(got, "## Findings") || strings.Contains(got, "## Body") {
+	if !strings.HasPrefix(got, "## Header\n\n- abc") || !strings.Contains(got, "## Findings\n\n_… 3 more_") || !strings.Contains(got, "## Body\n\n_… 2 more_") {
 		t.Errorf("tiny budget:\n%s", got)
 	}
 }
