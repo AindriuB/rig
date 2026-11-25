@@ -41,6 +41,9 @@ type ctxSection struct {
 	// hidden marks a section the text form does not print: one with no
 	// candidates, or one whose heading and "… n more" line do not fit.
 	hidden bool
+	// rank is the allocation rank of each item; nil means the section's
+	// default (Header 1, Body 3, others 4).
+	rank []int
 }
 
 // ctxOut is the --json shape of `rig context`.
@@ -103,7 +106,7 @@ func (a *app) context(ctx context.Context, args []string) int {
 }
 
 // gather builds every section's full candidate lines for t. A workflow with
-// no owns field gets only the first three sections.
+// no owns field gets only the first four sections.
 func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 	view, err := w.view(ctx, t)
 	if err != nil {
@@ -113,10 +116,15 @@ func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 	if err != nil {
 		return nil, err
 	}
+	notes, err := w.noteSection(ctx, t)
+	if err != nil {
+		return nil, err
+	}
 	secs := []ctxSection{
 		{Name: "Header", Items: append(w.headerLines(view), w.linkLines(ctx, view)...)},
 		{Name: "Body", Items: w.bodyLines(t)},
-		{Name: "Findings", Items: w.findingLines(findings)},
+		w.findingSection(findings),
+		notes,
 	}
 	ownsName := w.ownsField()
 	if ownsName == "" {
@@ -146,9 +154,31 @@ func (w *work) gather(ctx context.Context, t store.Task) ([]ctxSection, error) {
 	), nil
 }
 
-// fitBudget cuts the sections to the budget. Sections 1 and 2 print in full;
-// each later section adds lines while they fit, keeping room for its
-// "… n more" line.
+// Allocation ranks: what the budget pays for first. Print order is separate.
+const (
+	rankFixed    = 1 // header, open blocking findings: always in full
+	rankDecision = 2 // own decision notes
+	rankBody     = 3 // body lines
+	rankRest     = 4 // everything else, in print order
+)
+
+// rankOf is the allocation rank of item i of s.
+func rankOf(s ctxSection, i int) int {
+	if i < len(s.rank) {
+		return s.rank[i]
+	}
+	switch s.Name {
+	case "Header":
+		return rankFixed
+	case "Body":
+		return rankBody
+	}
+	return rankRest
+}
+
+// fitBudget cuts the sections to the budget. Rank 1 prints in full; then
+// decision notes, body lines and every other line are added while they fit,
+// keeping room for each section's "… n more" line.
 func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
 	return fitBudgetIn(textLayout, short, budget, secs)
 }
@@ -156,82 +186,93 @@ func fitBudget(short string, budget int, secs []ctxSection) ctxOut {
 // fitBudgetIn is fitBudget charging the bytes of layout.
 func fitBudgetIn(l mdLayout, short string, budget int, secs []ctxSection) ctxOut {
 	limit := budget * 4
-	out := ctxOut{Task: short, Budget: budget}
-	used := 0
-	fixed := 0
+	sel := make([][]bool, len(secs))
+	count := make([]int, len(secs))
+	visible := make([]bool, len(secs))
+	closed := make([]bool, len(secs))
 	for i, s := range secs {
-		if i < 2 {
-			if s.Items == nil {
-				s.Items = []string{}
+		sel[i] = make([]bool, len(s.Items))
+		for j := range s.Items {
+			if rankOf(s, j) == rankFixed {
+				sel[i][j] = true
+				count[i]++
 			}
-			if len(s.Items) == 0 {
-				s.hidden = true
-			} else {
-				used += sectionSize(l, s.Name, s.Items, 0)
-			}
-			s.Omitted = 0
-			if i == 1 {
-				fixed = used
-			}
-			out.Sections = append(out.Sections, s)
-			continue
 		}
-		out.Sections = append(out.Sections, cutSection(l, s, limit-used, &used))
+		visible[i] = count[i] > 0
 	}
-	out.Used = tokens(used)
-	out.OverBudget = fixed > limit
+	size := func(i int) int {
+		s := secs[i]
+		n := len(s.Items)
+		if n == 0 || !visible[i] {
+			return 0
+		}
+		sz := len(l.heading(s.Name)) + l.tail
+		for j, it := range s.Items {
+			if sel[i][j] {
+				sz += len(it) + 1
+			}
+		}
+		if count[i] < n {
+			sz += len(l.more(s.Name, count[i] > 0, n-count[i]))
+		}
+		return sz
+	}
+	// A section with candidates is never hidden: its heading and "… n more"
+	// line are reserved, and counted in over.
+	for i, s := range secs {
+		if len(s.Items) > 0 {
+			visible[i] = true
+		}
+	}
+	total := 0
+	for i := range secs {
+		total += size(i)
+	}
+	over := total > limit
+	for _, rank := range []int{rankDecision, rankBody, rankRest} {
+		for i, s := range secs {
+			if !visible[i] {
+				continue
+			}
+			for j := range s.Items {
+				if closed[i] {
+					break
+				}
+				if sel[i][j] || rankOf(s, j) != rank {
+					continue
+				}
+				before := size(i)
+				sel[i][j] = true
+				count[i]++
+				if delta := size(i) - before; total+delta > limit {
+					sel[i][j] = false
+					count[i]--
+					closed[i] = true
+				} else {
+					total += delta
+				}
+			}
+		}
+	}
+	out := ctxOut{Task: short, Budget: budget, OverBudget: over, Used: tokens(total)}
+	for i, s := range secs {
+		n := len(s.Items)
+		cut := ctxSection{Name: s.Name, Items: []string{}, hidden: n == 0 || !visible[i]}
+		if n > 0 {
+			for j, it := range s.Items {
+				if sel[i][j] {
+					cut.Items = append(cut.Items, it)
+				}
+			}
+			cut.Omitted = n - len(cut.Items)
+		}
+		out.Sections = append(out.Sections, cut)
+	}
 	return out
-}
-
-// cutSection returns s cut to rem bytes, adding what it prints to *used.
-func cutSection(l mdLayout, s ctxSection, rem int, used *int) ctxSection {
-	n := len(s.Items)
-	cut := ctxSection{Name: s.Name, Items: []string{}}
-	if n == 0 {
-		cut.hidden = true
-		return cut
-	}
-	reserve := len(l.more(n))
-	size := len(l.heading(s.Name)) + l.tail
-	if size+reserve > rem {
-		cut.Omitted = n
-		cut.hidden = true
-		return cut
-	}
-	for i, it := range s.Items {
-		add := len(it) + 1
-		after := size + add
-		if i < n-1 {
-			after += reserve
-		}
-		if after > rem {
-			break
-		}
-		size += add
-		cut.Items = append(cut.Items, it)
-	}
-	cut.Omitted = n - len(cut.Items)
-	if cut.Omitted > 0 {
-		size += len(l.more(cut.Omitted))
-	}
-	*used += size
-	return cut
 }
 
 func headingLine(name string) string { return "## " + name + "\n" }
 func moreLine(n int) string          { return "… " + strconv.Itoa(n) + " more\n" }
-
-// sectionSize is the bytes a section prints.
-func sectionSize(l mdLayout, name string, items []string, omitted int) int {
-	n := len(l.heading(name)) + l.tail
-	for _, it := range items {
-		n += len(it) + 1
-	}
-	if omitted > 0 {
-		n += len(l.more(omitted))
-	}
-	return n
-}
 
 // renderContext prints the cut sections. A hidden section prints nothing.
 func renderContext(o ctxOut) string {
@@ -322,9 +363,44 @@ func (w *work) bodyLines(t store.Task) []string {
 	return lines
 }
 
-// findingLines is section 3: open findings, blocking severities first, then
-// in the order they were added.
-func (w *work) findingLines(findings []store.Finding) []string {
+// findingSection is section 3 with each finding ranked: open blocking ones
+// are fixed, the rest are filler.
+func (w *work) findingSection(findings []store.Finding) ctxSection {
+	lines := w.findingLines(findings)
+	sec := ctxSection{Name: "Findings", Items: lines, rank: make([]int, len(lines))}
+	i := 0
+	for _, f := range w.openFindings(findings) {
+		sec.rank[i] = rankRest
+		if w.wf.Blocking(f.Severity) {
+			sec.rank[i] = rankFixed
+		}
+		i++
+	}
+	return sec
+}
+
+// noteSection is section 4: this task's own notes, newest first, decisions
+// ranked ahead of the body.
+func (w *work) noteSection(ctx context.Context, t store.Task) (ctxSection, error) {
+	ns, err := w.st.Notes(ctx, store.NoteFilter{Task: t.ID})
+	if err != nil {
+		return ctxSection{}, err
+	}
+	sec := ctxSection{Name: "Notes", Items: make([]string, 0, len(ns)), rank: make([]int, 0, len(ns))}
+	for _, n := range ns {
+		sec.Items = append(sec.Items, fmt.Sprintf("%s %s: %s", n.Short, n.Kind, oneLine(n.Text)))
+		r := rankRest
+		if n.Kind == "decision" {
+			r = rankDecision
+		}
+		sec.rank = append(sec.rank, r)
+	}
+	return sec, nil
+}
+
+// openFindings is the open findings, blocking severities first, in the order
+// findingLines prints them.
+func (w *work) openFindings(findings []store.Finding) []store.Finding {
 	var open []store.Finding
 	for _, f := range findings {
 		if f.Status == store.StatusOpen {
@@ -334,6 +410,13 @@ func (w *work) findingLines(findings []store.Finding) []string {
 	sort.SliceStable(open, func(i, j int) bool {
 		return w.wf.Blocking(open[i].Severity) && !w.wf.Blocking(open[j].Severity)
 	})
+	return open
+}
+
+// findingLines is section 3: open findings, blocking severities first, then
+// in the order they were added.
+func (w *work) findingLines(findings []store.Finding) []string {
+	open := w.openFindings(findings)
 	lines := make([]string, 0, len(open))
 	for _, f := range open {
 		line := fmt.Sprintf("%s %s %s", f.Short, f.Severity, oneLine(f.Summary))

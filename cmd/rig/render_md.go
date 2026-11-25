@@ -205,17 +205,25 @@ func renderListMD(views []workflow.TaskView, shorts map[string]string) string {
 // own bytes, or the Markdown's.
 type mdLayout struct {
 	heading func(name string) string
-	more    func(n int) string
+	// more is the "… n more" line; shown says whether items print above it.
+	more func(name string, shown bool, n int) string
 	// tail is the bytes printed after each visible section.
 	tail int
 }
 
-var textLayout = mdLayout{heading: headingLine, more: moreLine}
+var textLayout = mdLayout{heading: headingLine, more: func(_ string, _ bool, n int) string { return moreLine(n) }}
 
 var markdownLayout = mdLayout{
 	heading: func(name string) string { return "## " + name + "\n\n" },
-	more:    func(n int) string { return "_… " + strconv.Itoa(n) + " more_\n" },
-	tail:    1,
+	more: func(name string, shown bool, n int) string {
+		line := "_… " + strconv.Itoa(n) + " more_\n"
+		if name == "Body" && shown {
+			// A blank line ends the blockquote; without it the line is swallowed.
+			line = "\n" + line
+		}
+		return line
+	},
+	tail: 1,
 }
 
 // markdownSections turns the gathered sections into Markdown items: Body
@@ -254,7 +262,7 @@ func renderContextMD(o ctxOut) string {
 			b.WriteString(it + "\n")
 		}
 		if s.Omitted > 0 {
-			b.WriteString(markdownLayout.more(s.Omitted))
+			b.WriteString(markdownLayout.more(s.Name, len(s.Items) > 0, s.Omitted))
 		}
 		parts = append(parts, b.String())
 	}
