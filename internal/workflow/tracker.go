@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -36,6 +38,23 @@ type TrackerPush struct {
 	Levels []string `json:"levels,omitempty"`
 	// Types are the names a task's own type field may choose.
 	Types []string `json:"types,omitempty"`
+
+	// present is set when the push key appeared in the source, even as {}.
+	present bool
+}
+
+// UnmarshalJSON records that the push key was present.
+func (p *TrackerPush) UnmarshalJSON(b []byte) error {
+	type plain TrackerPush
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var v plain
+	if err := dec.Decode(&v); err != nil {
+		return err
+	}
+	*p = TrackerPush(v)
+	p.present = true
+	return nil
 }
 
 // PushLevels returns a copy of the push level names; empty when unset.
@@ -158,7 +177,7 @@ func (w *Workflow) validateTracker(add addFunc) {
 			seen[attr] = f
 		}
 	}
-	if (t.Push.Levels != nil || len(t.Push.Types) > 0) && len(t.Push.Levels) == 0 {
+	if (t.Push.present || t.Push.Levels != nil || len(t.Push.Types) > 0) && len(t.Push.Levels) == 0 {
 		add("tracker.push.levels", "levels is empty; name at least one issue type")
 	}
 	validatePushNames(add, "tracker.push.levels", t.Push.Levels)

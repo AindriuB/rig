@@ -242,6 +242,8 @@ func TestTrackerPush(t *testing.T) {
 
 	for name, c := range map[string][2]string{
 		"empty levels": {`{"levels":[]}`, "tracker.push.levels"},
+		"empty push":   {`{}`, "tracker.push.levels"},
+		"empty types":  {`{"types":[]}`, "tracker.push.levels"},
 		"types only":   {`{"types":["Bug"]}`, "tracker.push.levels"},
 		"blank level":  {`{"levels":["A"," "]}`, "tracker.push.levels[1]"},
 		"dup level":    {`{"levels":["A","A"]}`, "tracker.push.levels[1]"},
