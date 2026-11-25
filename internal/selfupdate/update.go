@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -124,6 +125,25 @@ func Update(ctx context.Context, o Options) Result {
 		res.Action, res.Message = ActionAvailable, fmt.Sprintf("rig %s is available (running %s)", res.Target, o.Current)
 		return res
 	}
+
+	target, err := filepath.EvalSymlinks(o.Exe)
+	if err != nil {
+		return fail("", "resolving %s: %v", o.Exe, err)
+	}
+	lock, err := tryLock(target)
+	if err != nil {
+		var nw *NotWritableError
+		switch {
+		case errors.Is(err, errLockBusy):
+			res.Action, res.Check = ActionRefused, "lock"
+			res.Message = fmt.Sprintf("another update of %s is in progress", o.Exe)
+			return res
+		case errors.As(err, &nw):
+			return refuse("cannot replace %s: %v", o.Exe, err)
+		}
+		return fail("", "%v", err)
+	}
+	defer lock.release()
 
 	goos, goarch := o.GOOS, o.GOARCH
 	if goos == "" {

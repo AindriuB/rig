@@ -61,7 +61,13 @@ func unchanged(t *testing.T, exe string, old []byte) {
 		t.Fatalf("installed file changed: %q %v", got, err)
 	}
 	ents, _ := os.ReadDir(filepath.Dir(exe))
-	if len(ents) != 1 {
+	n := 0
+	for _, e := range ents {
+		if e.Name() != filepath.Base(lockPath(exe)) { // the lock file stays
+			n++
+		}
+	}
+	if n != 1 {
 		t.Fatalf("stray files left: %v", ents)
 	}
 }
