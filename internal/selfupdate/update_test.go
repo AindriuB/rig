@@ -291,3 +291,12 @@ func TestCleanupOldIsQuiet(t *testing.T) {
 	}
 	CleanupOld(filepath.Join(t.TempDir(), "missing", "rig"))
 }
+
+func TestUpdateCheckBadToIsFailedNotAvailable(t *testing.T) {
+	exe, _ := installed(t)
+	o := opts(exe, "0.6.0", "foo", fakeRelease("v0.7.0", "x", "sig"))
+	o.Check = true
+	if r := Update(context.Background(), o); r.Action != ActionFailed {
+		t.Fatalf("%+v", r)
+	}
+}

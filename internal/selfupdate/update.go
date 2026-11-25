@@ -89,6 +89,9 @@ func Update(ctx context.Context, o Options) Result {
 		res.Target = trimV(o.To)
 		ok, err := SignedEra(tag)
 		if err != nil {
+			if o.Check {
+				return fail("", "%s is not a valid version: %v", o.To, err)
+			}
 			return refuse("%s is not a valid version: %v", o.To, err)
 		}
 		if !ok {
