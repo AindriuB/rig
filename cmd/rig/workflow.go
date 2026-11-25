@@ -114,6 +114,12 @@ func (a *app) workflowShow(ctx context.Context, args []string) int {
 		}
 		fmt.Fprintln(a.stdout, line)
 	}
+	if levels := wf.PushLevels(); len(levels) > 0 {
+		fmt.Fprintf(a.stdout, "push levels: %s\n", strings.Join(levels, " > "))
+	}
+	if wf.Tracker != nil && len(wf.Tracker.Push.Types) > 0 {
+		fmt.Fprintf(a.stdout, "push types: %s\n", strings.Join(wf.Tracker.Push.Types, ", "))
+	}
 	return 0
 }
 
