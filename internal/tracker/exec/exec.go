@@ -5,10 +5,15 @@
 //
 // Request: {"v":1,"op":<op>, ...args}. The ops are caps (no args), issue
 // {key}, search {query}, children {key}, comment {key, comment} and status
-// {key, status}.
+// {key, status}, create {issue:{type,title,body,acceptance,labels,parentKey}}
+// and types (no args). Create answers {"ok":true,"issue":<Issue>} and the
+// issue must carry a key; types answers {"ok":true,"types":[{"name","level"}]}
+// where an omitted level means the type has none. Caps may report
+// "create":true. A program that predates create or types answers
+// "unsupported", which rig treats as ErrUnsupported.
 //
-// Response: {"v":1,"ok":true} plus one payload (caps, issue, issues, comment
-// or status, in the port's JSON shape), or {"v":1,"ok":false,"error":"...",
+// Response: {"v":1,"ok":true} plus one payload (caps, issue, issues, comment,
+// status or types, in the port's JSON shape), or {"v":1,"ok":false,"error":"...",
 // "code":"..."}. The codes not-found, unsupported, auth and no-transition map
 // to the port's sentinels; no code is a plain error and an unknown code is a
 // plain error that names it.
@@ -77,6 +82,7 @@ type request struct {
 	Query   *tracker.Query   `json:"query,omitempty"`
 	Comment *tracker.Comment `json:"comment,omitempty"`
 	Status  *string          `json:"status,omitempty"`
+	Issue   *newIssueWire    `json:"issue,omitempty"`
 }
 
 type response struct {
@@ -89,6 +95,7 @@ type response struct {
 	Issues json.RawMessage `json:"issues"`
 	Cmt    json.RawMessage `json:"comment"`
 	Status json.RawMessage `json:"status"`
+	Types  json.RawMessage `json:"types"`
 }
 
 // call runs the program once and decodes the payload chosen by pick into out.

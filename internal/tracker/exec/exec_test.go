@@ -79,6 +79,12 @@ func fakeProgram(dir, mode string) {
 		Status  string `json:"status"`
 		Query   struct{ Labels []string }
 		Comment struct{ Body string }
+		Issue   struct {
+			Type, Title, Body string
+			Acceptance        []string
+			Labels            []string
+			ParentKey         string
+		}
 	}
 	json.Unmarshal(line, &req)
 	reply := func(k string, v any) {
@@ -96,6 +102,21 @@ func fakeProgram(dir, mode string) {
 		"O-1": {"key": "O-1", "labels": []string{}, "parent": nil},
 	}
 	order := []string{"P-1", "C-1", "O-1"}
+	createdFile := filepath.Join(dir, "created.json")
+	var created []map[string]any
+	if b, err := os.ReadFile(createdFile); err == nil {
+		json.Unmarshal(b, &created)
+	}
+	for _, c := range created {
+		k := c["key"].(string)
+		ls := []string{}
+		for _, l := range c["labels"].([]any) {
+			ls = append(ls, l.(string))
+		}
+		c["labels"] = ls
+		all[k] = c
+		order = append(order, k)
+	}
 	statusFile := filepath.Join(dir, "status-"+req.Key)
 	status := func() string {
 		b, err := os.ReadFile(statusFile)
@@ -104,10 +125,35 @@ func fakeProgram(dir, mode string) {
 		}
 		return string(b)
 	}
-	on := mode == "caps-all"
+	on := mode == "caps-all" || mode == "create-unsupported"
 	switch req.Op {
 	case "caps":
-		reply("caps", map[string]any{"parent": on, "children": on, "types": on, "search": on, "comment": on, "setStatus": on, "levels": []string{}})
+		reply("caps", map[string]any{"parent": on, "children": on, "types": on, "search": on, "comment": on, "setStatus": on, "create": on, "levels": []string{}})
+	case "create":
+		if mode == "create-unsupported" {
+			fail("unsupported")
+			return
+		}
+		if mode == "create-nokey" {
+			reply("issue", issue{"title": req.Issue.Title})
+			return
+		}
+		key := fmt.Sprintf("N-%d", len(created)+1)
+		is := issue{"key": key, "url": "https://x/" + key, "title": req.Issue.Title, "type": req.Issue.Type,
+			"description": req.Issue.Body, "acceptance": req.Issue.Acceptance, "labels": req.Issue.Labels, "rev": "r-new"}
+		if req.Issue.ParentKey != "" {
+			is["parent"] = map[string]any{"key": req.Issue.ParentKey}
+		}
+		created = append(created, is)
+		b, _ := json.Marshal(created)
+		os.WriteFile(createdFile, b, 0o600)
+		reply("issue", is)
+	case "types":
+		if mode == "create-unsupported" || mode == "caps-off" {
+			fail("unsupported")
+			return
+		}
+		reply("types", []issue{{"name": "Epic", "level": 2}, {"name": "Task", "level": 0}, {"name": "Bug"}})
 	case "issue":
 		is, ok := all[req.Key]
 		if !ok {
@@ -330,5 +376,79 @@ func TestUnsupportedDoesNotStartProgram(t *testing.T) {
 	tr.SetStatus(ctx, "O-1", "Done")
 	if got := requests(t, dir); len(got) != 1 {
 		t.Errorf("want only the caps run, got %v", got)
+	}
+}
+
+func TestCreateSendsOpAndDecodesIssue(t *testing.T) {
+	tr, dir := newFake(t, "caps-all", Options{})
+	ctx := context.Background()
+	is, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T", Body: "B", Acceptance: []string{"a"}, Labels: []string{"l"}, ParentKey: "P-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if is.Key != "N-1" || is.URL == "" || is.Rev == "" {
+		t.Errorf("issue = %+v", is)
+	}
+	want := `{"v":1,"op":"create","issue":{"type":"Task","title":"T","body":"B","acceptance":["a"],"labels":["l"],"parentKey":"P-1"}}`
+	got := requests(t, dir)
+	if len(got) != 2 || got[1] != want {
+		t.Errorf("requests = %v, want create line %s", got, want)
+	}
+}
+
+func TestCreateWithoutKeyIsAnError(t *testing.T) {
+	tr, _ := newFake(t, "create-nokey", Options{})
+	if _, err := tr.Create(context.Background(), tracker.NewIssue{Type: "Task", Title: "T"}); err == nil {
+		t.Error("Create with a keyless response succeeded")
+	}
+}
+
+func TestCreateRefusesBadParentKeyBeforeProgram(t *testing.T) {
+	tr, dir := newFake(t, "caps-all", Options{})
+	if _, err := tr.Create(context.Background(), tracker.NewIssue{Type: "Task", Title: "T", ParentKey: "a b"}); err == nil {
+		t.Error("want error")
+	}
+	if got := requests(t, dir); len(got) != 0 {
+		t.Errorf("program ran: %v", got)
+	}
+}
+
+func TestIssueTypesKeepsOmittedLevelNil(t *testing.T) {
+	tr, dir := newFake(t, "caps-all", Options{})
+	types, err := tr.IssueTypes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(types) != 3 || types[0].Level == nil || *types[0].Level != 2 || types[1].Level == nil || *types[1].Level != 0 || types[2].Level != nil {
+		t.Errorf("types = %+v", types)
+	}
+	if got := requests(t, dir); len(got) != 1 || got[0] != `{"v":1,"op":"types"}` {
+		t.Errorf("requests = %v", got)
+	}
+}
+
+func TestUnsupportedAnswersMapToErrUnsupported(t *testing.T) {
+	tr, _ := newFake(t, "create-unsupported", Options{})
+	ctx := context.Background()
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T"}); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("Create = %v", err)
+	}
+	if _, err := tr.IssueTypes(ctx); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("IssueTypes = %v", err)
+	}
+}
+
+func TestCapsWithoutCreateLeaveItFalseAndCreateUnsupported(t *testing.T) {
+	tr, dir := newFake(t, "caps-off", Options{})
+	ctx := context.Background()
+	c, err := tr.Capabilities(ctx)
+	if err != nil || c.Create {
+		t.Fatalf("caps = %+v, %v", c, err)
+	}
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T"}); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("Create = %v", err)
+	}
+	if got := requests(t, dir); len(got) != 1 {
+		t.Errorf("want only caps run, got %v", got)
 	}
 }
