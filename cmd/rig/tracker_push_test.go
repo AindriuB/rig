@@ -872,3 +872,17 @@ func TestTrackerPushSettleRunsFromLatestIntent(t *testing.T) {
 		t.Fatalf("exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
 	}
 }
+
+// f-49qw (AC2): an untyped child under a typed root whose type is outside the
+// levels refuses the whole --tree push before any write.
+func TestTrackerPushTreeRefusesUntypedChildUnderUnlistedRootType(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	bug := e.task("bug-report", "", "type=Bug")
+	e.task("repro", bug)
+	if code := e.run("tracker", "push", bug, "--tree"); code != 1 || len(e.fk.Created) != 0 ||
+		!strings.Contains(e.err.String(), "repro") || !strings.Contains(e.err.String(), "Bug") {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
+	}
+}
