@@ -241,8 +241,26 @@ func Run(t *testing.T, newTracker func(t *testing.T) (tracker.Tracker, Seed)) {
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		if _, err := tr.Create(ctx, tracker.NewIssue{Title: "x", ParentKey: "a b"}); err == nil {
-			t.Errorf("Create with an invalid ParentKey succeeded")
+		// An invalid ParentKey is refused before any write: nothing carrying
+		// the refused label may exist afterwards. (An empty ParentKey means
+		// no parent, so it is not in the list.)
+		refused := "rig-create-refused"
+		for _, k := range []string{"a b", "a/b", "a?b", "a#b", "a%b", "..", "a\u200bb", "a\u200fb", "\ufeffa", "a\xffb"} {
+			_, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "rig refused", Labels: []string{refused}, ParentKey: k})
+			if err == nil {
+				t.Errorf("Create with ParentKey %q succeeded", k)
+			} else if errors.Is(err, tracker.ErrNotFound) {
+				t.Errorf("Create with ParentKey %q = %v: looked the key up instead of refusing it", k, err)
+			}
+		}
+		if caps.Search {
+			found, err := tr.Search(ctx, tracker.Query{Labels: []string{refused}})
+			if err != nil {
+				t.Fatalf("Search(refused label): %v", err)
+			}
+			if len(found) != 0 {
+				t.Errorf("refused Create left issues behind: %v", found)
+			}
 		}
 		label := "rig-create-label"
 		ni := tracker.NewIssue{Type: "Task", Title: "rig contract created", Labels: []string{label}}
