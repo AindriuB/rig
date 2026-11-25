@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,10 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 		return a.fail(cmd, "%v", err)
 	}
 	_ = repo.Fetch(ctx, "origin", base) // best effort
+	sha, label, err := resolveStart(ctx, repo, base, a.stderr)
+	if err != nil {
+		return a.fail(cmd, "%v", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
@@ -165,23 +170,56 @@ func (a *app) taskStart(ctx context.Context, args []string) int {
 	_, statErr := os.Lstat(wt)
 	pathExisted := statErr == nil
 	branchExisted, _ := repo.BranchExists(ctx, branch)
-	if err := repo.WorktreeAdd(ctx, wt, branch, base); err != nil {
+	if err := repo.WorktreeAdd(ctx, wt, branch, sha); err != nil {
 		// git may have made the branch and worktree before it failed (a
 		// post-checkout hook, a timeout): take back only what is ours.
-		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, branchExisted, pathExisted, err))
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, sha, branchExisted, pathExisted, err))
 	}
 
 	marked := filepath.ToSlash(taskFile)
 	if err := a.mark(ctx, wt, marked); err != nil {
 		// Never leave a worktree that owns-guard would treat as unguarded.
-		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, base, false, false, err))
+		return a.fail(cmd, "%s", rollBack(ctx, repo, wt, branch, sha, false, false, err))
 	}
 
 	if *asJSON {
-		return a.printJSON(map[string]string{"worktree": wt, "branch": branch, "base": base, "taskFile": marked})
+		return a.printJSON(map[string]string{"worktree": wt, "branch": branch, "base": base, "baseSha": sha, "taskFile": marked})
 	}
-	fmt.Fprintf(a.stdout, "WORKTREE: %s\nBRANCH:   %s\nBASE:     %s\nOWNS:     enforced from %s\n", wt, branch, base, marked)
+	fmt.Fprintf(a.stdout, "WORKTREE: %s\nBRANCH:   %s\nBASE:     %s @ %s (%s)\nOWNS:     enforced from %s\n", wt, branch, base, sha[:7], label, marked)
 	return 0
+}
+
+// resolveStart picks the commit a task starts from: the newer of local <base>
+// and origin/<base>, local when they have diverged (said on warn).
+func resolveStart(ctx context.Context, repo git.Repo, base string, warn io.Writer) (sha, label string, err error) {
+	local, haveLocal, err := repo.ResolveRef(ctx, "refs/heads/"+base+"^{commit}")
+	if err != nil {
+		return "", "", err
+	}
+	remoteName := "origin/" + base
+	remote, haveRemote, err := repo.ResolveRef(ctx, "refs/remotes/"+remoteName+"^{commit}")
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case !haveLocal && !haveRemote:
+		return "", "", fmt.Errorf("base branch %s does not exist", base)
+	case !haveRemote || local == remote:
+		return local, "local", nil
+	case !haveLocal:
+		return remote, remoteName, nil
+	}
+	if ok, err := repo.IsAncestor(ctx, local, remote); err != nil {
+		return "", "", err
+	} else if ok {
+		return remote, remoteName, nil
+	}
+	if ok, err := repo.IsAncestor(ctx, remote, local); err != nil {
+		return "", "", err
+	} else if !ok {
+		fmt.Fprintf(warn, "rig: local %s and %s have diverged: started from local %s\n", base, remoteName, base)
+	}
+	return local, "local", nil
 }
 
 // rollBack removes what a failed start made: the worktree if it exists (never

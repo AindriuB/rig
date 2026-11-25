@@ -56,7 +56,7 @@ func TestTaskStart(t *testing.T) {
 	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
 	wt := filepath.Join(repo, ".worktrees", "repo", "08-bar")
 	tf := filepath.ToSlash(taskPath(repo, "08-bar"))
-	want := "WORKTREE: " + wt + "\nBRANCH:   task/08-bar\nBASE:     main\nOWNS:     enforced from " + tf + "\n"
+	want := "WORKTREE: " + wt + "\nBRANCH:   task/08-bar\nBASE:     main @ " + main[:7] + " (local)\nOWNS:     enforced from " + tf + "\n"
 	if r.code != 0 || r.out != want || r.errOut != "" {
 		t.Fatalf("start: %+v\nwant out %q", r, want)
 	}
@@ -96,7 +96,7 @@ func TestTaskStartJSONAndRepoFlag(t *testing.T) {
 	}
 	want := map[string]string{
 		"worktree": filepath.Join(repo, ".worktrees", "repo", "08-bar"),
-		"branch":   "task/08-bar", "base": "main",
+		"branch":   "task/08-bar", "base": "main", "baseSha": gitc(t, repo, "rev-parse", "main"),
 		"taskFile": filepath.ToSlash(taskPath(repo, "08-bar")),
 	}
 	if len(got) != len(want) {
@@ -771,5 +771,105 @@ func TestTaskFinishRefusesAnOperationInProgress(t *testing.T) {
 	}
 	if r := rig(t, repo, nil, nil, "task", "finish", "08-bar", "--sha", sha); r.code != 0 {
 		t.Fatalf("untracked file blocked finish: %+v", r)
+	}
+}
+
+// advanceOrigin pushes a new commit to origin from a second clone and returns its sha.
+func advanceOrigin(t *testing.T, repo, remote string) string {
+	t.Helper()
+	other := filepath.Join(t.TempDir(), "other")
+	gitc(t, repo, "clone", "-q", remote, other)
+	os.WriteFile(filepath.Join(other, "o.txt"), []byte("o\n"), 0o644)
+	gitc(t, other, "add", ".")
+	gitc(t, other, "commit", "-q", "-m", "origin")
+	gitc(t, other, "push", "-q", "origin", "main")
+	return gitc(t, other, "rev-parse", "HEAD")
+}
+
+func localCommit(t *testing.T, repo string) string {
+	t.Helper()
+	os.WriteFile(filepath.Join(repo, "l.txt"), []byte("l\n"), 0o644)
+	gitc(t, repo, "add", ".")
+	gitc(t, repo, "commit", "-q", "-m", "local")
+	return gitc(t, repo, "rev-parse", "HEAD")
+}
+
+// AC3
+func TestTaskStartFromOriginWhenOriginIsAhead(t *testing.T) {
+	isolate(t)
+	repo, remote := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	want := advanceOrigin(t, repo, remote)
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar", "--json")
+	var got map[string]string
+	if err := json.Unmarshal([]byte(r.out), &got); r.code != 0 || err != nil {
+		t.Fatalf("start: %+v %v", r, err)
+	}
+	wt := got["worktree"]
+	if h := gitc(t, wt, "rev-parse", "HEAD"); h != want || got["baseSha"] != want {
+		t.Fatalf("HEAD %s baseSha %s, want %s", h, got["baseSha"], want)
+	}
+}
+
+func TestTaskStartLabelOriginAhead(t *testing.T) {
+	isolate(t)
+	repo, remote := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	want := advanceOrigin(t, repo, remote)
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	line := "BASE:     main @ " + want[:7] + " (origin/main)\n"
+	if r.code != 0 || !strings.Contains(r.out, line) || strings.Count(r.out, "\n") != 4 {
+		t.Fatalf("start: %+v want %q", r, line)
+	}
+}
+
+// AC4
+func TestTaskStartFromLocalWhenLocalIsAhead(t *testing.T) {
+	isolate(t)
+	repo, _ := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	want := localCommit(t, repo)
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	wt := filepath.Join(repo, ".worktrees", "repo", "08-bar")
+	if r.code != 0 || !strings.Contains(r.out, "BASE:     main @ "+want[:7]+" (local)\n") || r.errOut != "" {
+		t.Fatalf("start: %+v", r)
+	}
+	if h := gitc(t, wt, "rev-parse", "HEAD"); h != want {
+		t.Fatalf("HEAD %s, want %s", h, want)
+	}
+}
+
+// AC5
+func TestTaskStartDivergedUsesLocalAndSaysSo(t *testing.T) {
+	isolate(t)
+	repo, remote := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	advanceOrigin(t, repo, remote)
+	want := localCommit(t, repo)
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	wt := filepath.Join(repo, ".worktrees", "repo", "08-bar")
+	if r.code != 0 || !strings.Contains(r.out, "(local)\n") || strings.Count(r.errOut, "\n") != 1 || !strings.Contains(r.errOut, "diverged") {
+		t.Fatalf("start: %+v", r)
+	}
+	if h := gitc(t, wt, "rev-parse", "HEAD"); h != want {
+		t.Fatalf("HEAD %s, want %s", h, want)
+	}
+}
+
+// AC6
+func TestTaskStartMarkerFailureAfterOriginStartRemovesTheBranch(t *testing.T) {
+	isolate(t)
+	repo, remote := newRepo(t)
+	writeTask(t, repo, "08-bar.md")
+	advanceOrigin(t, repo, remote)
+	old := writeMarker
+	writeMarker = func(string, []byte, os.FileMode) error { return os.ErrPermission }
+	defer func() { writeMarker = old }()
+	r := rig(t, repo, nil, nil, "task", "start", "08-bar")
+	if r.code != 2 || strings.Contains(r.errOut, "left") {
+		t.Fatalf("start: %+v", r)
+	}
+	if gitc(t, repo, "branch", "--list", "task/08-bar") != "" {
+		t.Fatal("the branch was left behind")
 	}
 }
