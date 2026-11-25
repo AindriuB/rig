@@ -53,6 +53,8 @@ func Fold(events []Event) (Task, []Finding, []Note, int) {
 	if task.ID == "" {
 		// A notes-only log describes no task.
 		task = Task{}
+	} else {
+		task.Skipped = skipped
 	}
 	return task, findings, notes, skipped
 }

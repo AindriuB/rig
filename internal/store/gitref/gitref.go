@@ -202,6 +202,7 @@ func fold(logs []taskLog) ([]store.Task, map[string]taskLog) {
 		if t.ID == "" {
 			continue
 		}
+		t.Skipped += l.skipped
 		tasks = append(tasks, t)
 		byID[t.ID] = l
 	}
@@ -275,36 +276,36 @@ func (s *Store) commit(ctx context.Context, log taskLog, events []store.Event, m
 // no events means nothing to write. build runs again on every retry, so a
 // step another writer made illegal is refused then. It returns the log after
 // the append.
-func (s *Store) appendLoop(ctx context.Context, log taskLog, build func([]store.Event) ([]store.Event, string, error)) ([]store.Event, error) {
+func (s *Store) appendLoop(ctx context.Context, log taskLog, build func([]store.Event, int) ([]store.Event, string, error)) ([]store.Event, int, error) {
 	for try := 1; ; try++ {
-		events, message, err := build(log.events)
+		events, message, err := build(log.events, log.skipped)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(events) == 0 {
-			return log.events, nil
+			return log.events, log.skipped, nil
 		}
 		err = s.commit(ctx, log, events, message)
 		if err == nil {
 			out := append(slices.Clip(log.events), events...)
 			store.SortEvents(out)
-			return out, nil
+			return out, log.skipped, nil
 		}
 		if !errors.Is(err, git.ErrRefMoved) {
-			return nil, err
+			return nil, 0, err
 		}
 		if try == maxTries {
-			return nil, fmt.Errorf("write %s: %w after %d tries", log.ref, ErrConflict, maxTries)
+			return nil, 0, fmt.Errorf("write %s: %w after %d tries", log.ref, ErrConflict, maxTries)
 		}
 		backoff := minBackoff + rand.N(maxBackoff-minBackoff+1)
 		if err := s.sleep(ctx, backoff); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if log, err = s.readOne(ctx, log.ref); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if log.tip == "" {
-			return nil, fmt.Errorf("write %s: the ref was deleted: %w", log.ref, store.ErrNotFound)
+			return nil, 0, fmt.Errorf("write %s: the ref was deleted: %w", log.ref, store.ErrNotFound)
 		}
 	}
 }
@@ -414,8 +415,11 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 	if next == nil {
 		return store.Task{}, errors.New("update: no callback")
 	}
-	out, err := s.appendLoop(ctx, log, func(cur []store.Event) ([]store.Event, string, error) {
+	out, skipped, err := s.appendLoop(ctx, log, func(cur []store.Event, parseSkipped int) ([]store.Event, string, error) {
 		task, findings, _, _ := store.Fold(cur)
+		if task.ID != "" {
+			task.Skipped += parseSkipped
+		}
 		events, err := next(task, findings)
 		if err != nil {
 			return nil, "", err
@@ -455,6 +459,9 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		return store.Task{}, err
 	}
 	task, _, _, _ := store.Fold(out)
+	if task.ID != "" {
+		task.Skipped += skipped
+	}
 	return task, nil
 }
 
@@ -508,7 +515,7 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 		return store.Note{}, err
 	}
 	var id string
-	out, err := s.appendLoop(ctx, log, func(cur []store.Event) ([]store.Event, string, error) {
+	out, _, err := s.appendLoop(ctx, log, func(cur []store.Event, _ int) ([]store.Event, string, error) {
 		stamped, err := s.opts.Stamp(cur, []store.Event{e})
 		if err != nil {
 			return nil, "", fmt.Errorf("add note: %w", err)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -555,5 +556,40 @@ func TestNotesIgnoresUnrelatedRefs(t *testing.T) {
 	notes, err := s.Notes(ctx, store.NoteFilter{})
 	if err != nil || len(notes) != 1 || notes[0].Text != "kept" {
 		t.Fatalf("Notes = %+v, %v", notes, err)
+	}
+}
+
+// A log with an unreadable line and a v2 line reports both as Skipped on
+// every read path, and Update neither conflicts nor loses the count.
+func TestSkippedCountsOnEveryPath(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	task := newTask(t, s, "degraded")
+	ref := TasksPrefix + task.ID
+	old := gitc(t, repo.Dir, "cat-file", "blob", ref+":"+LogFile)
+	future := `{"v":2,"id":"01ZZZZZZZZZZZZZZZZZZZZZZZZ","seq":50,"kind":"count","data":{}}`
+	writeLog(t, repo, ref, old+"\n"+future+"\n{broken\n")
+
+	got, err := s.Task(ctx, task.ID)
+	if err != nil || got.Skipped != 2 {
+		t.Fatalf("Task: %+v, %v", got, err)
+	}
+	all, err := s.Tasks(ctx, store.TaskFilter{})
+	if err != nil || len(all) != 1 || all[0].Skipped != 2 {
+		t.Fatalf("Tasks: %+v, %v", all, err)
+	}
+	var seen store.Task
+	res, err := s.Update(ctx, task.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		seen = cur
+		return []store.Event{countEvent(t)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, got) {
+		t.Fatalf("callback task %+v != Task %+v", seen, got)
+	}
+	if res.Skipped != 2 {
+		t.Fatalf("Update result Skipped = %d, want 2", res.Skipped)
 	}
 }
