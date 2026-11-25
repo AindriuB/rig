@@ -38,6 +38,10 @@ type fakeState struct {
 	Epics     bool        `json:"epics"`
 	NoAuth    bool        `json:"noauth"`
 	GQLFail   bool        `json:"gqlfail"`
+	TypesFail bool        `json:"typesfail"`
+	FailLabel string      `json:"faillabel"`
+	FailNew   bool        `json:"failnew"`
+	Labels    []string    `json:"labels"`
 	BaseURL   string      `json:"base_url"`
 	Counter   int         `json:"counter"`
 	Issues    []fakeIssue `json:"issues"`
@@ -134,6 +138,17 @@ func fakeGlab(dir string, args []string) int {
 			u = "https://gitlab.example/" + fakeProject
 		}
 		return out(map[string]string{"web_url": u})
+	case endpoint == "projects/"+url.PathEscape(fakeProject)+"/labels" && method == "POST":
+		name := field("name")
+		if name == st.FailLabel {
+			return fail("glab: 500 label boom")
+		}
+		if slices.Contains(st.Labels, name) {
+			return fail("glab: 409 Label already exists")
+		}
+		st.Labels = append(st.Labels, name)
+		save()
+		return out(map[string]string{"name": name, "color": field("color")})
 	case endpoint == "graphql":
 		return fakeGraphQL(&st, stdin, out)
 	case endpoint == base && method == "GET":
@@ -157,6 +172,8 @@ func fakeGlab(dir string, args []string) int {
 		}
 		is := find(iid)
 		switch {
+		case sub == "" && method == "GET" && st.FailNew && iid > 100:
+			return fail("glab: 500 read boom")
 		case sub == "" && method == "GET":
 			return out(is)
 		case sub == "" && method == "PUT":
@@ -179,6 +196,11 @@ func fakeGlab(dir string, args []string) int {
 }
 
 func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
+	if st.TypesFail && strings.Contains(stdin, "RigTypes") {
+		fmt.Println(`{"errors":[{"message":"Field workItemTypes doesn't exist"}]}`)
+		fmt.Fprintln(os.Stderr, "glab: Field workItemTypes doesn't exist")
+		return 1
+	}
 	if st.GQLFail {
 		// Real glab exits 1 on a GraphQL errors array: message on stderr, body on stdout.
 		body := `{"errors":[{"message":"Field 'widgetDefinitions' doesn't exist on type 'WorkItemType'"}]}`
@@ -218,15 +240,20 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 	case strings.Contains(req.Query, "RigLabels"):
 		term := fmt.Sprint(req.Variables["term"])
 		nodes := []any{}
-		if term != "no-such-label" {
+		if slices.Contains(st.Labels, term) {
 			nodes = append(nodes, map[string]string{"id": "gid://gitlab/Label/" + term, "title": term})
 		}
 		return out(map[string]any{"data": map[string]any{"project": map[string]any{"labels": map[string]any{"nodes": nodes}}}})
 	case strings.Contains(req.Query, "RigCreate"):
 		in, _ := req.Variables["input"].(map[string]any)
+		if in["workItemTypeId"] == "gid://gitlab/WorkItems::Type/8" {
+			// A group epic must never become a project issue (its iid is group-scoped).
+			fmt.Fprintln(os.Stderr, "fake glab: epic create reached the fake")
+			return 1
+		}
 		st.Counter++
 		is := fakeIssue{IID: int64(100 + st.Counter), State: "opened", IssueType: "issue",
-			Updated: "2026-01-01T00:00:" + fmt.Sprintf("%02d", st.Counter) + "Z"}
+			Updated: "2026-01-01T00:00:" + fmt.Sprintf("%02d", st.Counter) + ".123Z"}
 		is.Title, _ = in["title"].(string)
 		is.WebURL = issueURL(is.IID)
 		if lw, ok := in["labelsWidget"].(map[string]any); ok {
@@ -242,7 +269,7 @@ func fakeGraphQL(st *fakeState, stdin string, out func(any) int) int {
 		b, _ := json.Marshal(st)
 		_ = os.WriteFile(filepath.Join(os.Getenv("RIG_FAKE_GLAB_DIR"), "state.json"), b, 0o644)
 		return out(map[string]any{"data": map[string]any{"workItemCreate": map[string]any{
-			"workItem": map[string]any{"iid": strconv.FormatInt(is.IID, 10), "webUrl": is.WebURL, "updatedAt": is.Updated}, "errors": []string{}}}})
+			"workItem": map[string]any{"iid": strconv.FormatInt(is.IID, 10), "webUrl": is.WebURL, "updatedAt": strings.Replace(is.Updated, ".123", "", 1)}, "errors": []string{}}}})
 	}
 	if strings.Contains(req.Query, "workItemTypes") {
 		if !st.Hierarchy {
@@ -305,7 +332,7 @@ func fakeEnv(t *testing.T, hierarchy bool) string {
 		return fakeIssue{IID: iid, WebURL: issueURL(iid), Title: title, State: "opened", Labels: labels,
 			IssueType: "issue", Updated: "2026-01-01T00:00:00Z", Parent: parent}
 	}
-	st := fakeState{Hierarchy: hierarchy, Group: true, Issues: []fakeIssue{mk(1, 0, "parent", "rig"), mk(2, 1, "child", "rig"), mk(3, 0, "other", "other")}}
+	st := fakeState{Hierarchy: hierarchy, Group: true, Labels: []string{"rig", "other"}, Issues: []fakeIssue{mk(1, 0, "parent", "rig"), mk(2, 1, "child", "rig"), mk(3, 0, "other", "other")}}
 	b, _ := json.Marshal(st)
 	if err := os.WriteFile(filepath.Join(dir, "state.json"), b, 0o644); err != nil {
 		t.Fatal(err)

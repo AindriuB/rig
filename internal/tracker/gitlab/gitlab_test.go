@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -271,7 +273,7 @@ func level(l *int) int {
 	return *l
 }
 
-// AC1: levels, and Epic only where the group reports it.
+// AC1: levels; Epic is never returned, even when the group offers it.
 func TestIssueTypesLevels(t *testing.T) {
 	tr, dir := newTracker(t, true)
 	setState(t, dir, func(s *fakeState) { s.Epics = true })
@@ -283,28 +285,13 @@ func TestIssueTypesLevels(t *testing.T) {
 	for _, it := range types {
 		got[it.Name] = level(it.Level)
 	}
-	want := map[string]int{"Epic": 2, "Issue": 1, "Task": 0, "Incident": -1}
+	want := map[string]int{"Issue": 1, "Task": 0, "Incident": -1}
 	if len(got) != len(want) {
 		t.Errorf("types = %v, want %v", got, want)
 	}
 	for k, v := range want {
 		if g, ok := got[k]; !ok || g != v {
 			t.Errorf("type %s level = %v (present %v), want %d", k, g, ok, v)
-		}
-	}
-	for _, mode := range []func(*fakeState){
-		func(s *fakeState) { s.Epics = false },                 // tier has no epics
-		func(s *fakeState) { s.Group = false; s.Epics = true }, // not a group
-	} {
-		setState(t, dir, mode)
-		types, err := tr.IssueTypes(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, it := range types {
-			if it.Name == "Epic" {
-				t.Errorf("Epic offered when unavailable")
-			}
 		}
 	}
 }
@@ -362,32 +349,128 @@ func TestCreateWithParent(t *testing.T) {
 	}
 }
 
-// AC3: an unavailable Epic is ErrUnsupported and nothing is written.
-func TestCreateUnavailableEpic(t *testing.T) {
+// AC3, AC9: Epic is ErrUnsupported with no write, with or without group epics.
+func TestCreateEpicUnsupported(t *testing.T) {
 	tr, dir := newTracker(t, true)
-	_, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"})
-	if !errors.Is(err, tracker.ErrUnsupported) || !strings.Contains(err.Error(), "Epic") {
-		t.Errorf("err = %v", err)
-	}
-	for _, c := range readCalls(t, dir) {
-		if strings.Contains(c.Stdin, "RigCreate") {
-			t.Errorf("write made: %s", c.Stdin)
+	for _, epics := range []bool{false, true} {
+		setState(t, dir, func(s *fakeState) { s.Epics = epics })
+		_, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"})
+		if !errors.Is(err, tracker.ErrUnsupported) || !strings.Contains(err.Error(), "Epic") {
+			t.Errorf("epics=%v: err = %v", epics, err)
 		}
 	}
-	setState(t, dir, func(s *fakeState) { s.Epics = true })
-	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Epic", Title: "e"}); err != nil {
-		t.Errorf("Epic with a group: %v", err)
+	for _, c := range readCalls(t, dir) {
+		if strings.Contains(c.Stdin, "RigCreate") || slices.Contains(c.Args, "POST") {
+			t.Errorf("write made: %v", c.Args)
+		}
+	}
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", ParentKey: "a b"}); err == nil {
+		t.Error("non-iid ParentKey accepted")
 	}
 }
 
-func TestCreateUnknownLabelWritesNothing(t *testing.T) {
+func labelPosts(t *testing.T, dir string) []fakeCall {
+	t.Helper()
+	var out []fakeCall
+	for _, c := range readCalls(t, dir) {
+		if slices.Contains(c.Args, "POST") && slices.Contains(c.Args, "projects/"+url.PathEscape(fakeProject)+"/labels") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// AC2, AC5: a missing label is created once, first; an existing one costs no write.
+func TestCreateMissingLabel(t *testing.T) {
 	tr, dir := newTracker(t, true)
-	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", Labels: []string{"no-such-label"}}); !errors.Is(err, tracker.ErrNotFound) {
-		t.Errorf("err = %v", err)
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", Labels: []string{"rig-abc1"}}); err != nil {
+		t.Fatal(err)
+	}
+	posts := labelPosts(t, dir)
+	if len(posts) != 1 {
+		t.Fatalf("%d label creates, want 1", len(posts))
+	}
+	var fields []string
+	for i, a := range posts[0].Args {
+		if a == "-f" {
+			fields = append(fields, strings.SplitN(posts[0].Args[i+1], "=", 2)[0])
+		}
+	}
+	if !slices.Equal(fields, []string{"name", "color"}) {
+		t.Errorf("label fields = %v", fields)
+	}
+	// One label create, then one work item create, in that order.
+	order := ""
+	for _, c := range readCalls(t, dir) {
+		switch {
+		case strings.Contains(c.Stdin, "RigCreate"):
+			order += "W"
+		case slices.Contains(c.Args, "POST"):
+			order += "L"
+		}
+	}
+	if order != "LW" {
+		t.Errorf("write order = %q, want LW", order)
+	}
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t2", Labels: []string{"rig-abc1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(labelPosts(t, dir)); n != 1 {
+		t.Errorf("%d label creates after second Create, want still 1", n)
+	}
+}
+
+// AC2: a label-create failure writes no work item.
+func TestCreateLabelFailureWritesNothing(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.FailLabel = "rig-bad" })
+	if _, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t", Labels: []string{"rig-bad"}}); err == nil {
+		t.Fatal("want an error")
 	}
 	for _, c := range readCalls(t, dir) {
 		if strings.Contains(c.Stdin, "RigCreate") {
-			t.Errorf("write made")
+			t.Errorf("work item written")
 		}
 	}
+}
+
+// AC4: Create's Rev is the REST updated_at, equal to Issue's.
+func TestCreateRevEqualsIssueRev(t *testing.T) {
+	tr, _ := newTracker(t, true)
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := tr.Issue(ctx, made.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Rev == "" || made.Rev != got.Rev {
+		t.Errorf("Create Rev %q, Issue Rev %q", made.Rev, got.Rev)
+	}
+}
+
+// AC7: no work item types query means Types and Create are false.
+func TestCapabilitiesTypesQueryError(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	caps, err := tr.Capabilities(ctx)
+	if err != nil || !caps.Create || !caps.Types {
+		t.Fatalf("caps = %+v, %v; want Create and Types", caps, err)
+	}
+	setState(t, dir, func(s *fakeState) { s.TypesFail = true })
+	caps, err = tr.Capabilities(ctx)
+	if err != nil || caps.Create || caps.Types {
+		t.Errorf("caps = %+v, %v; want Create and Types false", caps, err)
+	}
+}
+
+// AC8: the item was written but the revision read failed.
+func TestCreateReadFailureReturnsKey(t *testing.T) {
+	tr, dir := newTracker(t, true)
+	setState(t, dir, func(s *fakeState) { s.FailNew = true })
+	made, err := tr.Create(ctx, tracker.NewIssue{Type: "Task", Title: "t"})
+	if err == nil || made.Key == "" || made.URL == "" {
+		t.Errorf("made = %+v, err = %v; want Key, URL and an error", made, err)
+	}
+	lastCreate(t, dir) // exactly one workItemCreate
 }
