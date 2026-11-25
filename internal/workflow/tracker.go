@@ -1,8 +1,11 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Neutral attributes a tracker field can map to.
@@ -25,6 +28,47 @@ type Tracker struct {
 	// set. Nil means the default: title and body.
 	Map    map[string]string `json:"map,omitempty"`
 	Report TrackerReport     `json:"report,omitzero"`
+	Push   TrackerPush       `json:"push,omitzero"`
+}
+
+// TrackerPush says how tasks map to tracker issue types when pushed.
+type TrackerPush struct {
+	// Levels are issue type names, applied by depth from the pushed root.
+	// A non-nil empty list is an error.
+	Levels []string `json:"levels,omitempty"`
+	// Types are the names a task's own type field may choose.
+	Types []string `json:"types,omitempty"`
+
+	// present is set when the push key appeared in the source, even as {}.
+	present bool
+}
+
+// UnmarshalJSON records that the push key was present.
+func (p *TrackerPush) UnmarshalJSON(b []byte) error {
+	type plain TrackerPush
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var v plain
+	if err := dec.Decode(&v); err != nil {
+		return err
+	}
+	*p = TrackerPush(v)
+	p.present = true
+	return nil
+}
+
+// PushLevels returns a copy of the push level names; empty when unset.
+func (w *Workflow) PushLevels() []string {
+	if w.Tracker == nil {
+		return nil
+	}
+	return slices.Clone(w.Tracker.Push.Levels)
+}
+
+// PushTypeAllowed reports whether name is in tracker.push.types; false when
+// types is unset.
+func (w *Workflow) PushTypeAllowed(name string) bool {
+	return w.Tracker != nil && slices.Contains(w.Tracker.Push.Types, name)
 }
 
 // TrackerIntake holds the states a task may be created in from an issue.
@@ -133,6 +177,11 @@ func (w *Workflow) validateTracker(add addFunc) {
 			seen[attr] = f
 		}
 	}
+	if (t.Push.present || t.Push.Levels != nil || len(t.Push.Types) > 0) && len(t.Push.Levels) == 0 {
+		add("tracker.push.levels", "levels is empty; name at least one issue type")
+	}
+	validatePushNames(add, "tracker.push.levels", t.Push.Levels)
+	validatePushNames(add, "tracker.push.types", t.Push.Types)
 	for _, s := range sortedKeys(t.Report.Status) {
 		path := "tracker.report.status." + s
 		if _, ok := w.States[s]; !ok {
@@ -141,5 +190,21 @@ func (w *Workflow) validateTracker(add addFunc) {
 		if t.Report.Status[s] == "" {
 			add(path, "the tracker status name is empty")
 		}
+	}
+}
+
+// validatePushNames checks a list of tracker type names: none blank, none
+// repeated.
+func validatePushNames(add addFunc, key string, names []string) {
+	seen := map[string]bool{}
+	for i, n := range names {
+		path := fmt.Sprintf("%s[%d]", key, i)
+		switch {
+		case strings.TrimSpace(n) == "":
+			add(path, "the name is empty")
+		case seen[n]:
+			add(path, "name %q is repeated", n)
+		}
+		seen[n] = true
 	}
 }

@@ -201,3 +201,61 @@ func TestValidateWithoutTrackerUnchanged(t *testing.T) {
 		t.Fatalf("fixture problems: %v", ps)
 	}
 }
+
+func TestTrackerPush(t *testing.T) {
+	load := func(push string) *Workflow {
+		t.Helper()
+		src := strings.Replace(trackerBase, `"report": {`, `"push": `+push+`, "report": {`, 1)
+		w, err := Parse([]byte(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	w := load(`{"levels":["Initiative","Epic","Story","Subtask"],"types":["Bug","Spike"]}`)
+	if ps := w.Validate(); len(ps) != 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	if got := w.PushLevels(); !slices.Equal(got, []string{"Initiative", "Epic", "Story", "Subtask"}) {
+		t.Fatalf("levels = %v", got)
+	}
+	got := w.PushLevels()
+	got[0] = "x"
+	if w.PushLevels()[0] != "Initiative" {
+		t.Fatal("PushLevels is not a copy")
+	}
+	if !w.PushTypeAllowed("Bug") || w.PushTypeAllowed("Epic") {
+		t.Fatal("PushTypeAllowed wrong")
+	}
+	if w := load(`{"levels":["A"]}`); w.PushTypeAllowed("A") {
+		t.Fatal("types unset must allow nothing")
+	}
+
+	base, _ := Parse([]byte(trackerBase))
+	if len(base.PushLevels()) != 0 || base.PushTypeAllowed("Bug") {
+		t.Fatal("no push must be empty")
+	}
+	var none Workflow
+	if len(none.PushLevels()) != 0 || none.PushTypeAllowed("Bug") {
+		t.Fatal("no tracker must be empty")
+	}
+
+	for name, c := range map[string][2]string{
+		"empty levels": {`{"levels":[]}`, "tracker.push.levels"},
+		"empty push":   {`{}`, "tracker.push.levels"},
+		"empty types":  {`{"types":[]}`, "tracker.push.levels"},
+		"types only":   {`{"types":["Bug"]}`, "tracker.push.levels"},
+		"blank level":  {`{"levels":["A"," "]}`, "tracker.push.levels[1]"},
+		"dup level":    {`{"levels":["A","A"]}`, "tracker.push.levels[1]"},
+		"empty type":   {`{"levels":["A"],"types":[""]}`, "tracker.push.types[0]"},
+		"dup type":     {`{"levels":["A"],"types":["B","B"]}`, "tracker.push.types[1]"},
+	} {
+		found := false
+		for _, p := range load(c[0]).Validate() {
+			found = found || p.Path == c[1]
+		}
+		if !found {
+			t.Errorf("%s: no problem at %s", name, c[1])
+		}
+	}
+}
