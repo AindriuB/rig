@@ -129,6 +129,7 @@ func TestCreateServer(t *testing.T) {
 
 func TestCreateServerNoEpicField(t *testing.T) {
 	s := newStub(t, 2)
+	s.noEpicField = true
 	a := adapter(t, s, nil)
 	_, err := a.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T", ParentKey: "RIG-1"})
 	if err == nil || !strings.Contains(err.Error(), "tracker.jira.epicField") {
@@ -148,5 +149,44 @@ func TestCreateErrorsHideToken(t *testing.T) {
 	}
 	if errors.Is(err, tracker.ErrUnsupported) {
 		t.Error("unexpected unsupported")
+	}
+}
+
+// AC3: discovered by name when epicField is unset.
+func TestCreateServerDiscoversEpicField(t *testing.T) {
+	s := newStub(t, 2)
+	a := adapter(t, s, nil)
+	if _, err := a.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T", ParentKey: "RIG-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := fieldsOf(t, s, 0); f["customfield_10014"] != "RIG-1" {
+		t.Errorf("fields = %v", f)
+	}
+}
+
+// AC2: on Cloud an epic parent goes in fields.parent, with no epic field.
+func TestCreateCloudEpicParent(t *testing.T) {
+	s := newStub(t, 3)
+	a := adapter(t, s, nil)
+	if _, err := a.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T", ParentKey: "RIG-1"}); err != nil {
+		t.Fatal(err)
+	}
+	f := fieldsOf(t, s, 0)
+	if f["parent"].(map[string]any)["key"] != "RIG-1" || len(f) != 4 {
+		t.Errorf("fields = %v", f)
+	}
+}
+
+// AC7
+func TestCreateReadBackFails(t *testing.T) {
+	s := newStub(t, 3)
+	s.failGet = "RIG-101"
+	a := adapter(t, s, nil)
+	is, err := a.Create(ctx, tracker.NewIssue{Type: "Task", Title: "T"})
+	if err == nil || !strings.Contains(err.Error(), "RIG-101") {
+		t.Fatalf("err = %v", err)
+	}
+	if is.Key != "RIG-101" || !strings.HasSuffix(is.URL, "/browse/RIG-101") {
+		t.Errorf("issue = %+v", is)
 	}
 }

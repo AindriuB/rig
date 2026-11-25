@@ -153,7 +153,11 @@ func (a *Adapter) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	if err := checkKey(resp.Key); err != nil {
 		return tracker.Issue{}, fmt.Errorf("jira: create returned no usable key: %w", err)
 	}
-	return a.Issue(ctx, resp.Key)
+	is, err := a.Issue(ctx, resp.Key)
+	if err != nil {
+		return tracker.Issue{Key: resp.Key, URL: a.browse(resp.Key)}, fmt.Errorf("jira: created %s but could not read it back: %w", resp.Key, err)
+	}
+	return is, nil
 }
 
 // setParent adds the parent to fields the way the deployment expects.
@@ -181,9 +185,13 @@ func (a *Adapter) setParent(ctx context.Context, d dialect, fields map[string]an
 		fields["parent"] = map[string]string{"key": parent}
 		return nil
 	}
-	if a.cfg.EpicField == "" {
-		return errors.New("jira: creating a child of an epic on Server/DC needs the Epic Link field id; set tracker.jira.epicField")
+	id, err := a.epicFieldID(ctx)
+	if err != nil {
+		return err
 	}
-	fields[a.cfg.EpicField] = parent
+	if id == "" {
+		return errors.New("jira: creating a child of an epic on Server/DC needs the Epic Link field id, and none was found by name; set tracker.jira.epicField")
+	}
+	fields[id] = parent
 	return nil
 }

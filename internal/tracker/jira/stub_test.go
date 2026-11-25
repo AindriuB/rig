@@ -37,6 +37,8 @@ type stub struct {
 	posted      int              // POST requests other than comments
 	created     []map[string]any // bodies of POST /issue
 	tick        int
+	noEpicField bool   // /field lists no Epic Link
+	failGet     string // key whose GET answers 500
 }
 
 func readJSON(t *testing.T, rel string, dst any) {
@@ -132,6 +134,15 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && path == "/rest/api/2/field":
 		var v any
 		readJSON(s.t, "v2/field.json", &v)
+		if s.noEpicField {
+			var keep []any
+			for _, f := range v.([]any) {
+				if f.(map[string]any)["name"] != "Epic Link" {
+					keep = append(keep, f)
+				}
+			}
+			v = keep
+		}
 		s.reply(w, 200, v)
 	case r.Method == "GET" && path == prefix+"/myself":
 		var v any
@@ -159,6 +170,10 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 
 func (s *stub) issue(w http.ResponseWriter, r *http.Request, rest string) {
 	key, sub, _ := strings.Cut(rest, "/")
+	if r.Method == "GET" && key == s.failGet {
+		s.reply(w, 500, map[string]any{"errorMessages": []string{"boom"}})
+		return
+	}
 	is, ok := s.issues[key]
 	if !ok {
 		s.reply(w, 404, map[string]any{"errorMessages": []string{"Issue does not exist or you do not have permission to see it."}})
