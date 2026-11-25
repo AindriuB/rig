@@ -125,7 +125,7 @@ func fakeProgram(dir, mode string) {
 		}
 		return string(b)
 	}
-	on := mode == "caps-all" || mode == "create-unsupported"
+	on := mode == "caps-all" || mode == "create-unsupported" || mode == "create-nokey" || mode == "types-empty"
 	switch req.Op {
 	case "caps":
 		reply("caps", map[string]any{"parent": on, "children": on, "types": on, "search": on, "comment": on, "setStatus": on, "create": on, "levels": []string{}})
@@ -151,6 +151,10 @@ func fakeProgram(dir, mode string) {
 	case "types":
 		if mode == "create-unsupported" || mode == "caps-off" {
 			fail("unsupported")
+			return
+		}
+		if mode == "types-empty" {
+			reply("types", []issue{})
 			return
 		}
 		reply("types", []issue{{"name": "Epic", "level": 2}, {"name": "Task", "level": 0}, {"name": "Bug"}})
@@ -398,8 +402,16 @@ func TestCreateSendsOpAndDecodesIssue(t *testing.T) {
 
 func TestCreateWithoutKeyIsAnError(t *testing.T) {
 	tr, _ := newFake(t, "create-nokey", Options{})
-	if _, err := tr.Create(context.Background(), tracker.NewIssue{Type: "Task", Title: "T"}); err == nil {
-		t.Error("Create with a keyless response succeeded")
+	_, err := tr.Create(context.Background(), tracker.NewIssue{Type: "Task", Title: "T"})
+	if err == nil || errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("Create with a keyless response = %v, want a non-unsupported error", err)
+	}
+}
+
+func TestIssueTypesEmptyListIsUnsupported(t *testing.T) {
+	tr, _ := newFake(t, "types-empty", Options{})
+	if _, err := tr.IssueTypes(context.Background()); !errors.Is(err, tracker.ErrUnsupported) {
+		t.Errorf("IssueTypes = %v, want ErrUnsupported", err)
 	}
 }
 

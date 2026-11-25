@@ -58,6 +58,9 @@ func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {
 	if err := t.call(ctx, request{Op: "types"}, func(r *response) json.RawMessage { return r.Types }, &types); err != nil {
 		return nil, err
 	}
+	if len(types) == 0 {
+		return nil, fmt.Errorf("exec tracker types: the program lists no issue types: %w", tracker.ErrUnsupported)
+	}
 	for _, it := range types {
 		if it.Name == "" {
 			return nil, fmt.Errorf("exec tracker types: an issue type has no name")
