@@ -163,6 +163,9 @@ func TestCreateWithParent(t *testing.T) {
 	if got.Parent == nil || got.Parent.Key != "1" {
 		t.Fatalf("parent = %+v", got.Parent)
 	}
+	if made.Rev != got.Rev {
+		t.Fatalf("Create Rev %q != Issue Rev %q", made.Rev, got.Rev)
+	}
 }
 
 func TestCreateAttachFailureNamesKey(t *testing.T) {

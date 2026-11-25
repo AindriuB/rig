@@ -124,6 +124,7 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		return tracker.Issue{}, fmt.Errorf("gh api create issue: unreadable answer (the issue may have been created)")
 	}
 	key := strconv.FormatInt(out.Number, 10)
+	rev := out.UpdatedAt
 	if parent != 0 {
 		sub, err := json.Marshal(map[string]json.Number{"sub_issue_id": out.ID})
 		if err != nil {
@@ -133,11 +134,17 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 			"--method", "POST", "--input", "-"); err != nil {
 			return tracker.Issue{}, fmt.Errorf("issue %s was created but not attached to parent %s: %w", key, ni.ParentKey, err)
 		}
+		// Attaching a parent changes the child, so read its Rev back.
+		got, err := t.Issue(ctx, key)
+		if err != nil {
+			return tracker.Issue{}, fmt.Errorf("issue %s was created and attached to parent %s but its revision could not be read: %w", key, ni.ParentKey, err)
+		}
+		rev = got.Rev
 	}
 	is := tracker.Issue{
 		Key: key, URL: out.HTMLURL, Title: ni.Title, Description: body, Type: typeName,
 		Acceptance: []string{}, Labels: append([]string{}, ni.Labels...),
-		Status: "open", Rev: out.UpdatedAt,
+		Status: "open", Rev: rev,
 	}
 	return is, nil
 }

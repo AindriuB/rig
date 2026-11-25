@@ -294,6 +294,7 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 				return fail("gh: Not Found (HTTP 404)")
 			}
 			ci.Parent, _ = strconv.Atoi(n)
+			ci.Updated = tick(st)
 			st.Issues[c] = ci
 			return reply(`{}`)
 		case method == "POST" && sub == "comments":
