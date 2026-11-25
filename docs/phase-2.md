@@ -88,9 +88,10 @@ An event line:
   not know, and skips an event `kind` it does not know, so an older rig can
   read a store a newer rig wrote. It reports how many it skipped: a task
   with skipped events carries `skipped` in its output. Its history is
-  degraded, so every transition on that task, and on any task that depends on
-  it through a `dependsIn` gate, fails the built-in `history` gate with a
-  message telling the user to upgrade rig. Notes and findings can still be
+  degraded, so every transition on that task fails the built-in `history` gate
+  with a message telling the user to upgrade rig. A task that depends on it
+  fails its own `dependsIn` gate (`dependency <ref> has <n> log entries rig
+  could not read; upgrade rig`). Notes and findings can still be
   written.
 - `seq` counts from 1 within the task. `id` is a ULID, unique across writers.
   Events are ordered by `(seq, id)`.

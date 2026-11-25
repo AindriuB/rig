@@ -211,7 +211,9 @@ and offline, and never changes the exit code.
 
 An update takes a lock on a file beside the binary, `.<binary name>.update.lock`
 in the binary's directory. `rig update` and the automatic install take the same
-lock; a second one is refused (`refused: another update in progress`, exit 1).
+lock. A second `rig update` is refused with `another update of <binary> is in
+progress` and exit 1; the automatic install skips silently, with no stderr line
+and no change to the exit code.
 The file is never deleted; the kernel drops the lock when its holder exits.
 
 An unknown flag is always exit 2: rig never ignores an argument it does not
