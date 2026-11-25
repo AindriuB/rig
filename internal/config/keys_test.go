@@ -204,3 +204,31 @@ func TestWorktreesRootTrust(t *testing.T) {
 		t.Errorf("per-repo '..' = %q, %v", got, err)
 	}
 }
+
+// update.auto takes off, notify or install, and only the global file's top
+// level supplies it.
+func TestKeyUpdateAuto(t *testing.T) {
+	for _, v := range []string{"off", "notify", "install"} {
+		if err := checkValue(KeyUpdateAuto, v); err != nil {
+			t.Errorf("checkValue(%q) = %v", v, err)
+		}
+	}
+	err := checkValue(KeyUpdateAuto, "always")
+	if err == nil || !strings.Contains(err.Error(), `"off", "notify" or "install"`) {
+		t.Errorf("checkValue(always) = %v, want one naming the allowed values", err)
+	}
+	e := newEnv(t)
+	if got := open(t, e).UpdateAuto(); got != "off" {
+		t.Errorf("unset = %q", got)
+	}
+	e.global(t, `{"update":{"auto":"install"}}`)
+	if got := open(t, e).UpdateAuto(); got != "install" {
+		t.Errorf("global = %q", got)
+	}
+	e = newEnv(t)
+	e.local(t, `{"update":{"auto":"install"}}`)
+	e.global(t, `{"repos":{"github.com/acme/rig":{"update":{"auto":"install"}}}}`)
+	if got := open(t, e).UpdateAuto(); got != "off" {
+		t.Errorf("repo/local = %q, want off", got)
+	}
+}
