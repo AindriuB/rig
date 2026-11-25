@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,62 @@ const pushSettle = 2 * time.Minute
 
 // errPushBusy means another push holds the task's lock.
 var errPushBusy = errors.New("another push of this task is under way")
+
+// pushRepoName is the label-safe name of the repository's main directory:
+// lowercased, other characters turned to "-", runs merged, trimmed, at most 24.
+func pushRepoName(common string) string {
+	dir := filepath.Dir(filepath.Clean(common))
+	if filepath.Base(common) != ".git" { // a bare repository
+		dir = strings.TrimSuffix(filepath.Base(common), ".git")
+	} else {
+		dir = filepath.Base(dir)
+	}
+	return pushLabelPart(dir, 24)
+}
+
+func pushLabelPart(s string, max int) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	out := b.String()
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	out = strings.Trim(out, "-")
+	if len(out) > max {
+		out = strings.TrimRight(out[:max], "-")
+	}
+	return out
+}
+
+// pushMarker is the label that finds a task's issue again: rig/<repo>/<slug>,
+// cut to GitHub's 50-character label limit with a hash of the task's ULID.
+func pushMarker(repo string, t store.Task) string {
+	slug := t.Slug
+	if slug == "" {
+		slug = t.Short
+	}
+	prefix := "rig/" + repo + "/"
+	m := prefix + slug
+	if len(m) <= 50 {
+		return m
+	}
+	sum := sha256.Sum256([]byte(t.ID))
+	suffix := "-" + hex.EncodeToString(sum[:])[:8]
+	keep := 50 - len(prefix) - len(suffix)
+	if keep < 0 {
+		keep = 0
+	}
+	if len(slug) > keep {
+		slug = slug[:keep]
+	}
+	return prefix + strings.TrimRight(slug, "-") + suffix
+}
 
 // pushLock is a kernel advisory lock on one task's push lock file. The file
 // is never deleted; the kernel drops the lock when the holder closes it or dies.
@@ -251,12 +309,74 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 		refusals = append(refusals, fmt.Sprintf("task %s: %s", t.Short, fmt.Sprintf(format, args...)))
 	}
 	levels := w.wf.PushLevels()
+	common, err := w.repo.CommonDir(ctx)
+	if err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	repoName := pushRepoName(common)
+	// One level rule for every task: its own type field, then its own linked
+	// issue's type, then one below its parent's level (decided by this same
+	// rule), else the first level. idx is the position in levels; -1 with a
+	// message means the level must come from a type outside levels.
+	inSel := map[string]bool{}
+	for _, t := range selected {
+		inSel[t.ID] = true
+	}
+	type lvl struct {
+		idx int
+		bad string
+	}
+	memo := map[string]lvl{}
+	levelIndex := func(name string) int {
+		for li, l := range levels {
+			if l == name {
+				return li
+			}
+		}
+		return -1
+	}
+	var levelOf func(t store.Task, seen map[string]bool) lvl
+	levelOf = func(t store.Task, seen map[string]bool) lvl {
+		if r, ok := memo[t.ID]; ok {
+			return r
+		}
+		var r lvl
+		own, _ := t.Fields["type"].(string)
+		switch {
+		case own != "":
+			r = lvl{idx: levelIndex(own)}
+		case t.External != nil && t.External.Type != "":
+			r = lvl{idx: levelIndex(t.External.Type)}
+		default:
+			p, ok := byID[t.Parent]
+			if !ok || t.Parent == "" || seen[p.ID] || (p.External == nil && !inSel[p.ID]) {
+				r = lvl{}
+				break
+			}
+			seen[t.ID] = true
+			pl := levelOf(p, seen)
+			switch {
+			case pl.bad != "":
+				r = pl
+			case pl.idx < 0:
+				pt, _ := p.Fields["type"].(string)
+				if pt == "" && p.External != nil {
+					pt = p.External.Type
+				}
+				r = lvl{idx: -1, bad: fmt.Sprintf("parent task %s has type %q, which is not in tracker.push.levels", p.Short, pt)}
+			default:
+				r = lvl{idx: pl.idx + 1}
+			}
+		}
+		memo[t.ID] = r
+		return r
+	}
 	for i, t := range selected {
 		if t.External != nil {
 			out.Skipped = append(out.Skipped, pushItem{Task: t.Short, Title: t.Title, Key: t.External.Key, Type: t.External.Type, Status: "skipped"})
 			continue
 		}
-		s := &pushStep{task: t, depth: depths[i], marker: "rig-" + t.Short}
+		s := &pushStep{task: t, depth: depths[i], marker: pushMarker(repoName, t)}
 		// Steps 2 and 3: the type.
 		own, _ := t.Fields["type"].(string)
 		switch {
@@ -266,12 +386,18 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			} else {
 				refuse(t, "type %q is not in tracker.push.types", own)
 			}
-		case s.depth < len(levels):
-			s.typ = levels[s.depth]
-		case len(levels) == 0:
-			refuse(t, "the workflow has no tracker.push.levels to choose a type from")
 		default:
-			refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", s.depth, len(levels))
+			lv := levelOf(t, map[string]bool{})
+			switch {
+			case lv.bad != "":
+				refuse(t, "%s", lv.bad)
+			case lv.idx < len(levels) && lv.idx >= 0:
+				s.typ = levels[lv.idx]
+			case len(levels) == 0:
+				refuse(t, "the workflow has no tracker.push.levels to choose a type from")
+			default:
+				refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", lv.idx, len(levels))
+			}
 		}
 		// Step 5: the parent.
 		if p, ok := byID[t.Parent]; ok && t.Parent != "" {
