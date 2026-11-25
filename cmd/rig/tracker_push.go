@@ -314,20 +314,62 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 		return a.fail(cmd, "%v", err)
 	}
 	repoName := pushRepoName(common)
-	// A linked parent of an untyped root sets the first level: the run's tasks are typed below it.
-	base, rootParentBad := 0, ""
-	rootOwn, _ := root.Fields["type"].(string)
-	if rp, ok := byID[root.Parent]; ok && rootOwn == "" && root.Parent != "" && rp.External != nil && rp.External.Type != "" {
-		base = -1
+	// One level rule for every task: its own type field, then its own linked
+	// issue's type, then one below its parent's level (decided by this same
+	// rule), else the first level. idx is the position in levels; -1 with a
+	// message means the level must come from a type outside levels.
+	inSel := map[string]bool{}
+	for _, t := range selected {
+		inSel[t.ID] = true
+	}
+	type lvl struct {
+		idx int
+		bad string
+	}
+	memo := map[string]lvl{}
+	levelIndex := func(name string) int {
 		for li, l := range levels {
-			if l == rp.External.Type {
-				base = li + 1
-				break
+			if l == name {
+				return li
 			}
 		}
-		if base < 0 {
-			base, rootParentBad = 0, fmt.Sprintf("parent task %s has type %q, which is not in tracker.push.levels", rp.Short, rp.External.Type)
+		return -1
+	}
+	var levelOf func(t store.Task, seen map[string]bool) lvl
+	levelOf = func(t store.Task, seen map[string]bool) lvl {
+		if r, ok := memo[t.ID]; ok {
+			return r
 		}
+		var r lvl
+		own, _ := t.Fields["type"].(string)
+		switch {
+		case own != "":
+			r = lvl{idx: levelIndex(own)}
+		case t.External != nil && t.External.Type != "":
+			r = lvl{idx: levelIndex(t.External.Type)}
+		default:
+			p, ok := byID[t.Parent]
+			if !ok || t.Parent == "" || seen[p.ID] || (p.External == nil && !inSel[p.ID]) {
+				r = lvl{}
+				break
+			}
+			seen[t.ID] = true
+			pl := levelOf(p, seen)
+			switch {
+			case pl.bad != "":
+				r = pl
+			case pl.idx < 0:
+				pt, _ := p.Fields["type"].(string)
+				if pt == "" && p.External != nil {
+					pt = p.External.Type
+				}
+				r = lvl{idx: -1, bad: fmt.Sprintf("parent task %s has type %q, which is not in tracker.push.levels", p.Short, pt)}
+			default:
+				r = lvl{idx: pl.idx + 1}
+			}
+		}
+		memo[t.ID] = r
+		return r
 	}
 	for i, t := range selected {
 		if t.External != nil {
@@ -344,14 +386,18 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			} else {
 				refuse(t, "type %q is not in tracker.push.types", own)
 			}
-		case rootParentBad != "":
-			refuse(t, "%s", rootParentBad)
-		case base+s.depth < len(levels):
-			s.typ = levels[base+s.depth]
-		case len(levels) == 0:
-			refuse(t, "the workflow has no tracker.push.levels to choose a type from")
 		default:
-			refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", base+s.depth, len(levels))
+			lv := levelOf(t, map[string]bool{})
+			switch {
+			case lv.bad != "":
+				refuse(t, "%s", lv.bad)
+			case lv.idx < len(levels) && lv.idx >= 0:
+				s.typ = levels[lv.idx]
+			case len(levels) == 0:
+				refuse(t, "the workflow has no tracker.push.levels to choose a type from")
+			default:
+				refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", lv.idx, len(levels))
+			}
 		}
 		// Step 5: the parent.
 		if p, ok := byID[t.Parent]; ok && t.Parent != "" {

@@ -588,6 +588,29 @@ func TestTrackerPushTypedRootIgnoresLinkedParent(t *testing.T) {
 	}
 }
 
+// AC11 (f-1c15): an already linked root takes its level from its own issue, not its parent.
+func TestTrackerPushLinkedRootTakesOwnLevel(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	checkout := e.task("checkout", "")
+	bug := e.task("bug-report", "", "type=Bug")
+	if code := e.run("tracker", "push", checkout); code != 0 {
+		t.Fatalf("push checkout: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "push", bug); code != 0 {
+		t.Fatalf("push bug: %d %s", code, e.err.String())
+	}
+	if code := e.run("task", "parent", checkout, bug); code != 0 {
+		t.Fatalf("reparent: %d %s", code, e.err.String())
+	}
+	e.task("checkout-form", checkout)
+	if code := e.run("tracker", "push", checkout, "--tree"); code != 0 || len(e.fk.Created) != 3 ||
+		e.fk.Created[2].Type != "Story" {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
 // AC7-AC9: the marker is rig/<repo>/<slug>, shortened with a hash of the ULID.
 func TestTrackerPushMarker(t *testing.T) {
 	tk := store.Task{ID: "01JD0000000000000000000001", Short: "t-1", Slug: "12-checkout-form"}
