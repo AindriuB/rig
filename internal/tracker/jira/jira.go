@@ -394,7 +394,7 @@ func (a *Adapter) Capabilities(ctx context.Context) (tracker.Caps, error) {
 		return tracker.Caps{}, err
 	}
 	return tracker.Caps{
-		Parent: true, Children: true, Types: true, Search: true, Comment: true, SetStatus: true,
+		Parent: true, Children: true, Types: true, Search: true, Comment: true, SetStatus: true, Create: true,
 		Levels: []string{"epic", "story", "sub-task"},
 	}, nil
 }
