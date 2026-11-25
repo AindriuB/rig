@@ -4,4 +4,4 @@ package main
 // an installer script, compares it with the minimum it needs. Raise the
 // minor for a new command, flag or JSON field, and the major for any change
 // to an existing command, exit code or JSON field.
-const version = "0.5.1"
+const version = "0.5.2"
