@@ -39,7 +39,7 @@ func (f *flagSet) boolean(name string) *bool {
 // []string literal handed to splitRepeated or takeRepeated.
 var knownOptions = map[string]bool{
 	"--actor": true, "--all": true, "--base": true, "--blocking": true, "--body": true,
-	"--body-file": true, "--budget": true, "--children": true, "--comment": true,
+	"--body-file": true, "--budget": true, "--check": true, "--children": true, "--comment": true,
 	"--draft": true, "--dry-run": true, "--field": true, "--findings": true, "--format": true,
 	"--from": true, "--global": true, "--head": true, "--help": true, "--history": true,
 	"--include": true, "--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
@@ -48,7 +48,7 @@ var knownOptions = map[string]bool{
 	"--repo": true, "--role": true, "--roots": true, "--run": true, "--severity": true,
 	"--sha": true, "--show-origin": true, "--slug": true, "--state": true, "--status": true,
 	"--store": true, "--summary": true, "--task": true, "--task-file": true, "--text": true,
-	"--title": true, "--token": true, "--tree": true, "--url": true, "--user": true,
+	"--title": true, "--to": true, "--token": true, "--tree": true, "--url": true, "--user": true,
 	"--version": true, "--who": true, "--worktree": true, "-h": true,
 }
 
