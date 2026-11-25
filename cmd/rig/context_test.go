@@ -187,7 +187,7 @@ func TestContextJSONShape(t *testing.T) {
 			t.Errorf("section %s items is null, want []", n)
 		}
 	}
-	if want := []string{"Header", "Body", "Findings", "Paths", "Overlap", "History", "Commits"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"Header", "Body", "Findings", "Notes", "Paths", "Overlap", "History", "Commits"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("sections %v, want %v", names, want)
 	}
 }
@@ -305,12 +305,13 @@ func findingShort(t *testing.T, st store.Store, id, summary string) string {
 }
 
 // AC3: a budget cuts sections with "… n more"; used stays within it; sections
-// 1 and 2 over the budget print in full and set overBudget.
+// the header and blocking findings over the budget print in full and set
+// overBudget.
 func TestContextBudget(t *testing.T) {
 	st := memstore.New(store.Options{Now: tick()})
 	task := ctxTask(t, st, "alpha", "short body", "src/*.go")
 	for i := 0; i < 60; i++ {
-		ctxEvent(t, st, task.ID, store.KindFinding, store.FindingData{Severity: "P2", Summary: strings.Repeat("word ", 10) + string(rune('a'+i%26)) + string(rune('a'+i/26))})
+		ctxEvent(t, st, task.ID, store.KindFinding, store.FindingData{Severity: "P3", Summary: strings.Repeat("word ", 10) + string(rune('a'+i%26)) + string(rune('a'+i/26))})
 	}
 	a, out, _ := ctxApp(t, ctxRepo(t), st)
 	_, full := ctxRun(t, a, out, task.Short, "--budget", "20000")
@@ -337,26 +338,74 @@ func TestContextBudget(t *testing.T) {
 		t.Errorf("findings: %d shown, %d omitted", len(findings.Items), findings.Omitted)
 	}
 
+	// AC3: a long body is cut, the blocking finding is not.
 	big := ctxTask(t, st, "huge", strings.Repeat("0123456789abcdef\n", 100), "src/*.go")
 	ctxEvent(t, st, big.ID, store.KindFinding, store.FindingData{Severity: "P1", Summary: "cannot fit"})
 	code, text = ctxRun(t, a, out, big.Short, "--budget", "200")
-	if code != 0 || !strings.Contains(text, strings.Repeat("0123456789abcdef\n", 100)) || !strings.Contains(text, "huge") {
-		t.Fatalf("sections 1 and 2 must print in full:\n%s", text)
+	if code != 0 || !strings.Contains(text, "cannot fit") || !strings.Contains(text, "… ") {
+		t.Fatalf("P1 in full and body cut:\n%s", text)
 	}
-	if strings.Contains(text, "## Findings") {
-		t.Error("later sections must not print when 1 and 2 pass the budget")
+	if strings.Contains(text, strings.Repeat("0123456789abcdef\n", 100)) || (len(text)+3)/4 > 200 {
+		t.Errorf("body not cut or over budget: %d bytes", len(text))
 	}
 	_, js = ctxRun(t, a, out, big.Short, "--budget", "200", "--json")
 	o = ctxOut{}
 	if err := json.Unmarshal([]byte(js), &o); err != nil {
 		t.Fatal(err)
 	}
-	if !o.OverBudget || o.Used != (len(text)+3)/4 || o.Used <= 200 {
-		t.Errorf("overBudget %v used %d", o.OverBudget, o.Used)
+	if o.OverBudget || o.Sections[1].Omitted == 0 {
+		t.Errorf("overBudget %v body omitted %d", o.OverBudget, o.Sections[1].Omitted)
+	}
+
+	// AC7: blocking findings alone over the budget print in full.
+	for i := 0; i < 30; i++ {
+		ctxEvent(t, st, big.ID, store.KindFinding, store.FindingData{Severity: "P1", Summary: strings.Repeat("blocker ", 10) + string(rune('a'+i))})
+	}
+	_, text = ctxRun(t, a, out, big.Short, "--budget", "200")
+	_, js = ctxRun(t, a, out, big.Short, "--budget", "200", "--json")
+	o = ctxOut{}
+	if err := json.Unmarshal([]byte(js), &o); err != nil {
+		t.Fatal(err)
+	}
+	if !o.OverBudget || o.Used != (len(text)+3)/4 || o.Used <= 200 || len(o.Sections[2].Items) != 31 || o.Sections[2].Omitted != 0 {
+		t.Errorf("overBudget %v used %d findings %d", o.OverBudget, o.Used, len(o.Sections[2].Items))
 	}
 }
 
-// A workflow with no owns field gets sections 1 to 3.
+// AC2, AC4, AC8: own notes only, decisions ahead of the body, same bytes.
+func TestContextNotes(t *testing.T) {
+	st := memstore.New(store.Options{Now: tick()})
+	task := ctxTask(t, st, "alpha", strings.Repeat("body line here\n", 100), "src/*.go")
+	other := ctxTask(t, st, "beta", "", "docs/*.md")
+	if _, err := st.AddNote(ctx, store.Note{Task: task.ID, Kind: "info", Text: "older own note"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddNote(ctx, store.Note{Task: task.ID, Kind: "decision", Text: "chose the plan"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddNote(ctx, store.Note{Task: other.ID, Kind: "info", Text: "foreign note"}); err != nil {
+		t.Fatal(err)
+	}
+	a, out, _ := ctxApp(t, ctxRepo(t), st)
+	_, full := ctxRun(t, a, out, task.Short, "--budget", "20000")
+	notes := strings.Split(strings.Split(full, "## Notes\n")[1], "## ")[0]
+	if strings.Contains(notes, "foreign") || strings.Index(notes, "chose the plan") > strings.Index(notes, "older own note") || !strings.Contains(notes, " decision: chose the plan") {
+		t.Errorf("notes:\n%s", notes)
+	}
+	for _, args := range [][]string{{"--budget", "300"}, {"--budget", "300", "--json"}, {"--budget", "300", "--format", "markdown"}} {
+		_, one := ctxRun(t, a, out, append([]string{task.Short}, args...)...)
+		_, two := ctxRun(t, a, out, append([]string{task.Short}, args...)...)
+		if one != two {
+			t.Errorf("%v not deterministic", args)
+		}
+	}
+	_, cut := ctxRun(t, a, out, task.Short, "--budget", "300")
+	if !strings.Contains(cut, "chose the plan") || !strings.Contains(strings.Split(strings.Split(cut, "## Body\n")[1], "## ")[0], "… ") {
+		t.Errorf("decision kept, body cut:\n%s", cut)
+	}
+}
+
+// A workflow with no owns field gets sections 1 to 4.
 func TestContextNoOwnsField(t *testing.T) {
 	st := memstore.New(store.Options{Now: tick()})
 	task := newTask(t, st)
@@ -374,7 +423,7 @@ func TestContextNoOwnsField(t *testing.T) {
 	for _, s := range o.Sections {
 		names = append(names, s.Name)
 	}
-	if want := []string{"Header", "Body", "Findings"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"Header", "Body", "Findings", "Notes"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("sections %v, want %v", names, want)
 	}
 }
@@ -397,7 +446,7 @@ func TestContextGitref(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.out), &o); err != nil {
 		t.Fatal(err)
 	}
-	if o.Task != task.Short || len(o.Sections) != 7 || o.Sections[3].Name != "Paths" || len(o.Sections[3].Items) != 2 {
+	if o.Task != task.Short || len(o.Sections) != 8 || o.Sections[4].Name != "Paths" || len(o.Sections[4].Items) != 2 {
 		t.Errorf("%+v", o)
 	}
 	if strings.Contains(r.out, "SECRET-CONTENT") {

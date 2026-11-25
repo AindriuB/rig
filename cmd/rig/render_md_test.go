@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -279,30 +280,31 @@ func TestContextMarkdownGolden(t *testing.T) {
 	if strings.Contains(renderContextMD(fitBudgetIn(markdownLayout, "abc", 200, small)), "_…") {
 		t.Fatal("200 tokens should fit all")
 	}
-	got := renderContextMD(fitBudgetIn(markdownLayout, "abc", 1, small)) // sections 1 and 2 print whatever the budget
-	if !strings.HasPrefix(got, "## Header\n\n- abc") || strings.Contains(got, "## Findings") {
+	got := renderContextMD(fitBudgetIn(markdownLayout, "abc", 1, small)) // only the header is fixed
+	if !strings.HasPrefix(got, "## Header\n\n- abc") || strings.Contains(got, "## Findings") || strings.Contains(got, "## Body") {
 		t.Errorf("tiny budget:\n%s", got)
 	}
-	// Room for the heading, one item and the "more" line only.
-	used := sectionSize(markdownLayout, "Header", small[0].Items, 0) + sectionSize(markdownLayout, "Body", small[1].Items, 0)
-	limit := used + len("## Findings\n\n") + 1 + len("- f1 P1 x\n") + len("_… 2 more_\n")
-	lay := markdownLayout
-	o := ctxOut{Sections: []ctxSection{small[0], small[1], cutSection(lay, small[2], limit-used, new(int))}}
-	goldenEq(t, "omitted", renderContextMD(o), `## Header
+}
 
-- abc slug: T
-- state: open
-
-## Body
-
-> # Big
-> text
-
-## Findings
-
-- f1 P1 x
-_… 2 more_
-`)
+// AC6: a cut body's "more" line is outside the blockquote.
+func TestContextMarkdownBodyCut(t *testing.T) {
+	var body []string
+	for i := 0; i < 100; i++ {
+		body = append(body, fmt.Sprintf("line %d", i))
+	}
+	secs := []ctxSection{
+		{Name: "Header", Items: []string{"abc slug: T"}},
+		{Name: "Body", Items: body},
+	}
+	got := renderContextMD(fitBudgetIn(markdownLayout, "abc", 200, markdownSections(secs)))
+	i := strings.Index(got, "\n\n_… ")
+	if i < 0 || !strings.HasSuffix(got, " more_\n") || !strings.Contains(got[:i], "\n> line 0") {
+		t.Errorf("want a blank line before the more line:\n%s", got)
+	}
+	again := renderContextMD(fitBudgetIn(markdownLayout, "abc", 200, markdownSections(secs)))
+	if again != got {
+		t.Error("not deterministic")
+	}
 }
 
 // A linked, parented task shows its parent and tracker rows in all three
@@ -357,7 +359,7 @@ func TestContextMarkdownBudget(t *testing.T) {
 	st := memstore.New(store.Options{Now: tick()})
 	task := ctxTask(t, st, "alpha", "short body", "src/*.go")
 	for i := 0; i < 60; i++ {
-		ctxEvent(t, st, task.ID, store.KindFinding, store.FindingData{Severity: "P2", Summary: strings.Repeat("word ", 10) + string(rune('a'+i%26)) + string(rune('a'+i/26))})
+		ctxEvent(t, st, task.ID, store.KindFinding, store.FindingData{Severity: "P3", Summary: strings.Repeat("word ", 10) + string(rune('a'+i%26)) + string(rune('a'+i/26))})
 	}
 	a, out, _ := ctxApp(t, ctxRepo(t), st)
 	for _, budget := range []string{"200", "300", "500", "1500"} {
