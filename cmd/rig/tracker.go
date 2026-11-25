@@ -24,7 +24,7 @@ import (
 	"github.com/AindriuB/rig/internal/workflow"
 )
 
-const trackerUsage = "usage: rig tracker pull|refresh|report|show|status ..."
+const trackerUsage = "usage: rig tracker pull|push|refresh|report|show|status ..."
 
 // Why a tracker cannot be used. Each is exit 2; `rig tracker status` reports
 // the last two instead.
