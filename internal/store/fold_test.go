@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -162,5 +163,38 @@ func TestFoldRelinkSnapshot(t *testing.T) {
 				t.Fatalf("snapshot carried to another issue: %+v", x)
 			}
 		})
+	}
+}
+
+// An event of the tracker-push kind changes nothing a task shows. A reader
+// that predates the kind skips it and folds the rest of the log the same.
+func TestFoldTrackerPushIsInvisible(t *testing.T) {
+	log := sampleLog(t)
+	push := ev(t, 13, KindTrackerPush, TrackerPushData{Marker: "rig-t-0001", Kind: "jira", Host: "j.example", Project: "AB"})
+	task, _, _, skipped := Fold(append(slices.Clone(log), push))
+	want, _, _, _ := Fold(log)
+	if skipped != 0 || task.Skipped != 0 {
+		t.Fatalf("skipped %d", skipped)
+	}
+	task.Updated, want.Updated = time.Time{}, time.Time{}
+	if !reflect.DeepEqual(task, want) {
+		t.Fatalf("the intent changed the task:\n%+v\nwant\n%+v", task, want)
+	}
+
+	// The old reader: the same event under a kind it does not know.
+	old := push
+	old.Kind = "tracker-push-from-the-future"
+	oldTask, _, _, oldSkipped := Fold(append(slices.Clone(log), old))
+	if oldSkipped != 1 {
+		t.Fatalf("old reader skipped %d, want 1", oldSkipped)
+	}
+	oldTask.Updated, oldTask.Skipped = time.Time{}, 0
+	if !reflect.DeepEqual(oldTask, want) {
+		t.Fatal("skipping the intent changed the fold")
+	}
+
+	bad := ev(t, 14, KindTrackerPush, TrackerPushData{Kind: "jira"})
+	if _, _, _, skipped := Fold(append(slices.Clone(log), bad)); skipped != 1 {
+		t.Fatalf("an intent with no marker: skipped %d, want 1", skipped)
 	}
 }

@@ -114,6 +114,13 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 		if !decode(e, &d) || task.ID == "" || !validReport(d) {
 			return false
 		}
+	case KindTrackerPush:
+		// An intent changes nothing a task shows; `rig tracker push` reads
+		// the log for it. It is applied only to count it as understood.
+		var d TrackerPushData
+		if !decode(e, &d) || task.ID == "" || !validPush(d) {
+			return false
+		}
 	case KindTransition:
 		var d TransitionData
 		if !decode(e, &d) || task.ID == "" || d.To == "" {
@@ -197,6 +204,11 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 // validReport reports whether d names an issue and at least one thing sent.
 func validReport(d TrackerReportData) bool {
 	return d.Kind != "" && d.Key != "" && (d.Status != nil || d.Comment != nil)
+}
+
+// validPush reports whether d names a marker and a tracker kind.
+func validPush(d TrackerPushData) bool {
+	return d.Marker != "" && d.Kind != ""
 }
 
 // applyExternal links task to d. A link written again keeps the snapshot

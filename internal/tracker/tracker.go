@@ -47,7 +47,10 @@ type Tracker interface {
 	SetStatus(ctx context.Context, key, status string) (StatusResult, error)
 	// Create makes a new issue and returns it, including Key, URL and Rev.
 	// It calls ValidateKey on ni.ParentKey when set, before any write. It
-	// returns ErrUnsupported when Caps.Create is false.
+	// returns ErrUnsupported when Caps.Create is false. When the write
+	// succeeded but a follow-up read failed, Create returns an Issue carrying
+	// the created Key and URL (Rev may be empty) together with a non-nil
+	// error; a caller must record that Key rather than create again.
 	Create(ctx context.Context, ni NewIssue) (Issue, error)
 	// IssueTypes lists the project's issue types with their hierarchy
 	// levels. It returns ErrUnsupported when the project has no issue types.

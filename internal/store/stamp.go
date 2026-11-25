@@ -154,6 +154,15 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 				}
 				return nil
 			})
+		case KindTrackerPush:
+			// An intent is written before the link exists, so the task need
+			// not be linked.
+			err = check(e, func(d *TrackerPushData) error {
+				if !validPush(*d) {
+					return errors.New("no marker or kind")
+				}
+				return nil
+			})
 		case KindFinding:
 			e.Data, err = rewrite(e, func(d *FindingData) error {
 				if d.Summary == "" {
