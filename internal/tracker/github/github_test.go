@@ -125,6 +125,35 @@ func TestCreateNoParent(t *testing.T) {
 	}
 }
 
+func TestCreateAcceptanceBody(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{"B", `{"body":"B\n\n## Acceptance\n- [ ] x\n","title":"T"}`},
+		{"", `{"body":"## Acceptance\n- [ ] x\n","title":"T"}`},
+	}
+	for _, c := range cases {
+		_, calls := fakeGH(t, seedState(true))
+		tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+		if _, err := tr.Create(ctx, tracker.NewIssue{Title: "T", Body: c.body, Acceptance: []string{"x"}}); err != nil {
+			t.Fatal(err)
+		}
+		if r := requests(calls(), "repos/o/r/issues"); len(r) != 1 || r[0] != c.want {
+			t.Fatalf("body %q: requests = %q", c.body, r)
+		}
+	}
+}
+
+func TestCreateAcceptanceCollapsesWhitespace(t *testing.T) {
+	_, calls := fakeGH(t, seedState(true))
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if _, err := tr.Create(ctx, tracker.NewIssue{Title: "T", Acceptance: []string{"a\nb  c"}}); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"body":"## Acceptance\n- [ ] a b c\n","title":"T"}`
+	if r := requests(calls(), "repos/o/r/issues"); len(r) != 1 || r[0] != want {
+		t.Fatalf("requests = %q", r)
+	}
+}
+
 // AC2
 func TestCreateUnknownTypeWritesNothing(t *testing.T) {
 	_, calls := fakeGH(t, seedState(true))
@@ -158,6 +187,9 @@ func TestCreateWithParent(t *testing.T) {
 	}
 	if r := requests(calls(), "repos/o/r/issues/1/sub_issues"); len(r) != 1 || r[0] != `{"sub_issue_id":5005}` {
 		t.Fatalf("sub requests = %q", r)
+	}
+	if made.Parent == nil || made.Parent.Key != "1" {
+		t.Fatalf("made parent = %+v", made.Parent)
 	}
 	got, _ := tr.Issue(ctx, made.Key)
 	if got.Parent == nil || got.Parent.Key != "1" {

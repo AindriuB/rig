@@ -125,7 +125,7 @@ func fakeProgram(dir, mode string) {
 		}
 		return string(b)
 	}
-	on := mode == "caps-all" || mode == "create-unsupported" || mode == "create-nokey" || mode == "types-empty"
+	on := mode == "caps-all" || mode == "create-unsupported" || mode == "create-nokey" || mode == "create-badkey" || mode == "types-empty"
 	switch req.Op {
 	case "caps":
 		reply("caps", map[string]any{"parent": on, "children": on, "types": on, "search": on, "comment": on, "setStatus": on, "create": on, "levels": []string{}})
@@ -136,6 +136,10 @@ func fakeProgram(dir, mode string) {
 		}
 		if mode == "create-nokey" {
 			reply("issue", issue{"title": req.Issue.Title})
+			return
+		}
+		if mode == "create-badkey" {
+			reply("issue", issue{"key": "a b\n", "title": req.Issue.Title})
 			return
 		}
 		key := fmt.Sprintf("N-%d", len(created)+1)
@@ -149,6 +153,13 @@ func fakeProgram(dir, mode string) {
 		os.WriteFile(createdFile, b, 0o600)
 		reply("issue", is)
 	case "types":
+		if mode == "types-off-nocode" {
+			fmt.Print(`{"v":1,"ok":false,"error":"unknown op"}`)
+			return
+		}
+		if mode == "types-off-exit" {
+			os.Exit(3)
+		}
 		if mode == "create-unsupported" || mode == "caps-off" {
 			fail("unsupported")
 			return
@@ -434,7 +445,7 @@ func TestIssueTypesKeepsOmittedLevelNil(t *testing.T) {
 	if len(types) != 3 || types[0].Level == nil || *types[0].Level != 2 || types[1].Level == nil || *types[1].Level != 0 || types[2].Level != nil {
 		t.Errorf("types = %+v", types)
 	}
-	if got := requests(t, dir); len(got) != 1 || got[0] != `{"v":1,"op":"types"}` {
+	if got := requests(t, dir); len(got) != 2 || got[1] != `{"v":1,"op":"types"}` {
 		t.Errorf("requests = %v", got)
 	}
 }
@@ -462,5 +473,22 @@ func TestCapsWithoutCreateLeaveItFalseAndCreateUnsupported(t *testing.T) {
 	}
 	if got := requests(t, dir); len(got) != 1 {
 		t.Errorf("want only caps run, got %v", got)
+	}
+}
+
+func TestIssueTypesGatedOnCaps(t *testing.T) {
+	for _, mode := range []string{"types-off-nocode", "types-off-exit"} {
+		tr, _ := newFake(t, mode, Options{})
+		if _, err := tr.IssueTypes(context.Background()); !errors.Is(err, tracker.ErrUnsupported) {
+			t.Errorf("%s: IssueTypes = %v, want ErrUnsupported", mode, err)
+		}
+	}
+}
+
+func TestCreateRefusesInvalidResponseKey(t *testing.T) {
+	tr, _ := newFake(t, "create-badkey", Options{})
+	_, err := tr.Create(context.Background(), tracker.NewIssue{Type: "Task", Title: "T"})
+	if err == nil || !strings.Contains(err.Error(), "may have been created") {
+		t.Errorf("Create = %v, want a may-have-been-created error", err)
 	}
 }
