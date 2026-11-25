@@ -34,7 +34,8 @@ type stub struct {
 	reqs        []string // "METHOD path?query"
 	auths       []string // Authorization header of each request
 	comments    []map[string]any
-	posted      int // POST requests other than comments
+	posted      int              // POST requests other than comments
+	created     []map[string]any // bodies of POST /issue
 	tick        int
 }
 
@@ -145,6 +146,10 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		s.reply(w, 200, map[string]any{"key": key})
 	case r.Method == "GET" && (path == prefix+"/search" || path == prefix+"/search/jql"):
 		s.search(w, r)
+	case r.Method == "GET" && strings.HasPrefix(path, prefix+"/issue/createmeta/"):
+		s.createmeta(w)
+	case r.Method == "POST" && path == prefix+"/issue":
+		s.create(w, r)
 	case strings.HasPrefix(path, prefix+"/issue/"):
 		s.issue(w, r, strings.TrimPrefix(path, prefix+"/issue/"))
 	default:
@@ -295,4 +300,44 @@ func (s *stub) search(w http.ResponseWriter, r *http.Request) {
 		out["startAt"], out["maxResults"], out["total"] = start, max, len(hits)
 	}
 	s.reply(w, 200, out)
+}
+
+// createmeta answers the issue type list: hierarchyLevel on Cloud only.
+func (s *stub) createmeta(w http.ResponseWriter) {
+	if s.version == 3 {
+		s.reply(w, 200, map[string]any{"issueTypes": []map[string]any{
+			{"name": "Epic", "subtask": false, "hierarchyLevel": 1},
+			{"name": "Task", "subtask": false, "hierarchyLevel": 0},
+			{"name": "Sub-task", "subtask": true, "hierarchyLevel": -1},
+		}})
+		return
+	}
+	s.reply(w, 200, map[string]any{"values": []map[string]any{
+		{"name": "Epic", "subtask": false},
+		{"name": "Task", "subtask": false},
+		{"name": "Sub-task", "subtask": true},
+	}})
+}
+
+// create stores the issue a POST describes and records its body.
+func (s *stub) create(w http.ResponseWriter, r *http.Request) {
+	s.posted++
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.reply(w, 400, nil)
+		return
+	}
+	s.created = append(s.created, body)
+	in, _ := body["fields"].(map[string]any)
+	key := fmt.Sprintf("RIG-%d", 100+len(s.created))
+	fields := map[string]any{"status": map[string]any{"name": "To Do"}, "updated": "2025-04-02T10:00:00.000+0000"}
+	for k, v := range in {
+		fields[k] = v
+	}
+	if p, ok := in["parent"].(map[string]any); ok {
+		fields["parent"] = map[string]any{"key": p["key"], "fields": map[string]any{}}
+	}
+	s.issues[key] = map[string]any{"key": key, "id": strconv.Itoa(20000 + len(s.created)), "fields": fields}
+	s.order = append(s.order, key)
+	s.reply(w, 201, map[string]any{"id": s.issues[key]["id"], "key": key})
 }
