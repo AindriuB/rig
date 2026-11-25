@@ -1,8 +1,12 @@
 // Package proc runs a subprocess from an argument vector under a deadline.
 //
 // Nothing here builds a shell string: the program and each argument reach the
-// kernel as given. When the deadline passes, the child and everything it
-// started are killed, so a caller never waits on a stuck grandchild.
+// kernel as given. When the deadline passes or the context is cancelled, the
+// child and everything it started are killed, so a caller never waits on a
+// stuck grandchild. On Unix the child leads its own process group and the
+// group is killed. On Windows the child is put in a Job Object and the job is
+// terminated. One narrow race remains on Windows: a descendant spawned between
+// Start and the job assignment is not in the job and is not killed.
 package proc
 
 import (
@@ -84,9 +88,13 @@ func Run(ctx context.Context, o Options, name string, args ...string) (Result, e
 	stdout, stderr := &capped{}, &capped{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = waitDelay
-	killTree(cmd)
+	afterStart, done := killTree(cmd)
+	defer done()
 
-	err = cmd.Run()
+	if err = cmd.Start(); err == nil {
+		afterStart()
+		err = cmd.Wait()
+	}
 	res := Result{Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes()}
 	if cmd.ProcessState != nil {
 		res.Code = cmd.ProcessState.ExitCode()
