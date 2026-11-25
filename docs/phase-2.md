@@ -86,7 +86,12 @@ An event line:
 
 - `v` is the event format version. A reader skips a line whose `v` it does
   not know, and skips an event `kind` it does not know, so an older rig can
-  read a store a newer rig wrote. It reports how many it skipped.
+  read a store a newer rig wrote. It reports how many it skipped: a task
+  with skipped events carries `skipped` in its output. Its history is
+  degraded, so every transition on that task, and on any task that depends on
+  it through a `dependsIn` gate, fails the built-in `history` gate with a
+  message telling the user to upgrade rig. Notes and findings can still be
+  written.
 - `seq` counts from 1 within the task. `id` is a ULID, unique across writers.
   Events are ordered by `(seq, id)`.
 - `actor` is the `--actor` (or `--role`) flag, else `$RIG_ACTOR`, else git's
@@ -453,23 +458,34 @@ picks up the task, person or agent, within a fixed budget. It names paths
 and never prints file contents.
 
 **Budget.** Tokens are estimated as bytes ÷ 4, rounded up. Default 1500;
-range 200 to 20000. Sections are filled in this order:
+range 200 to 20000. The sections print in this order:
 
-| # | Section | Contents | Budget rule |
-|---|---|---|---|
-| 1 | Header | id, slug, title, effective state, action, branch, PR, counters | always in full |
-| 2 | Body | the body and every field marked `context: true` | always in full |
-| 3 | Findings | this task's open findings, blocking first, one line each | fills what is left |
-| 4 | Paths | tracked files matching the `owns: true` field, with line counts | fills what is left |
-| 5 | Overlap | other open tasks whose owned paths match any of the same files | fills what is left |
-| 6 | History | closed findings and notes from other tasks on these files, newest first | fills what is left |
-| 7 | Commits | the last commits on the default branch touching the owned paths, matched by the owns globs, so commits that touched a path since deleted or renamed are included | fills what is left |
+| # | Section | Contents |
+|---|---|---|
+| 1 | Header | id, slug, title, effective state, action, branch, PR, counters, links |
+| 2 | Body | the body and every field marked `context: true` |
+| 3 | Findings | this task's open findings, blocking first, one line each |
+| 4 | Notes | this task's own notes, newest first, one line each |
+| 5 | Paths | tracked files matching the `owns: true` field, with line counts |
+| 6 | Overlap | other open tasks whose owned paths match any of the same files |
+| 7 | History | closed findings and notes from other tasks on these files, newest first |
+| 8 | Commits | the last commits on the default branch touching the owned paths, matched by the owns globs, so commits that touched a path since deleted or renamed are included |
 
-A workflow with no `owns` field gets sections 1 to 3 only. Sections 3 to 7
-add one line at a time until the next would pass the budget, then print
-`… <n> more` (its size reserved up front) and move on. If sections 1 and 2
-alone pass the budget, they print in full and `overBudget` is true. The same
-inputs give the same bytes.
+A workflow with no `owns` field gets sections 1 to 4 only.
+
+The budget is spent in a separate allocation order, not print order:
+
+1. the Header and the open blocking findings, always in full;
+2. the task's `decision` notes;
+3. the body lines;
+4. everything else, in print order.
+
+Lines of a rank are added one at a time while they fit, with room kept for
+each section's `… <n> more` line. Every cut is announced: a section that
+loses lines ends with `… <n> more`, so the body is no longer always printed
+in full. If the fixed lines of rank 1, with the headings and `… <n> more`
+lines of the sections that have candidates, alone pass the budget, they print
+in full and `overBudget` is true. The same inputs give the same bytes.
 
 `--json`: `{task, budget, used, overBudget, sections: [{name, items, omitted}]}`.
 

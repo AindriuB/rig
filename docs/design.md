@@ -102,7 +102,12 @@ Three layers. Only adapters know a technology.
 Supporting packages:
 
 - `internal/proc` runs a subprocess from an argument vector with a deadline. It
-  never builds a shell string, and it kills the child when the deadline passes.
+  never builds a shell string, and when the deadline passes or the context is
+  cancelled it kills the whole process tree, not just the child: the process
+  group on Unix, a Job Object on Windows. One narrow race remains on Windows:
+  a descendant spawned between Start and the job assignment is not in the job
+  and is not killed. A run that succeeds leaves its descendants running, on
+  every platform.
 - `internal/git` wraps the handful of git calls rig needs.
 - `internal/config` reads the layered config (`rig config`); `.claude/rig.json`
   is still honoured, and the forge and the push prefixes come from it:
@@ -134,7 +139,7 @@ anything in the tables below raises the major version.
 | Command | Exit codes |
 |---|---|
 | `rig version` | 0 |
-| `rig update [--check] [--to <version>] [--json]` | 0 updated, or already current (with `--check`: no newer release, or the target is before 0.5.2); 1 refused (the latest release is older than the running rig, `--to` names a version before 0.5.2 or one that is not a version, or the binary's directory is not writable), or with `--check` a newer release exists; 2 a usage error (an extra argument, an unknown flag, or `--to` with no value), a network error, a failed check, or with `--check` a `--to` that is not a version |
+| `rig update [--check] [--to <version>] [--json]` | 0 updated, or already current (with `--check`: no newer release, or the target is before 0.5.2); 1 refused (the latest release is older than the running rig, `--to` names a version before 0.5.2 or one that is not a version, or the binary's directory is not writable, or another update is in progress), or with `--check` a newer release exists; 2 a usage error (an extra argument, an unknown flag, or `--to` with no value), a network error, a failed check, or with `--check` a `--to` that is not a version |
 | `rig push <task-id\|branch> [--worktree <path>]` | 0 pushed; 1 git ran and the push failed; 2 refused, git push never started |
 | `rig pr view [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error, including no such pull request |
 | `rig pr checks [<pr\|branch> \| --task <id>] [--json] [--repo <dir>]` | 0; 2 on any error |
@@ -201,8 +206,13 @@ is the file replaced. The embedded keys are a list, so a key can be rotated.
 `update.auto` (`off`, `notify`, `install`; default `off`) is read from the
 global config only. After a command returns, rig checks for a release at most
 every 24 h (2 s timeout) and prints one stderr line. It is silent in CI, when
-stderr is not a terminal, with `--json` and offline, and never changes the exit
-code.
+stderr is not a terminal, with machine output (`--json` or `--format json`)
+and offline, and never changes the exit code.
+
+An update takes a lock on a file beside the binary, `.<binary name>.update.lock`
+in the binary's directory. `rig update` and the automatic install take the same
+lock; a second one is refused (`refused: another update in progress`, exit 1).
+The file is never deleted; the kernel drops the lock when its holder exits.
 
 An unknown flag is always exit 2: rig never ignores an argument it does not
 understand. In the phase-2 commands, exit 1 means refused by a gate or the
@@ -235,12 +245,19 @@ time.
   ```text
   WORKTREE: <worktree path>
   BRANCH:   task/<slug>
-  BASE:     <base branch>
+  BASE:     <base branch> @ <short sha> (<local|origin/<base branch>>)
   OWNS:     enforced from <task file path>
   ```
 
-  The base is `origin`'s default branch, else `main`, `master`, `trunk` or
-  `develop`, else the current branch. The worktree is
+  The base branch is `origin`'s default branch, else `main`, `master`,
+  `trunk` or `develop`, else the current branch. The task starts from the
+  newer of local `<base>` and `origin/<base>`, and BASE names the one used:
+  `local` or `origin/<base>`. When the two have diverged, neither contains the
+  other, the task starts from local `<base>` and rig prints
+  `rig: local <base> and origin/<base> have diverged: started from local <base>`
+  on stderr. At a detached HEAD with no default or current branch the task
+  starts from `HEAD`: BASE reads `HEAD @ <short sha> (HEAD)`, with no
+  local or origin comparison. The worktree is
   `<worktrees.root>/<repository directory name>/<slug>`.
 - `rig task finish`, on success: `MERGED: <branch> @ <short sha> -> <base>`,
   then `REMOVED: <worktree>`, or `KEPT:   <worktree> (<reason>)` when the
@@ -289,7 +306,7 @@ the parent's short id and `external` is `{kind, key}`; `findings` is `{open, byT
 short id to its open findings. `error` is set, and `tasks` empty, when the
 store could not be read.
 
-`rig task start --json` is `{worktree, branch, base, taskFile}`.
+`rig task start --json` is `{worktree, branch, base, baseSha, taskFile}`.
 `rig task finish --json` is `{merged: {branch, sha, base}, kept?: {worktree,
 reason}, removed?}`.
 
