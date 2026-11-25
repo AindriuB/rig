@@ -5,6 +5,8 @@ package github
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -207,6 +209,34 @@ func TestCreateAttachFailureNamesKey(t *testing.T) {
 	_, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
 	if err == nil || !strings.Contains(err.Error(), "issue 5 was created but not attached") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// AC4: the created Key and URL come back with the attach error.
+func TestCreateAttachFailureReturnsKeyAndURL(t *testing.T) {
+	st := seedState(true)
+	st.FailSub = true
+	tr := newTracker(t, st)
+	is, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if err == nil || !strings.Contains(err.Error(), "issue 5") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" || is.Rev != "" {
+		t.Fatalf("issue = %+v, err = %v", is, err)
+	}
+}
+
+// AC5: the created Key and URL come back with the read-back error.
+func TestCreateReadBackFailureReturnsKeyAndURL(t *testing.T) {
+	tr := newTracker(t, seedState(true))
+	dir := t.TempDir()
+	// graphql reads fail once the sub-issue attach has gone through.
+	flag := filepath.Join(dir, "attached")
+	script := "#!/bin/sh\ncase \"$*\" in *graphql*) if [ -e '" + flag + "' ]; then echo 'gh: boom (HTTP 500)' >&2; exit 1; fi;; *repos/o/r/issues/1/sub_issues*) : > '" + flag + "';; esac\nexec '" + os.Args[0] + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	is, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if err == nil || !strings.Contains(err.Error(), "revision could not be read") || is.Key != "5" || is.URL != "https://github.com/o/r/issues/5" || is.Rev != "" {
+		t.Fatalf("issue = %+v, err = %v", is, err)
 	}
 }
 

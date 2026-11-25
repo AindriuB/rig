@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -53,6 +55,8 @@ var pushCaps = tracker.Caps{Parent: true, Children: true, Types: true, Search: t
 type pushEnv struct {
 	*trkEnv
 	fk *fake.Tracker
+	// ids maps a slug made by task to its full ULID.
+	ids map[string]string
 }
 
 func newPushEnv(t *testing.T, caps tracker.Caps) *pushEnv {
@@ -72,10 +76,14 @@ func (e *pushEnv) task(slug, parent string, fields ...string) string {
 	for _, f := range fields {
 		args = append(args, "--field", f)
 	}
-	var v struct{ Short string }
+	var v struct{ Short, ID string }
 	if code := e.json(&v, args...); code != 0 {
 		e.t.Fatalf("task new %s: %d %s", slug, code, e.err.String())
 	}
+	if e.ids == nil {
+		e.ids = map[string]string{}
+	}
+	e.ids[slug] = v.ID
 	if parent != "" {
 		if code := e.run("task", "parent", v.Short, parent); code != 0 {
 			e.t.Fatalf("task parent: %d %s", code, e.err.String())
@@ -98,6 +106,17 @@ func (e *pushEnv) tree() (epic, story, sub string) {
 	story = e.task("story", epic)
 	sub = e.task("sub", story)
 	return
+}
+
+// marker is the label a pushed task made with this slug carries, computed
+// here from the task's ULID without calling pushMarker.
+func (e *pushEnv) marker(slug string) string {
+	id := e.ids[slug]
+	if id == "" {
+		e.t.Fatalf("no task made with slug %q", slug)
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "rig/" + pushLabelPart(filepath.Base(e.repo), 24) + "/" + slug + "-" + hex.EncodeToString(sum[:4])
 }
 
 func (e *pushEnv) linkOf(short string) *store.External {
@@ -138,12 +157,13 @@ func TestTrackerPushTreeIsParentFirstAndIdempotent(t *testing.T) {
 		t.Fatalf("parents %+v", c)
 	}
 	for i, short := range []string{epic, story, sub} {
+		slug := []string{"epic", "story", "sub"}[i]
 		x := e.linkOf(short)
 		if x == nil || x.Kind != "github" || !slices.Equal(x.Owned, []string{"body", "title"}) || x.Rev == "" {
 			t.Fatalf("link %d: %+v", i, x)
 		}
 		want := tracker.NewIssue{Type: c[i].Type, Title: "Title " + []string{"epic", "story", "sub"}[i], Body: "Body " + []string{"epic", "story", "sub"}[i],
-			Labels: []string{"rig-" + short}, ParentKey: c[i].ParentKey}
+			Labels: []string{e.marker(slug)}, ParentKey: c[i].ParentKey}
 		if c[i].Title != want.Title || c[i].Body != want.Body || !slices.Equal(c[i].Labels, want.Labels) || len(c[i].Acceptance) != 0 {
 			t.Fatalf("payload %d: %+v", i, c[i])
 		}
@@ -272,7 +292,7 @@ func TestTrackerPushIntentSearchesMarker(t *testing.T) {
 	}
 	e.fk.FailCreateN = 0
 	made := issue("77", "Made earlier")
-	made.Labels = []string{"rig-" + epic}
+	made.Labels = []string{e.marker("epic")}
 	e.fk = fake.New(pushCaps, []tracker.Issue{made}, nil)
 	e.fk.Types = pushTypes
 	e.tr = e.fk
@@ -474,7 +494,7 @@ func TestTrackerPushPayloadScope(t *testing.T) {
 			if !slices.Equal(ni.Acceptance, tc.want) {
 				t.Fatalf("acceptance %v, want %v", ni.Acceptance, tc.want)
 			}
-			if ni.Title != "Title epic" || ni.Body != "Body epic" || ni.Type != "Epic" || ni.ParentKey != "" || !slices.Equal(ni.Labels, []string{"rig-" + epic}) {
+			if ni.Title != "Title epic" || ni.Body != "Body epic" || ni.Type != "Epic" || ni.ParentKey != "" || !slices.Equal(ni.Labels, []string{e.marker("epic")}) {
 				t.Fatalf("payload %+v", ni)
 			}
 			all := strings.Join(append(append([]string{ni.Type, ni.Title, ni.Body, ni.ParentKey}, ni.Labels...), ni.Acceptance...), "\n")
@@ -503,6 +523,136 @@ func TestTrackerPushRefusesUnlinkedParent(t *testing.T) {
 	}
 	if code := e.run("tracker", "push", story); code != 0 || len(e.fk.Created) != 2 || e.fk.Created[1].ParentKey != e.linkOf(epic).Key {
 		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// 78-1: a task pushed under a linked parent is typed below the parent's type.
+func TestTrackerPushTypesBelowLinkedParent(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}}
+	epic := e.task("epic", "")
+	story := e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "push", story); code != 0 || len(e.fk.Created) != 2 || e.fk.Created[1].Type != "Story" {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// 78-1: a linked parent whose type is not in the levels refuses before any write.
+func TestTrackerPushRefusesParentTypeOutsideLevels(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	epic := e.task("epic", "", "type=Bug")
+	story := e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	n := len(e.fk.Created)
+	if code := e.run("tracker", "push", story); code != 1 || len(e.fk.Created) != n ||
+		!strings.Contains(e.err.String(), epic) || !strings.Contains(e.err.String(), `"Bug"`) || !strings.Contains(e.err.String(), "tracker.push.levels") {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
+	}
+}
+
+// f-kgy4 (AC2): an untyped root under a linked parent whose type is outside
+// the levels refuses before any write.
+func TestTrackerPushRefusesUntypedRootUnderUnlistedParentType(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	bug := e.task("bug-report", "", "type=Bug")
+	checkout := e.task("checkout", bug)
+	if code := e.run("tracker", "push", bug); code != 0 {
+		t.Fatalf("push bug: %d %s", code, e.err.String())
+	}
+	n := len(e.fk.Created)
+	if code := e.run("tracker", "push", checkout); code != 1 || len(e.fk.Created) != n ||
+		!strings.Contains(e.err.String(), bug) || !strings.Contains(e.err.String(), `"Bug"`) || !strings.Contains(e.err.String(), "tracker.push.levels") {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created)-n, e.err.String())
+	}
+}
+
+// AC6: a root with its own type ignores its linked parent; its children are typed from it.
+func TestTrackerPushTypedRootIgnoresLinkedParent(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	wfPath := pushWorkflow(t, `["Epic","Story"]`)
+	wf, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wfPath, []byte(strings.Replace(string(wf), `["Bug"]`, `["Bug","Epic"]`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.envVars["RIG_WORKFLOW"] = wfPath
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	bug := e.task("bug-report", "", "type=Bug")
+	checkout := e.task("checkout", bug, "type=Epic")
+	e.task("checkout-form", checkout)
+	if code := e.run("tracker", "push", bug); code != 0 {
+		t.Fatalf("push bug: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "push", checkout, "--tree"); code != 0 || len(e.fk.Created) != 3 ||
+		e.fk.Created[1].Type != "Epic" || e.fk.Created[2].Type != "Story" {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// AC11 (f-1c15): an already linked root takes its level from its own issue, not its parent.
+func TestTrackerPushLinkedRootTakesOwnLevel(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	checkout := e.task("checkout", "")
+	bug := e.task("bug-report", "", "type=Bug")
+	if code := e.run("tracker", "push", checkout); code != 0 {
+		t.Fatalf("push checkout: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "push", bug); code != 0 {
+		t.Fatalf("push bug: %d %s", code, e.err.String())
+	}
+	if code := e.run("task", "parent", checkout, bug); code != 0 {
+		t.Fatalf("reparent: %d %s", code, e.err.String())
+	}
+	e.task("checkout-form", checkout)
+	if code := e.run("tracker", "push", checkout, "--tree"); code != 0 || len(e.fk.Created) != 3 ||
+		e.fk.Created[2].Type != "Story" {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// The marker is rig/<repo>/<slug>-<8 hex of SHA-256(ULID)>, within 50 chars.
+func TestTrackerPushMarker(t *testing.T) {
+	tk := store.Task{ID: "01JD0000000000000000000001", Short: "t-1", Slug: "12-checkout-form"}
+	if got := pushRepoName("/x/Shop_App/.git"); got != "shop-app" {
+		t.Fatalf("repo %q", got)
+	}
+	if got := pushRepoName("/x/" + strings.Repeat("a", 30) + "/.git"); len(got) != 24 {
+		t.Fatalf("repo %q", got)
+	}
+	sum := sha256.Sum256([]byte(tk.ID))
+	h := hex.EncodeToString(sum[:])[:8]
+	if got := pushMarker("shop-app", tk); got != "rig/shop-app/12-checkout-form-"+h {
+		t.Fatalf("marker %q", got)
+	}
+	if a, b := pushMarker("shop", tk), pushMarker("admin", tk); a != "rig/shop/12-checkout-form-"+h || b != "rig/admin/12-checkout-form-"+h {
+		t.Fatalf("markers %q %q", a, b)
+	}
+	// AC1: same slug, same repo, different tasks.
+	other := tk
+	other.ID = "01JD0000000000000000000002"
+	if pushMarker("shop", tk) == pushMarker("shop", other) {
+		t.Fatal("two tasks with one slug share a label")
+	}
+	// AC3: a long slug is cut, ends in -<8 hex>, and is stable.
+	tk.Slug = "40-rewrite-the-checkout-form-validation"
+	m := pushMarker("storefront-backend", tk)
+	if len(m) > 50 || !strings.HasPrefix(m, "rig/storefront-backend/40-rewrite-the-") ||
+		!strings.HasSuffix(m, "-"+h) || m != pushMarker("storefront-backend", tk) {
+		t.Fatalf("marker %q", m)
 	}
 }
 
@@ -742,5 +892,19 @@ func TestTrackerPushSettleRunsFromLatestIntent(t *testing.T) {
 	e.err.Reset()
 	if code := e.run("tracker", "push", epic); code != 2 || len(e.fk.Created) != 0 || !strings.Contains(e.err.String(), "re-run after") {
 		t.Fatalf("exit %d, %d creates: %s", code, len(e.fk.Created), e.err.String())
+	}
+}
+
+// f-49qw (AC2): an untyped child under a typed root whose type is outside the
+// levels refuses the whole --tree push before any write.
+func TestTrackerPushTreeRefusesUntypedChildUnderUnlistedRootType(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	bug := e.task("bug-report", "", "type=Bug")
+	repro := e.task("repro", bug)
+	if code := e.run("tracker", "push", bug, "--tree"); code != 1 || len(e.fk.Created) != 0 ||
+		!strings.Contains(e.err.String(), repro) || !strings.Contains(e.err.String(), `"Bug"`) {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
 	}
 }
