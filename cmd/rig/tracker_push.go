@@ -251,6 +251,20 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 		refusals = append(refusals, fmt.Sprintf("task %s: %s", t.Short, fmt.Sprintf(format, args...)))
 	}
 	levels := w.wf.PushLevels()
+	// A linked parent of the run's root sets the first level: its tasks are typed below it.
+	base, rootParentBad := 0, ""
+	if rp, ok := byID[root.Parent]; ok && root.Parent != "" && rp.External != nil && rp.External.Type != "" {
+		base = -1
+		for li, l := range levels {
+			if l == rp.External.Type {
+				base = li + 1
+				break
+			}
+		}
+		if base < 0 {
+			base, rootParentBad = 0, fmt.Sprintf("parent task %s has type %q, which is not in tracker.push.levels", rp.Short, rp.External.Type)
+		}
+	}
 	for i, t := range selected {
 		if t.External != nil {
 			out.Skipped = append(out.Skipped, pushItem{Task: t.Short, Title: t.Title, Key: t.External.Key, Type: t.External.Type, Status: "skipped"})
@@ -266,12 +280,14 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			} else {
 				refuse(t, "type %q is not in tracker.push.types", own)
 			}
-		case s.depth < len(levels):
-			s.typ = levels[s.depth]
+		case rootParentBad != "":
+			refuse(t, "%s", rootParentBad)
+		case base+s.depth < len(levels):
+			s.typ = levels[base+s.depth]
 		case len(levels) == 0:
 			refuse(t, "the workflow has no tracker.push.levels to choose a type from")
 		default:
-			refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", s.depth, len(levels))
+			refuse(t, "depth %d is beyond tracker.push.levels (%d levels)", base+s.depth, len(levels))
 		}
 		// Step 5: the parent.
 		if p, ok := byID[t.Parent]; ok && t.Parent != "" {

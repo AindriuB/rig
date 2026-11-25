@@ -133,12 +133,12 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		}
 		if _, err := t.api(ctx, sub, "repos/"+t.owner+"/"+t.name+"/issues/"+strconv.FormatInt(parent, 10)+"/sub_issues",
 			"--method", "POST", "--input", "-"); err != nil {
-			return tracker.Issue{}, fmt.Errorf("issue %s was created but not attached to parent %s: %w", key, ni.ParentKey, err)
+			return tracker.Issue{Key: key, URL: out.HTMLURL, Title: ni.Title, Rev: rev}, fmt.Errorf("issue %s was created but not attached to parent %s: %w", key, ni.ParentKey, err)
 		}
 		// Attaching a parent changes the child, so read its Rev back.
 		got, err := t.Issue(ctx, key)
 		if err != nil {
-			return tracker.Issue{}, fmt.Errorf("issue %s was created and attached to parent %s but its revision could not be read: %w", key, ni.ParentKey, err)
+			return tracker.Issue{Key: key, URL: out.HTMLURL, Title: ni.Title, Rev: rev}, fmt.Errorf("issue %s was created and attached to parent %s but its revision could not be read: %w", key, ni.ParentKey, err)
 		}
 		rev = got.Rev
 		parentRef = got.Parent

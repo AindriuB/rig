@@ -506,6 +506,38 @@ func TestTrackerPushRefusesUnlinkedParent(t *testing.T) {
 	}
 }
 
+// 78-1: a task pushed under a linked parent is typed below the parent's type.
+func TestTrackerPushTypesBelowLinkedParent(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}}
+	epic := e.task("epic", "")
+	story := e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "push", story); code != 0 || len(e.fk.Created) != 2 || e.fk.Created[1].Type != "Story" {
+		t.Fatalf("exit %d, %+v, %s", code, e.fk.Created, e.err.String())
+	}
+}
+
+// 78-1: a linked parent whose type is not in the levels refuses before any write.
+func TestTrackerPushRefusesParentTypeOutsideLevels(t *testing.T) {
+	e := newPushEnv(t, pushCaps)
+	e.envVars["RIG_WORKFLOW"] = pushWorkflow(t, `["Epic","Story"]`)
+	e.fk.Types = []tracker.IssueType{{Name: "Epic", Level: lvl(1)}, {Name: "Story", Level: lvl(0)}, {Name: "Bug"}}
+	epic := e.task("epic", "", "type=Bug")
+	story := e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	n := len(e.fk.Created)
+	if code := e.run("tracker", "push", story); code != 1 || len(e.fk.Created) != n ||
+		!strings.Contains(e.err.String(), epic) || !strings.Contains(e.err.String(), `"Bug"`) || !strings.Contains(e.err.String(), "tracker.push.levels") {
+		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
+	}
+}
+
 // gate holds every caller of Capabilities until n have arrived, so that
 // racing pushes reach the intent step together.
 type gate struct {
