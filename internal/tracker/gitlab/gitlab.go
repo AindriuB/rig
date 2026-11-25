@@ -244,7 +244,15 @@ func (t *Tracker) Capabilities(ctx context.Context) (tracker.Caps, error) {
 	if err != nil {
 		return tracker.Caps{}, err
 	}
-	return tracker.Caps{Parent: h, Children: h, Types: true, Search: true, Comment: true, SetStatus: true}, nil
+	// Types and Create both need the work item types query; where it errors
+	// they return ErrUnsupported, so they are reported false.
+	types := true
+	if _, err := t.workItemTypes(ctx); errors.Is(err, tracker.ErrUnsupported) {
+		types = false
+	} else if err != nil {
+		return tracker.Caps{}, err
+	}
+	return tracker.Caps{Parent: h, Children: h, Types: types, Create: types, Search: true, Comment: true, SetStatus: true}, nil
 }
 
 func (t *Tracker) hasHierarchy(ctx context.Context) (bool, error) {
