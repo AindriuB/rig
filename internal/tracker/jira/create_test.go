@@ -127,6 +127,22 @@ func TestCreateServer(t *testing.T) {
 	}
 }
 
+// AC3: a Server/DC Sub-task under an epic uses fields.parent, not Epic Link.
+func TestCreateServerSubtaskUnderEpic(t *testing.T) {
+	s := newStub(t, 2)
+	a := adapter(t, s, func(c *Config) { c.EpicField = "customfield_10014" })
+	if _, err := a.Create(ctx, tracker.NewIssue{Type: "Sub-task", Title: "S", ParentKey: "RIG-1"}); err != nil {
+		t.Fatal(err)
+	}
+	f := fieldsOf(t, s, 0)
+	if f["parent"].(map[string]any)["key"] != "RIG-1" {
+		t.Errorf("parent = %v", f["parent"])
+	}
+	if _, ok := f["customfield_10014"]; ok {
+		t.Error("sub-task sent epic link")
+	}
+}
+
 func TestCreateServerNoEpicField(t *testing.T) {
 	s := newStub(t, 2)
 	s.noEpicField = true
