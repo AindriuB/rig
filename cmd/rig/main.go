@@ -12,12 +12,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/AindriuB/rig/internal/forge"
 	"github.com/AindriuB/rig/internal/proc"
 	"github.com/AindriuB/rig/internal/secret"
+	"github.com/AindriuB/rig/internal/selfupdate"
 	"github.com/AindriuB/rig/internal/store"
 )
 
@@ -44,6 +46,14 @@ type app struct {
 	tracker trackerBuilder
 	// actorFlag is --actor/--role for this run; it beats $RIG_ACTOR.
 	actorFlag string
+	// updateTransport is rig update's HTTP transport; nil is the default.
+	updateTransport http.RoundTripper
+	// updater runs an update; nil is selfupdate.Update.
+	updater func(context.Context, selfupdate.Options) selfupdate.Result
+	// exe is the path of the running rig; nil is os.Executable.
+	exe func() (string, error)
+	// goos is the OS rig believes it runs on; empty is runtime.GOOS.
+	goos string
 }
 
 const usage = `usage: rig <command>
@@ -92,6 +102,7 @@ const usage = `usage: rig <command>
   rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store keychain|file]   (github, gitlab or jira; the flags are for jira)
   rig login status [--json]
   rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
+  rig update [--check] [--to <version>] [--json]
   rig version
 `
 
@@ -114,6 +125,10 @@ func (a *app) run(ctx context.Context, args []string) int {
 	// --actor belongs to this run only; a reused app (tests) must not
 	// stamp one run's events with another run's flag.
 	a.actorFlag = ""
+	// Only the Windows swap leaves <rig>.old; elsewhere it is the user's file.
+	if a.goos == "windows" || (a.goos == "" && runtime.GOOS == "windows") {
+		cleanupOld(a.executable)
+	}
 	if len(args) == 0 {
 		fmt.Fprint(a.stderr, usage)
 		return 2
@@ -145,6 +160,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.login(ctx, args[1:])
 	case "logout":
 		return a.logout(ctx, args[1:])
+	case "update":
+		return a.update(ctx, args[1:])
 	case "version", "--version":
 		if len(args) > 1 {
 			fmt.Fprintln(a.stderr, "usage: rig version")
