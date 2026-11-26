@@ -5,7 +5,7 @@ Status: phase 1 was released as 0.1.0. Phases 2 and 2.5 ship together as
 [phase-2.5.md](phase-2.5.md); [workflows.md](workflows.md) documents the
 workflow file. Phase 3 (views and trackers) ships as 0.4.0 and 0.5.0: 0.4.0 is
 built and is described in [phase-3.md](phase-3.md); `rig tracker report` is
-built in 0.5.0. Later phases are outlines, each planned separately before
+built in 0.5.0, and `rig tracker push` in 0.6.0 (see [phase-3.5.md](phase-3.5.md)). Later phases are outlines, each planned separately before
 it is built.
 
 **Direction.** rig provides generic actions (tasks, findings, notes,
@@ -178,6 +178,7 @@ anything in the tables below raises the major version.
 | `rig tracker pull <key> \| --query <q> \| --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--json] [--repo <dir>]` | 0; 1 `--state` is not an intake state, before anything is read; 2 on any error, and at the end if any issue failed (the others are still made) |
 | `rig tracker refresh [<task> \| --all] [--dry-run] [--json] [--repo <dir>]` | 0; 2 on any error, and at the end if any task failed (the others are still refreshed) |
 | `rig tracker report <task> [--status] [--comment pr\|state\|summary] [--include findings\|notes]… [--dry-run] [--actor <name>] [--json] [--repo <dir>]` | 0, also when an earlier report already sent the same (skipped); 1 the task's state has no `tracker.report.status` entry, the tracker has no transition to that status, or `--comment pr` and the task has no pull request, with nothing sent; 2 on any other error, including no tracker, an unlinked task, and a comment that failed after the status was sent (the status is recorded) |
+| `rig tracker push <task> [--tree] [--dry-run] [--actor <name>] [--json] [--repo <dir>]` | 0 pushed, or nothing to push (every selected task already linked); 1 refused before anything is created: a type outside `tracker.push.types`, a depth beyond `tracker.push.levels`, a type the tracker lacks or places not below its parent's, an unlinked parent not in the run, a tracker that cannot create; 2 on any other error, including a create that failed part way (what was made stays linked) |
 | `rig tracker show <key> [--json] [--repo <dir>]` | 0; 2 on any error |
 | `rig tracker status [--json] [--repo <dir>]` | 0, also when the login does not work (it says so); 2 on any other error |
 | `rig login` | 0; 1 a login failed; 2 on any error |
@@ -225,7 +226,7 @@ flags and behaviour are described in [phase-2.md](phase-2.md) and
 [workflows.md](workflows.md). `RIG_ACTOR` names who acted and `RIG_WORKFLOW`
 the workflow to use. The commands that write the store (`task new`, `edit`,
 `move`, `set`, `count`, `parent`, `link`, `unlink`; `finding add`, `set`;
-`note add`; `tracker pull`, `refresh`, `report`) also take `--actor <name>`, or its alias
+`note add`; `tracker pull`, `refresh`, `report`, `push`) also take `--actor <name>`, or its alias
 `--role <name>`, which beats `RIG_ACTOR` and git's `user.name` for the actor
 stamped on the events; an empty or control-character value, or the two flags
 with different values, is exit 2 with nothing written, and every other command
@@ -339,6 +340,15 @@ there is none) and `external` (absent when the task is not linked):
   dryRun?, warnings?}`; `status` is `{from, to}` and `comment` is `{kind, id}`,
   each `null` when that part was not sent. With `--dry-run` nothing is sent:
   `status` has only `to`, and `comment` has no id but a `body`.
+- `rig tracker push --json` is `{dryRun?, pushed, skipped, notPushed}`, each a
+  list of `{task, title, key?, url?, type?, parent?, status, error?,
+  payload?}`. `task` is the task's short id. `status` is `created`, `linked`
+  (an earlier push's issue, found by its marker), `created-with-error` (the
+  issue exists and is linked, but the create reported an error), `skipped`
+  (the task was already linked), `would-create` (`--dry-run`) or `not-pushed`
+  (the run stopped before it; the first has `error`). `payload` is on
+  `--dry-run` only: `{type?, title, body, acceptance?, labels, parentKey?}`,
+  exactly what a real run would send.
 - `rig tracker show --json` is the issue: `{key, url, title, description,
   acceptance, priority, assignee, labels, type, status, parent, rev}`.
 - `rig tracker status --json` is `{kind, trusted, capabilities, login}`;
@@ -349,6 +359,28 @@ there is none) and `external` (absent when the task is not linked):
   or `project: RIG ok (no issues yet)`; a missing project does not change the
   exit code. When the check fails with an error, `project` is `{error}` and the
   text output says `project: not checked: <error>`.
+
+**Tracker push.** `rig tracker push <task>` creates an issue on the
+configured tracker for an unlinked task, and with `--tree` for its unlinked
+descendants, parents first, then links each task to its issue. See
+[phase-3.5.md](phase-3.5.md) for what is sent and the failure cases.
+
+- Only the task's `type`, title, body, acceptance criteria (Jira, and only with
+  `tracker.jira.acceptanceField`), a parent issue key and one marker label
+  leave the machine. Nothing else of the task does.
+- A linked task is skipped, so a re-run never creates a second issue. One task
+  is created at a time; the first failure stops the run and exits 2, and the
+  rest are listed as `not-pushed`.
+- Before each create rig writes a `tracker-push` event
+  `{marker, kind, host?, project?}` (the marker label and the tracker). A task
+  with that event and no link may already have an issue: the next push
+  searches the tracker for the marker, and links what it finds instead of
+  creating. A task's lock file under the git common directory
+  (`rig/push/<task>.lock`) stops two pushes of one task at once. An older rig
+  skips the event kind.
+- After the create the task gets an `external` link and a `tracker-sync`
+  snapshot in one write, so the tracker owns the owned fields from then on.
+- `--dry-run` creates and writes nothing and prints each payload.
 
 **Tracker report.** `rig tracker report` sends a task's progress to the issue
 it is linked to (the task must be linked to an issue of the configured tracker,
@@ -554,8 +586,8 @@ an example workflow file, shown in phase-2.md as the worked example.
 | 1.5 | `cli/` moves to its own repository, `AindriuB/rig`, with its history |
 | 2 | Shipped in 0.3.0. Generic core: the store port and git-ref backend, workflow files with gates and hooks, `rig task`, `rig finding`, `rig note`, `rig workflow`, `rig next`, `rig context`. An example review loop is a test fixture, not built in |
 | 2.5 | Shipped in 0.3.0. `rig config` (global, per-repo and local scopes; forge and tracker settings) and `rig login`/`rig logout` with keychain-held tokens |
-| 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0**: `rig tracker report` |
-| 3.5 | Self-update, see [phase-3.5.md](phase-3.5.md). **0.5.2**: signed releases, `rig update`, `update.auto` |
+| 3 | Views and trackers, see [phase-3.md](phase-3.md). **0.4.0 is built**: `--format markdown` for `task show`, `task list` and `context`; task parent and external links (`task parent`, `link`, `unlink`, `list --parent\|--roots\|--tree`, `show --children`); a tracker port with `github`, `gitlab`, `jira` and `exec` adapters; `rig task new --from`, `rig tracker pull`, `refresh`, `show` and `status`; branch stamping with `{key}`; the store view in `rig status`; `rig task start` and `finish` with `worktrees.root`. **0.5.0**: `rig tracker report`. **0.6.0**: `rig tracker push` |
+| 3.5 | Self-update and tracker push, see [phase-3.5.md](phase-3.5.md). **0.5.2**: signed releases, `rig update`, `update.auto`. **0.6.0**: `rig tracker push` |
 | 4 | Team scale: opt-in `rig sync` of the store, `rig claim`, retention and `rig gc`, a search index rebuilt from refs |
 | 5 | Metrics from event logs, for any workflow: time in each state, counter values, stop reasons, findings by path |
 | 6 | An MCP server over the same core; each workflow transition becomes a typed tool |

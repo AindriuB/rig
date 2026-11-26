@@ -108,6 +108,7 @@ rig config set <key> <value> --global|--repo|--local
 rig config unset <key> --global|--repo|--local
 rig config list [--global|--repo|--local] [--show-origin] [--json]
 rig tracker pull <key> | --query <q> | --label <l> [--children[=<depth>]] [--limit <n>] [--state <s>] [--actor <name>] [--json] [--repo <dir>]
+rig tracker push <task> [--tree] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
 rig tracker refresh [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
 rig tracker report <task> [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run] [--actor <name>] [--json] [--repo <dir>]
 rig tracker show <key> [--json] [--repo <dir>]
@@ -141,6 +142,7 @@ is trimmed; an empty one, one with a control character, or `--actor` and
 | `rig task link <task> [<kind>:]<key>`, `rig task unlink <task>` | Links an existing task to an issue and refreshes it, or removes the link and keeps the fields. A linked task's owned fields cannot be changed by `rig task set` or `rig task edit`. | 0; 1 refused (issue already linked; task not linked); 2 on any error |
 | `rig task start <slug>`, `rig task finish <task> --sha <sha>` | `start` makes a git worktree and branch `task/<slug>` for a task file and ties the worktree to it. `finish` merges exactly the verified commit into the default branch and removes the worktree. | 0; 1 refused, nothing changed (a merge conflict is aborted); 2 on any error |
 | `rig tracker pull` | Creates linked tasks from one issue, a search or a label, and with `--children` the issue's sub-issues. | 0; 1 `--state` refused; 2 on any error, or if any issue failed |
+| `rig tracker push` | Creates an issue on the tracker for a task that has none, and with `--tree` for its unlinked descendants, then links each. The type comes from the workflow's `tracker.push`. `--dry-run` prints what would be sent. | 0; 1 refused before anything is created; 2 on any other error, including a create that failed part way |
 | `rig tracker refresh` | Re-reads linked issues and overwrites the owned fields of their tasks with the tracker's values. `--dry-run` writes nothing. | 0; 2 on any error, or if any task failed |
 | `rig tracker report` | Sends a linked task's progress to its issue: a status from the workflow's `tracker.report.status`, then a comment (`pr`, `state` or `summary`; findings and notes only with `--include`). With neither `--status` nor `--comment` it sends the status and a `state` comment. Each send is recorded in a `tracker-report` event (the status as `from`, `to` and the requested `asked`). A repeat that changes nothing is skipped; `--dry-run` prints what would be sent. | 0; 1 no status mapped for the state, no such transition, or no pull request for `--comment pr`, with nothing sent; 2 on any other error |
 | `rig tracker show`, `rig tracker status` | Prints one issue; or prints the tracker kind, whether its configuration is trusted, what it supports and whether the login works, and, for Jira, whether the configured project exists. Neither writes. | 0; 2 on any error |
@@ -217,6 +219,26 @@ are resolved the worktree must still be under the checkout; otherwise `rig task
 start` stops with an error. Only the global file may point outside the
 checkout, with an absolute path. `tracker.url` has a trust rule of its own:
 see [docs/workflows.md](docs/workflows.md#linking-tasks-to-a-tracker).
+
+## Pushing tasks to a tracker
+
+`rig tracker push` makes issues from tasks. It sends each task's title, body,
+type, parent and one `rig/...` marker label. With a Jira tracker that has
+`tracker.jira.acceptanceField` set, it also sends the acceptance criteria. It
+sends nothing else; the marker lets a re-run find an issue an earlier run made
+instead of creating a second one.
+
+```bash
+rig tracker push 07 --tree --dry-run   # show what would be created
+rig tracker push 07 --tree             # create task 07's issue and its subtasks' issues
+```
+
+The issue types come from `tracker.push.levels` in the workflow file (see
+[docs/workflows.md](docs/workflows.md#the-tracker-key)). After a push the
+tracker owns the title and body: `rig task set` and `rig task edit` refuse to
+change them, and `rig tracker refresh` copies the tracker's values back.
+Details, and what happens when a push stops part way, are in
+[docs/phase-3.5.md](docs/phase-3.5.md).
 
 ## Development
 
