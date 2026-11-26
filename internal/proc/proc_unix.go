@@ -46,6 +46,9 @@ func killTree(cmd *exec.Cmd, o Options) (afterStart func(), done func()) {
 }
 
 // detach makes the child a session leader, outside the caller's process group.
-func detach(cmd *exec.Cmd) {
+func detach(cmd *exec.Cmd, _ bool) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
+
+// breakawayDenied is always false: Unix has no job to break away from.
+func breakawayDenied(error) bool { return false }

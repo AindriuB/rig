@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"errors"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -79,9 +80,17 @@ func jobLimitFlags(breakaway bool) uint32 {
 	return 0
 }
 
-// detach starts the child outside the caller's job, console and process group.
-func detach(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB | windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+// detach starts the child outside the caller's console and process group, and
+// outside its job when breakaway is true.
+func detach(cmd *exec.Cmd, breakaway bool) {
+	flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS)
+	if breakaway {
+		flags |= windows.CREATE_BREAKAWAY_FROM_JOB
 	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags}
+}
+
+// breakawayDenied reports whether CreateProcess refused the breakaway flag.
+func breakawayDenied(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED)
 }

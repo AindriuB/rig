@@ -55,7 +55,7 @@ type Options struct {
 	// Windows ignores it.
 	Grace time.Duration
 	// JobBreakaway, on Windows, lets processes in Run's job leave it (see
-	// Spawn). Unix ignores it.
+	// Start). Unix ignores it.
 	JobBreakaway bool
 	Stdin        io.Reader
 	// Stdout and Stderr redirect Interactive's output; Run ignores them.
@@ -187,18 +187,18 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 	return code, fmt.Errorf("%s: %w", name, err)
 }
 
-// Spawn starts name with args detached from the caller and returns its pid
+// Start starts name with args detached from the caller and returns its pid
 // without waiting. The child has no stdin, stdout or stderr, leads its own
 // session (Unix) or is detached and outside any job (Windows), and gets no
 // RIG_HOOK_* variable, whatever o says. o.Timeout, Grace and Stdin are
-// ignored: the child outlives the caller.
-func Spawn(o Options, name string, args ...string) (int, error) {
+// ignored: the child outlives the caller. On Windows, when the caller's job
+// forbids breakaway, Start retries inside the job and reports
+// breakawayRefused: the child is then detached but dies with that job.
+func Start(o Options, name string, args ...string) (pid int, breakawayRefused bool, err error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
-		return 0, fmt.Errorf("%s %w", name, ErrNotFound)
+		return 0, false, fmt.Errorf("%s %w", name, ErrNotFound)
 	}
-	cmd := exec.Command(path, args...)
-	cmd.Dir = o.Dir
 	env := buildEnv(o, os.Environ())
 	if env == nil {
 		env = os.Environ()
@@ -214,14 +214,20 @@ func Spawn(o Options, name string, args ...string) (int, error) {
 		}
 		clean = append(clean, kv)
 	}
-	cmd.Env = clean
-	detach(cmd)
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
+	for breakaway := true; ; breakaway = false {
+		cmd := exec.Command(path, args...)
+		cmd.Dir = o.Dir
+		cmd.Env = clean
+		detach(cmd, breakaway)
+		err := cmd.Start()
+		if err == nil {
+			go cmd.Wait() // reap the child if it ends while the caller lives
+			return cmd.Process.Pid, !breakaway, nil
+		}
+		if !breakaway || !breakawayDenied(err) {
+			return 0, false, fmt.Errorf("%s: %w", name, err)
+		}
 	}
-	pid := cmd.Process.Pid
-	go cmd.Wait() // reap the child if it ends while the caller lives
-	return pid, nil
 }
 
 // buildEnv returns the child's environment, or nil to inherit the parent's
