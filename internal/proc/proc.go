@@ -55,7 +55,7 @@ type Options struct {
 	// Windows ignores it.
 	Grace time.Duration
 	// JobBreakaway, on Windows, lets processes in Run's job leave it (see
-	// Spawn). Unix ignores it.
+	// Start). Unix ignores it.
 	JobBreakaway bool
 	Stdin        io.Reader
 	// Stdout and Stderr redirect Interactive's output; Run ignores them.
@@ -187,14 +187,14 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 	return code, fmt.Errorf("%s: %w", name, err)
 }
 
-// Spawn starts name with args detached from the caller and returns its pid
+// Start starts name with args detached from the caller and returns its pid
 // without waiting. The child has no stdin, stdout or stderr, leads its own
 // session (Unix) or is detached and outside any job (Windows), and gets no
 // RIG_HOOK_* variable, whatever o says. o.Timeout, Grace and Stdin are
 // ignored: the child outlives the caller. On Windows, when the caller's job
-// forbids breakaway, Spawn retries inside the job and reports
+// forbids breakaway, Start retries inside the job and reports
 // breakawayRefused: the child is then detached but dies with that job.
-func Spawn(o Options, name string, args ...string) (pid int, breakawayRefused bool, err error) {
+func Start(o Options, name string, args ...string) (pid int, breakawayRefused bool, err error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return 0, false, fmt.Errorf("%s %w", name, ErrNotFound)

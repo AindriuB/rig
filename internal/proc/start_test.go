@@ -11,11 +11,11 @@ import (
 	"time"
 )
 
-func TestSpawnDetachesAndStripsHookVars(t *testing.T) {
+func TestStartDetachesAndStripsHookVars(t *testing.T) {
 	t.Setenv("RIG_HOOK_PARENT", "p")
 	out := filepath.Join(t.TempDir(), "env")
 	start := time.Now()
-	pid, refused, err := Spawn(Options{Env: []string{"RIG_HOOK_OPT=o"}}, "sh", "-c", "env > "+out+"; sleep 10")
+	pid, refused, err := Start(Options{Env: []string{"RIG_HOOK_OPT=o"}}, "sh", "-c", "env > "+out+"; sleep 10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestSpawnDetachesAndStripsHookVars(t *testing.T) {
 	}
 	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
 	if time.Since(start) > time.Second {
-		t.Fatalf("Spawn took %v", time.Since(start))
+		t.Fatalf("Start took %v", time.Since(start))
 	}
 	if pgid, _ := syscall.Getpgid(pid); pgid != pid {
 		t.Fatalf("pgid %d, want %d", pgid, pid)

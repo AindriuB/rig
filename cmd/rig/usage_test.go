@@ -146,7 +146,7 @@ func TestUsageLayout(t *testing.T) {
 func TestUsageDescriptions(t *testing.T) {
 	golden := readGolden(t)
 	entries := parseScreen(t, golden)
-	// 46 synopsis lines before this task's change, plus `rig tracker push` and `rig hooks spawn`.
+	// 46 synopsis lines before this task's change, plus `rig tracker push` and `rig hooks start`.
 	if len(entries) != 48 {
 		t.Errorf("%d command lines, want 48", len(entries))
 	}

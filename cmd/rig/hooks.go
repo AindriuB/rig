@@ -9,23 +9,23 @@ import (
 	"github.com/AindriuB/rig/internal/proc"
 )
 
-const hooksUsage = "usage: rig hooks spawn [--json] [--] <cmd> [args...]"
+const hooksUsage = "usage: rig hooks start [--json] [--] <cmd> [args...]"
 
 func (a *app) hooks(_ context.Context, args []string) int {
 	if len(args) == 0 {
 		return a.fail("hooks", "%s", hooksUsage)
 	}
 	switch args[0] {
-	case "spawn":
-		return a.hooksSpawn(args[1:])
+	case "start":
+		return a.hooksStart(args[1:])
 	}
 	return a.fail("hooks", "unknown subcommand %q\n%s", args[0], hooksUsage)
 }
 
-// hooksSpawn starts a detached program without the RIG_HOOK_* variables and
+// hooksStart starts a detached program without the RIG_HOOK_* variables and
 // prints its pid. Flags before the command are rig's; everything after the
 // command name belongs to the program.
-func (a *app) hooksSpawn(args []string) int {
+func (a *app) hooksStart(args []string) int {
 	asJSON := false
 	for len(args) > 0 {
 		if args[0] == "--json" {
@@ -39,17 +39,17 @@ func (a *app) hooksSpawn(args []string) int {
 		}
 	}
 	if len(args) == 0 {
-		return a.fail("hooks spawn", "no command given; %s", hooksUsage)
+		return a.fail("hooks start", "no command given; %s", hooksUsage)
 	}
-	pid, refused, err := proc.Spawn(proc.Options{Dir: a.cwd}, args[0], args[1:]...)
+	pid, refused, err := proc.Start(proc.Options{Dir: a.cwd}, args[0], args[1:]...)
 	if err != nil {
 		if errors.Is(err, proc.ErrNotFound) {
-			return a.fail("hooks spawn", "cannot start %s: program not found", args[0])
+			return a.fail("hooks start", "cannot start %s: program not found", args[0])
 		}
-		return a.fail("hooks spawn", "cannot start %s: %v", args[0], err)
+		return a.fail("hooks start", "cannot start %s: %v", args[0], err)
 	}
 	if refused {
-		fmt.Fprintln(a.stderr, "rig hooks spawn: warning: the hook's job forbids breakaway, so the child will not outlive the hook job")
+		fmt.Fprintln(a.stderr, "rig hooks start: warning: the hook's job forbids breakaway, so the child will not outlive the hook job")
 	}
 	if asJSON {
 		b, _ := json.Marshal(struct {

@@ -154,7 +154,7 @@ Tracker:
       [--json] [--repo <dir>]
 
 Hooks:
-  rig hooks spawn <cmd> [<args>...]         Start long-running work that outlives the hook
+  rig hooks start <cmd> [<args>...]         Start long-running work that outlives the hook
       [--json]
 
 Setup:
