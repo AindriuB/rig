@@ -15,9 +15,12 @@ func TestSpawnDetachesAndStripsHookVars(t *testing.T) {
 	t.Setenv("RIG_HOOK_PARENT", "p")
 	out := filepath.Join(t.TempDir(), "env")
 	start := time.Now()
-	pid, err := Spawn(Options{Env: []string{"RIG_HOOK_OPT=o"}}, "sh", "-c", "env > "+out+"; sleep 10")
+	pid, refused, err := Spawn(Options{Env: []string{"RIG_HOOK_OPT=o"}}, "sh", "-c", "env > "+out+"; sleep 10")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if refused {
+		t.Fatal("breakaway refused on unix")
 	}
 	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
 	if time.Since(start) > time.Second {

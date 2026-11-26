@@ -91,6 +91,10 @@ Tracker:
   rig tracker status                        Check the tracker connection and configuration
       [--json] [--repo <dir>]
 
+Hooks:
+  rig hooks spawn <cmd> [<args>...]         Start long-running work that outlives the hook
+      [--json]
+
 Setup:
   rig config get <key>                      Print a config value
       [--global|--repo|--local] [--json]

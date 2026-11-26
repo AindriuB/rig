@@ -153,6 +153,10 @@ Tracker:
   rig tracker status                        Check the tracker connection and configuration
       [--json] [--repo <dir>]
 
+Hooks:
+  rig hooks spawn <cmd> [<args>...]         Start long-running work that outlives the hook
+      [--json]
+
 Setup:
   rig config get <key>                      Print a config value
       [--global|--repo|--local] [--json]
@@ -224,6 +228,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.config(ctx, args[1:])
 	case "tracker":
 		return a.trackerCmd(ctx, args[1:])
+	case "hooks":
+		return a.hooks(ctx, args[1:])
 	case "login":
 		return a.login(ctx, args[1:])
 	case "logout":
