@@ -247,6 +247,33 @@ func TestRacingWriterMakesStepIllegal(t *testing.T) {
 	}
 }
 
+// A retry whose callback returns nothing must not report the first attempt's events.
+func TestUpdateEventsRetryReturnsOnlyWritten(t *testing.T) {
+	repo := newRepo(t)
+	a, b := open(t, repo), unlocked(t, repo)
+	task := newTask(t, a, "phantom")
+	calls := 0
+	_, got, err := a.UpdateEvents(ctx, task.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		calls++
+		if calls == 1 {
+			if _, err := b.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+				e, err := store.NewEvent(store.KindTransition, store.TransitionData{From: "todo", To: "doing"})
+				return []store.Event{e}, err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if cur.State != "todo" {
+			return nil, nil
+		}
+		e, err := store.NewEvent(store.KindTransition, store.TransitionData{From: "todo", To: "dropped"})
+		return []store.Event{e}, err
+	})
+	if err != nil || calls != 2 || len(got) != 0 {
+		t.Fatalf("err %v, %d calls, %d events returned; want nil, 2, 0", err, calls, len(got))
+	}
+}
+
 // After 8 lost races the write gives up with ErrConflict and writes nothing.
 func TestConflictAfterEightTries(t *testing.T) {
 	repo := newRepo(t)

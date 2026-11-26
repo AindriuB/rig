@@ -430,6 +430,7 @@ func (s *Store) UpdateEvents(ctx context.Context, ref string, next func(store.Ta
 	}
 	written := []store.Event{}
 	out, skipped, err := s.appendLoop(ctx, log, func(cur []store.Event, parseSkipped int) ([]store.Event, string, error) {
+		written = []store.Event{}
 		task, findings, _, _ := store.Fold(cur)
 		if task.ID != "" {
 			task.Skipped += parseSkipped
