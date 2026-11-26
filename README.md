@@ -225,7 +225,8 @@ see [docs/workflows.md](docs/workflows.md#linking-tasks-to-a-tracker).
 `rig tracker push` makes issues from tasks. It sends each task's title, body,
 type, parent and one `rig/...` marker label. With a Jira tracker that has
 `tracker.jira.acceptanceField` set, it also sends the acceptance criteria. It
-sends nothing else; the marker lets a re-run find an issue an earlier run made instead of creating a second one.
+sends nothing else; the marker lets a re-run find an issue an earlier run made
+instead of creating a second one.
 
 ```bash
 rig tracker push 07 --tree --dry-run   # show what would be created
