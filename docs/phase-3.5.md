@@ -1,7 +1,7 @@
-# Phase 3.5: self-update and hardening
+# Phase 3.5: self-update, hardening and tracker push
 
-Status: **0.5.2 is built** (this document's first part). The 0.6.0 part is
-added by a later task.
+Status: **0.5.2 is built** (this document's first part). **0.6.0** adds
+`rig tracker push` (its part is below).
 
 ## 0.5.2: self-update
 
@@ -63,6 +63,112 @@ added by a later task.
 5. 05 update-auto-mode: `update.auto` and the post-command pass.
 6. 06 docs-052: these docs.
 
-## 0.6.0
+## 0.6.0: tracker push
 
-To be written by task 14.
+`rig tracker push <task> [--tree] [--dry-run]` creates issues on the
+configured tracker from tasks that have none, and links each task to its
+issue. It extends phase 3's tracker port, workflow `tracker` key and exec
+protocol ([phase-3.md](phase-3.md)); that file is not edited. The flags, exit
+codes and JSON are in [design.md](design.md).
+
+### What leaves the machine
+
+Per task: the issue type (from `tracker.push`), title, body, acceptance
+criteria, one marker label and the parent issue's key. Acceptance criteria go
+only to Jira with `tracker.jira.acceptanceField` set (on GitHub the adapter
+can write them into the body as a checklist, but push does not send them), and
+come from the field the workflow maps to the `acceptance` attribute. Findings,
+notes, counters, events and other fields never leave. `--dry-run` prints the
+exact payload per task and writes nothing.
+
+The marker label is `rig/<repo>/<slug>-<hash>`: `<repo>` is the main checkout's
+directory name made label-safe (lowercase, other characters `-`, at most 24
+characters), and `<hash>` the first 8 hex characters of the SHA-256 of the
+task's id, so two tasks never share a label. The whole label is at most 50
+characters (GitHub's limit); a long slug is cut. Labels from earlier
+builds are not migrated.
+
+### Which type a task gets
+
+A task's own `type` field if set (it must be in `tracker.push.types`), else its
+linked issue's type, else one level below its parent's (the parent's position
+in `tracker.push.levels`), else the first level. rig refuses (exit 1, nothing
+created) a type or depth the workflow does not allow, a type the tracker does
+not list, and a child whose type is not below its parent's on a tracker that
+reports levels. A tracker that lists no types is sent none, with a warning. The
+parent of a task must be linked already, or in the same run (`--tree`).
+
+### Idempotency
+
+1. A task that is already linked is skipped.
+2. Under a per-task kernel lock, before the first create, rig writes a
+   `tracker-push` intent event naming the marker and the tracker.
+3. A re-run that finds an intent and no link searches the tracker for the
+   marker. One hit is linked, not recreated. Several hits stop the run: link
+   the right one with `rig task link`. A tracker that cannot search stops the
+   run rather than risk a duplicate.
+4. No hit: if the earlier attempt was under two minutes ago, rig stops and says
+   when to re-run, because the tracker's search index may lag. After that it
+   warns and creates, and a duplicate is then possible if the tracker was
+   slow. Each create attempt writes a fresh intent.
+5. If another push holds the task's lock, this run stops.
+
+### Partial failure
+
+Tasks are created one at a time, parents first. The first failure stops the
+run with exit 2; tasks already made stay linked, and the failed task and the
+rest are `not-pushed` in `--json`. If the create call returns an issue and an
+error (for example, GitHub made the issue but could not attach it to its
+parent), the issue is linked, listed `created-with-error`, and the run stops.
+If the issue is made but linking it fails, the message names it, and a re-run
+finds it by the marker.
+
+### Per adapter
+
+- **Jira Cloud.** Types and levels come from the project's issue types. A
+  child sets `fields.parent`. The body is sent as Atlassian Document Format.
+- **Jira Server and Data Center.** Levels are derived (a sub-task type below,
+  Epic above, others between). A sub-task takes `parent`; a child of an epic
+  takes the Epic Link field (`tracker.jira.epicField`, else found by name); if
+  none is found the create fails before any write.
+- **GitHub.** Issue types exist only on organisations that have them; a
+  repository owned by a user, or an organisation with none, is sent no type.
+  A named type the organisation lacks fails before any write. A parent is
+  attached as a sub-issue after the issue is created; if that step fails the
+  error names the issue as not attached.
+- **GitLab.** Project work items: `Issue` (level 1) and `Task` (0), with a
+  parent through the hierarchy widget. Missing labels are created first. An
+  `Epic` is created in the project's direct group and keyed `epic-<iid>`, and
+  only without a parent; this needs a GitLab tier with epics, and without one
+  the type is refused as unsupported.
+- **exec.** See below.
+
+### Exec protocol
+
+Version 1 stays. Two new ops, each used only when the program's `caps` say so:
+`create` takes `{issue: {type, title, body, acceptance, labels, parentKey?}}`
+and answers `{ok, issue}`, and the issue must carry a key; `types` takes no
+arguments and answers `{ok, types: [{name, level?}]}`, a non-empty list. A
+program that predates either op answers `unsupported` and keeps working; push
+then refuses with "this tracker cannot create issues".
+
+### Live checks
+
+No live check was run for GitHub or GitLab (tasks 10, 11 and 28): no throwaway
+GitHub repository or GitLab project or group was available. Their create,
+sub-issue, work item parent, label and epic calls are covered only by unit
+tests against fakes. Jira was likewise tested against a stub. Treat the first
+real push as a trial: use `--dry-run`, then a small tree.
+
+### Security and trust
+
+Push writes to the tracker, so it uses the same trusted `tracker.url` and
+login as the other tracker commands, and `tracker.push` comes from the global
+workflow file only.
+
+### Tasks
+
+07 tracker-port-create, 08 workflow-push-levels, 09 jira-create,
+10 github-create, 11 gitlab-create, 12 exec-create-types, 13 tracker-push,
+14 docs-060 (these docs). Follow-ups: 28 gitlab-epic-keys, 29 and 32 review
+fixes, 34 marker-always-unique.

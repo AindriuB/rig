@@ -206,8 +206,40 @@ repository cannot change it.
   for the task's current state as the issue's status; a state with no entry
   sends no status (exit 1).
 
+- `push` says which issue type `rig tracker push` gives a task. It has two
+  lists of the tracker's own type names:
+  - `levels` is ordered from the top. The pushed task takes the first name;
+    each child, one deeper, takes the next; with `--tree` a task's depth
+    chooses its type. A task that has a `type` field, or a linked issue with a
+    type, uses that instead, and its children continue from it. A task deeper
+    than the list is refused (exit 1).
+  - `types` lists the names a task's own `type` field may choose; any other is
+    refused.
+  - rig hardcodes no type names: it neither knows `Epic`, `Story` nor `Task`.
+    The names are whatever your tracker calls them, and rig checks them
+    against the tracker's list before it creates anything. A tracker that lists
+    no types is sent none. If `push` is present, `levels` must name at least
+    one type; no name may be empty or repeated.
+
+  A four-level list, for Jira:
+
+  ```json
+  "push": {
+    "levels": ["Initiative", "Epic", "Story", "Sub-task"],
+    "types": ["Bug", "Story", "Sub-task"]
+  }
+  ```
+
+  A two-level list, for a GitHub organisation with issue types:
+
+  ```json
+  "push": { "levels": ["Feature", "Task"] }
+  ```
+
 `rig workflow validate` reports each broken rule with its JSON path, for
 example `tracker.map.priority`.
+
+`tracker.push` is new in 0.6.0; older rigs reject it.
 
 **0.3.0 cannot load a workflow file that has a `tracker` key, or a `branch`
 template that uses `{key}`.** It rejects the unknown key or placeholder and
