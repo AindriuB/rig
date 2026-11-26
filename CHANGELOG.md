@@ -27,7 +27,6 @@ Tracker create and push have been tested against fakes only. A live check agains
 
 - `rig` with no command or an unknown one prints an indented usage screen with one-line descriptions, at most 100 columns wide. `rig tracker` usage lists `push`. (#79)
 - Pushing a task under a parent already on the tracker picks the issue type by one rule: the task's own type, else its own issue's type, else one level below the parent. Push refuses only when the parent's type is not a known level. (#80)
-- The retry marker label is readable and unique across repositories: `rig/<repo>/<slug>`. (#80)
 - The CI `go test` step runs with a 20 minute timeout on all three operating systems. (#77)
 
 ### Fixed
@@ -102,7 +101,7 @@ Tracker create and push have been tested against fakes only. A live check agains
 - Optional `.claude/rig.json` with the keys `forge`, `host` and `pushPrefixes`.
 
 [Unreleased]: https://github.com/AindriuB/rig/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/AindriuB/rig/compare/v0.5.0...v0.6.0
+[0.6.0]: https://github.com/AindriuB/rig/compare/v0.5.3...v0.6.0
 [0.5.0]: https://github.com/AindriuB/rig/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AindriuB/rig/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AindriuB/rig/compare/v0.1.0...v0.3.0
