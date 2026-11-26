@@ -167,6 +167,83 @@ machine: rig does not push or fetch them, and a repository looks the same to
 anyone who does not use rig. With no setup, rig uses a small built-in
 `basic` workflow (`open`, `active`, `done`).
 
+The command map groups every command by its first word.
+
+```mermaid
+%% alt: Every rig command grouped under its first word, with each subcommand as a node under its noun.
+flowchart LR
+  rig([rig])
+  rig --> push["rig push"]
+  rig --> status["rig status"]
+  rig --> next["rig next"]
+  rig --> context["rig context"]
+  rig --> version["rig version"]
+  rig --> update["rig update"]
+  rig --> pr
+  rig --> task
+  rig --> finding
+  rig --> note
+  rig --> workflow
+  rig --> config
+  rig --> tracker
+  rig --> login
+  rig --> logout["rig logout"]
+  subgraph pr [pr]
+    pr_view["view"]
+    pr_list["list"]
+    pr_checks["checks"]
+    pr_open["open"]
+    pr_wait["wait"]
+  end
+  subgraph task [task]
+    task_new["new"]
+    task_show["show"]
+    task_edit["edit"]
+    task_list["list"]
+    task_parent["parent"]
+    task_link["link"]
+    task_unlink["unlink"]
+    task_move["move"]
+    task_set["set"]
+    task_count["count"]
+    task_start["start"]
+    task_finish["finish"]
+    task_is["is"]
+    task_log["log"]
+  end
+  subgraph finding [finding]
+    finding_add["add"]
+    finding_list["list"]
+    finding_set["set"]
+  end
+  subgraph note [note]
+    note_add["add"]
+    note_list["list"]
+  end
+  subgraph workflow [workflow]
+    workflow_show["show"]
+    workflow_validate["validate"]
+  end
+  subgraph config [config]
+    config_get["get"]
+    config_set["set"]
+    config_unset["unset"]
+    config_list["list"]
+  end
+  subgraph tracker [tracker]
+    tracker_pull["pull"]
+    tracker_push["push"]
+    tracker_refresh["refresh"]
+    tracker_report["report"]
+    tracker_show["show"]
+    tracker_status["status"]
+  end
+  subgraph login [login]
+    login_service["login service"]
+    login_status["status"]
+  end
+```
+
 ## What `rig push` will push
 
 A branch is pushed only if all of these hold:
@@ -262,6 +339,34 @@ planned next.
    raises the minor version; a change to an existing one raises the major.
 2. Tag the commit `v<version>` and push the tag.
 3. The release workflow builds the binaries and drafts a GitHub release.
+4. When the tag is pushed, `release.yml` checks that the tag matches
+   `rig version` and runs `go test`. It then builds the binaries, writes the
+   checksums and signs them, and drafts a GitHub release. A failing step stops
+   the flow and no draft is made.
+5. Publish the draft by hand with `gh release edit <tag> --draft=false`.
+6. Publishing triggers `site-dispatch.yml`, which sends `rig-release` to
+   rig-site, and rig-site rebuilds. Without the `RIG_SITE_DISPATCH_TOKEN`
+   secret the dispatch is skipped with a notice and rig-site does not rebuild.
+
+```mermaid
+%% alt: A tag push runs release.yml, which stops on any failing step or drafts a release, and publishing the draft sends rig-release to rig-site, which rebuilds unless the secret is absent.
+flowchart TD
+  tag["Tag v-version pushed"] --> rel["release.yml starts"]
+  rel --> match{"Tag matches rig version?"}
+  match -- no --> stop["Flow stops, no draft"]
+  match -- yes --> test{"go test passes?"}
+  test -- no --> stop
+  test -- yes --> build["Build binaries"]
+  build --> sums["Write checksums and sign them"]
+  sums -- fails --> stop
+  sums --> draft["Draft GitHub release"]
+  draft --> pub["Manual publish: gh release edit --draft=false"]
+  pub --> sd["site-dispatch.yml starts"]
+  sd --> sec{"RIG_SITE_DISPATCH_TOKEN set?"}
+  sec -- no --> skip["Skip with a notice"]
+  sec -- yes --> send["Send rig-release to rig-site"]
+  send --> site["rig-site rebuilds"]
+```
 
 ## License
 
