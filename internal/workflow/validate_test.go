@@ -248,11 +248,24 @@ func TestValidateRefusesOverlappingRoutes(t *testing.T) {
 	}
 }
 
+func TestQueuedHookNeedsName(t *testing.T) {
+	src := strings.Replace(valid, `"hooks": [{"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]}]`,
+		`"hooks": [{"on": "kind:transition", "run": ["p"], "mode": "queued"}]`, 1)
+	w, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := w.Validate()
+	if len(ps) != 1 || ps[0].Path != "hooks[0].name" {
+		t.Fatalf("problems = %v", ps)
+	}
+}
+
 func TestHookKeysValid(t *testing.T) {
 	src := strings.Replace(valid, `"hooks": [{"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]}]`,
 		`"hooks": [
   {"name": "a-1", "on": ["enter:s", "final", "kind:count", "kind:*"], "run": ["p", "{state}"], "timeout": "20s", "env": ["GH_*", "X"], "from": "now", "maxDepth": 2},
-  {"on": "kind:transition", "run": ["p", "{sha}"], "mode": "queued", "timeout": "10m"},
+  {"name": "q-1", "on": "kind:transition", "run": ["p", "{sha}"], "mode": "queued", "timeout": "10m"},
   {"on": "leave:s", "run": ["p"]}]`, 1)
 	w, err := Parse([]byte(src))
 	if err != nil {
@@ -262,8 +275,8 @@ func TestHookKeysValid(t *testing.T) {
 		t.Fatalf("problems: %v", ps)
 	}
 	ws := w.HookWarnings()
-	if len(ws) != 3 || !strings.Contains(ws[0], "hooks[1]") || !strings.Contains(ws[0], "hook-2") ||
-		!strings.Contains(ws[1], "not delivered by this version") || !strings.Contains(ws[2], "hook-3") {
+	if len(ws) != 2 || !strings.Contains(ws[0], "hooks[1]") || !strings.Contains(ws[0], "not delivered by this version") ||
+		!strings.Contains(ws[1], "hook-3") {
 		t.Fatalf("warnings = %q", ws)
 	}
 }

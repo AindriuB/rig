@@ -243,6 +243,9 @@ func (w *Workflow) Validate() []Problem {
 		if h.Name != "" && !hookNameRE.MatchString(h.Name) {
 			add(path+".name", "is %q; want lower-case letters, digits and '-', starting with a letter or digit, at most 40 long", h.Name)
 		}
+		if h.Name == "" && h.Mode == ModeQueued {
+			add(path+".name", "is required for a queued hook; its cursor is keyed by the name")
+		}
 		if j, ok := hookNames[w.HookName(i)]; ok {
 			add(path+".name", "%q is also the name of hooks[%d]", w.HookName(i), j)
 		} else {
