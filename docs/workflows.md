@@ -150,6 +150,39 @@ standard input and has 30 seconds. A hook that fails is reported on standard
 error, and in `hookErrors` with `--json`, but it never undoes the move.
 Something that must be able to refuse a move is a `command` gate, not a hook.
 
+What `rig task move` does, in order:
+
+1. It looks up the transition from the task's effective state to the target.
+   With no such transition the move is refused. A target of `$previous` on a
+   task that has never moved is refused too.
+2. It evaluates every gate of that transition, not stopping at the first
+   failure.
+3. If any gate failed, the move is refused: exit 1, and nothing is written.
+4. Otherwise it writes the move. If the task, its findings or its branch head
+   changed since they were read, it starts again from step 1, a few times, and
+   then gives up with a conflict.
+5. Only after the write do the hooks run. A hook that fails is reported, and
+   the move stands.
+
+```mermaid
+%% alt: A task move looks up the transition, checks every gate, refuses and writes nothing if one fails, otherwise writes (retrying if the task changed) and then runs hooks whose failures never undo the move.
+flowchart TD
+  A["rig task move"] --> B{"Transition from the effective state to the target?"}
+  B -- "none, or $previous with no previous state" --> R["Refused: exit 1, nothing written"]
+  B -- "found" --> C["Evaluate every gate"]
+  C --> D{"All gates passed?"}
+  D -- "no" --> R
+  D -- "yes" --> E{"Task, findings and branch head unchanged since read?"}
+  E -- "changed: retry" --> B
+  E -- "changed too often" --> X["Conflict error: nothing written"]
+  E -- "unchanged" --> F["Write the move"]
+  F --> G["Run hooks in file order"]
+  G --> H{"A hook failed?"}
+  H -- "yes" --> I["Report it on standard error and in hookErrors; the move stands"]
+  H -- "no" --> J["Done"]
+  I --> J
+```
+
 ### Arguments and placeholders
 
 `command` gates and hooks are argument vectors. rig runs the program directly
@@ -306,6 +339,33 @@ the value that was lost. A deleted issue is reported as `gone` and nothing is
 written. `task unlink` leaves the fields as they are; from then on they are the
 task's own.
 
+In steps:
+
+1. `rig tracker pull` and `rig task new --from` look for a task that has the
+   issue. If one does, they return it; if not, they create a linked task with
+   the owned fields copied from the issue.
+2. `rig task link` is refused (exit 1) if another task has the issue;
+   otherwise it links the task.
+3. `rig tracker refresh` reads the issue again. If the issue is gone it is
+   reported as `gone` and nothing is written. Otherwise the owned fields are
+   overwritten, and any a local edit changed are listed as `replaced`.
+4. `rig task unlink` drops the link and leaves the fields as they are.
+
+```mermaid
+%% alt: Pull and task new from an issue return the task that already has it or create a linked one, task link is refused if another task has the issue, refresh overwrites owned fields or reports gone and writes nothing, and unlink drops the link and keeps the fields.
+flowchart TD
+  P["rig tracker pull, rig task new --from"] --> Q{"Does a task already have the issue?"}
+  Q -- "yes" --> RT["Return that task"]
+  Q -- "no" --> NT["Create a linked task with the owned fields copied"]
+  L["rig task link"] --> M{"Does another task have the issue?"}
+  M -- "yes" --> RF["Refused: exit 1"]
+  M -- "no" --> LK["Task linked to the issue"]
+  F["rig tracker refresh"] --> G{"Does the issue still exist?"}
+  G -- "gone" --> GN["Reported as gone, nothing written"]
+  G -- "yes" --> OW["Owned fields overwritten; locally edited ones listed as replaced"]
+  U["rig task unlink"] --> UL["Link dropped, fields left as they are"]
+```
+
 ## Worked example: a review loop
 
 An example review workflow: plan, implement, review, verify, pull request,
@@ -363,6 +423,36 @@ uses it keeps its own copy.
     { "on": "enter:stopped", "run": ["notify-user", "{short}", "{reason}"] }
   ]
 }
+```
+
+```mermaid
+%% alt: States of the review-loop workflow from planned to merged, with the gates on each move, the round counter on reviewed to implementing, a stop route from every non-final state, and stopped returning to the state it left.
+stateDiagram-v2
+  [*] --> planned
+  planned --> implementing: gate dependsIn merged
+  implementing --> reviewed: gate no open P1, P2, STYLE or SPEC finding
+  reviewed --> verified: takes sha, gate shaIsHead
+  reviewed --> implementing: counts rounds, gate rounds below 4
+  verified --> pr_open: takes pr
+  pr_open --> ci_green: takes sha, gate shaIs verified
+  ci_green --> ready
+  ready --> merged: takes sha
+  merged --> [*]
+  verified --> implementing: back to implementing
+  pr_open --> implementing: back to implementing
+  ci_green --> implementing: back to implementing
+  ready --> implementing: back to implementing
+  planned --> stopped: takes reason
+  implementing --> stopped: takes reason
+  reviewed --> stopped: takes reason
+  verified --> stopped: takes reason
+  pr_open --> stopped: takes reason
+  ci_green --> stopped: takes reason
+  ready --> stopped: takes reason
+  note right of stopped
+    stopped returns to $previous,
+    the state the task left
+  end note
 ```
 
 Reading it through:
