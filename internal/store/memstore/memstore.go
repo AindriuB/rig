@@ -51,14 +51,20 @@ func (s *Store) resolve(ref string) (string, error) {
 
 // CreateTask starts a new task log.
 func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, error) {
+	t, _, err := s.CreateTaskEvent(ctx, n)
+	return t, err
+}
+
+// CreateTaskEvent is CreateTask that also returns the created event.
+func (s *Store) CreateTaskEvent(ctx context.Context, n store.NewTask) (store.Task, store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	all := s.tasks()
 	if existing, err := store.PrepareCreate(&n, all); err != nil {
-		return existing, err
+		return existing, store.Event{}, err
 	}
 	shorts := map[string]bool{}
 	for _, t := range all {
@@ -66,11 +72,11 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 	}
 	e, err := s.opts.Created(n, func(sh string) bool { return shorts[sh] })
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	s.logs[e.ID] = []store.Event{e}
 	t, _, _, _ := store.Fold(s.logs[e.ID])
-	return t, nil
+	return t, e, nil
 }
 
 // Task resolves ref to a task.
@@ -103,30 +109,37 @@ func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, er
 // stamping its events, fails. next runs under the store's lock and must not
 // call the store.
 func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, _, err := s.UpdateEvents(ctx, ref, next)
+	return t, err
+}
+
+// UpdateEvents is Update that also returns the events it appended, as
+// stamped, in log order; none if next returned none.
+func (s *Store) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, err := s.resolve(ref)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	if next == nil {
-		return store.Task{}, errors.New("update: no callback")
+		return store.Task{}, nil, errors.New("update: no callback")
 	}
 	log := s.logs[id]
 	task, findings, _, _ := store.Fold(log)
 	events, err := next(task, findings)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	stamped, err := s.opts.Stamp(log, events)
 	if err != nil {
-		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+		return store.Task{}, nil, fmt.Errorf("update %s: %w", task.Short, err)
 	}
 	if err := store.CheckRelink(id, stamped, s.tasks()); err != nil {
-		return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+		return store.Task{}, nil, fmt.Errorf("update %s: %w", task.Short, err)
 	}
 	for _, e := range stamped {
 		if e.Kind != store.KindParent {
@@ -134,15 +147,15 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		}
 		var d store.ParentData
 		if err := json.Unmarshal(e.Data, &d); err != nil {
-			return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+			return store.Task{}, nil, fmt.Errorf("update %s: %w", task.Short, err)
 		}
 		if err := store.CheckParent(id, d.Task, s.tasks()); err != nil {
-			return store.Task{}, fmt.Errorf("update %s: %w", task.Short, err)
+			return store.Task{}, nil, fmt.Errorf("update %s: %w", task.Short, err)
 		}
 	}
 	s.logs[id] = append(slices.Clip(log), stamped...)
 	task, _, _, _ = store.Fold(s.logs[id])
-	return task, nil
+	return task, slices.Clone(stamped), nil
 }
 
 // Events returns a task's log in (seq, id) order.
@@ -176,26 +189,32 @@ func (s *Store) Findings(ctx context.Context, ref string) ([]store.Finding, erro
 
 // AddNote appends a note to its task's log, or to the repository's log.
 func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
+	note, _, err := s.AddNoteEvent(ctx, n)
+	return note, err
+}
+
+// AddNoteEvent is AddNote that also returns the note's event.
+func (s *Store) AddNoteEvent(ctx context.Context, n store.Note) (store.Note, store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Note{}, err
+		return store.Note{}, store.Event{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, err := store.NewEvent(store.KindNote, store.NoteData{Kind: n.Kind, Text: n.Text})
 	if err != nil {
-		return store.Note{}, fmt.Errorf("add note: %w", err)
+		return store.Note{}, store.Event{}, fmt.Errorf("add note: %w", err)
 	}
 	log := s.notes
 	var id string
 	if n.Task != "" {
 		if id, err = s.resolve(n.Task); err != nil {
-			return store.Note{}, err
+			return store.Note{}, store.Event{}, err
 		}
 		log = s.logs[id]
 	}
 	stamped, err := s.opts.Stamp(log, []store.Event{e})
 	if err != nil {
-		return store.Note{}, fmt.Errorf("add note: %w", err)
+		return store.Note{}, store.Event{}, fmt.Errorf("add note: %w", err)
 	}
 	log = append(slices.Clip(log), stamped...)
 	if id != "" {
@@ -206,10 +225,10 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 	_, _, notes, _ := store.Fold(log)
 	for _, note := range notes {
 		if note.ID == stamped[0].ID {
-			return note, nil
+			return note, stamped[0], nil
 		}
 	}
-	return store.Note{}, errors.New("add note: the note did not fold")
+	return store.Note{}, store.Event{}, errors.New("add note: the note did not fold")
 }
 
 // Notes lists notes, newest first.

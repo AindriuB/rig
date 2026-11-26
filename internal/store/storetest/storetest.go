@@ -43,6 +43,9 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"BranchStamped", testBranchStamped},
 		{"BranchStampedUnlinked", testBranchStampedUnlinked},
 		{"ResolveByKey", testResolveByKey},
+		{"UpdateEventsReturnsTail", testUpdateEventsTail},
+		{"UpdateEventsSameKindAndData", testUpdateEventsTwins},
+		{"CreateAndNoteEvents", testCreateAndNoteEvents},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -329,4 +332,116 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func countEv(t *testing.T) store.Event {
+	t.Helper()
+	e, err := store.NewEvent(store.KindCount, store.CountData{Counter: "n", By: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// An update returns exactly the events it appended, equal to the tail of the
+// log; one that appends nothing returns none.
+func testUpdateEventsTail(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	task := create(t, s, "tail")
+	update(t, s, task.ID, []string{store.KindCount}, store.CountData{Counter: "n", By: 1})
+	_, got, err := s.UpdateEvents(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{countEv(t), countEv(t)}, nil
+	})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("UpdateEvents = %+v, %v", got, err)
+	}
+	all := events(t, s, task.ID)
+	if tail := all[len(all)-2:]; !reflect.DeepEqual(got, tail) {
+		t.Fatalf("returned %+v, log tail %+v", got, tail)
+	}
+	for _, e := range got {
+		if e.V != store.Version || e.ID == "" || e.Seq == 0 || e.Time.IsZero() || e.Actor == "" {
+			t.Fatalf("event not stamped: %+v", e)
+		}
+	}
+	_, none, err := s.UpdateEvents(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) { return nil, nil })
+	if err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("empty update = %#v, %v", none, err)
+	}
+}
+
+// Two events with the same kind and data get distinct ids.
+func testUpdateEventsTwins(t *testing.T, s store.Store) {
+	task := create(t, s, "twins")
+	_, got, err := s.UpdateEvents(context.Background(), task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{countEv(t), countEv(t)}, nil
+	})
+	if err != nil || len(got) != 2 || got[0].ID == got[1].ID {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// Create and note return the event they wrote, for a task and a repository note.
+func testCreateAndNoteEvents(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	task, ce, err := s.CreateTaskEvent(ctx, store.NewTask{Slug: "ev", Title: "T", Workflow: basic, Initial: "todo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ce.Kind != store.KindCreated || ce.ID != task.ID || ce.Seq != 1 {
+		t.Fatalf("created event %+v for task %s", ce, task.ID)
+	}
+	if all := events(t, s, task.ID); !reflect.DeepEqual(all, []store.Event{ce}) {
+		t.Fatalf("log %+v, returned %+v", all, ce)
+	}
+	n, ne, err := s.AddNoteEvent(ctx, store.Note{Task: task.ID, Kind: "decision", Text: "x"})
+	if err != nil || ne.Kind != store.KindNote || ne.ID != n.ID {
+		t.Fatalf("task note %+v event %+v, %v", n, ne, err)
+	}
+	if all := events(t, s, task.ID); !reflect.DeepEqual(all[len(all)-1], ne) {
+		t.Fatalf("log tail %+v, returned %+v", all[len(all)-1], ne)
+	}
+	rn, re, err := s.AddNoteEvent(ctx, store.Note{Kind: "decision", Text: "repo"})
+	if err != nil || re.Kind != store.KindNote || re.ID != rn.ID || rn.Task != "" {
+		t.Fatalf("repo note %+v event %+v, %v", rn, re, err)
+	}
+}
+
+// Cause is the contract for Options.Cause: every event a write stamps carries
+// it. newStore opens a store with the given options.
+func Cause(t *testing.T, newStore func(*testing.T, store.Options) store.Store) {
+	ctx := context.Background()
+	want := &store.Cause{Event: "E", Hook: "h", Depth: 2}
+	s := newStore(t, store.Options{Actor: "tester", Cause: want})
+	task, ce, err := s.CreateTaskEvent(ctx, store.NewTask{Slug: "c", Title: "T", Workflow: basic, Initial: "todo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ues, err := s.UpdateEvents(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{countEv(t)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ne, err := s.AddNoteEvent(ctx, store.Note{Task: task.ID, Kind: "k", Text: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range append([]store.Event{ce, ne}, ues...) {
+		if !reflect.DeepEqual(e.Cause, want) {
+			t.Fatalf("%s event cause = %+v, want %+v", e.Kind, e.Cause, want)
+		}
+	}
+	for _, e := range events(t, s, task.ID) {
+		if !reflect.DeepEqual(e.Cause, want) {
+			t.Fatalf("logged %s event cause = %+v", e.Kind, e.Cause)
+		}
+	}
+	plain := newStore(t, store.Options{Actor: "tester"})
+	pt := create(t, plain, "plain")
+	for _, e := range events(t, plain, pt.ID) {
+		if e.Cause != nil {
+			t.Fatalf("cause on an event with none set: %+v", e)
+		}
+	}
 }
