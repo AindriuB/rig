@@ -47,6 +47,17 @@ type Event struct {
 	Actor string          `json:"actor"`
 	Kind  string          `json:"kind"`
 	Data  json.RawMessage `json:"data"`
+	// Cause says which event a hook was running for when it wrote this one.
+	// Fold ignores it.
+	Cause *Cause `json:"cause,omitempty"`
+}
+
+// Cause records what made a write: the event a hook ran for, the hook, and
+// how many hook writes deep the chain is.
+type Cause struct {
+	Event string `json:"event"`
+	Hook  string `json:"hook"`
+	Depth int    `json:"depth"`
 }
 
 // NewEvent returns an event of kind with data marshalled as its payload, for

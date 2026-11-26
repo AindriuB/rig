@@ -320,21 +320,27 @@ func message(events []store.Event, short string) string {
 // external issue (ErrLinked) under the store lock, so that check is
 // best-effort across a stale-lock break; see lock.
 func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, error) {
+	t, _, err := s.CreateTaskEvent(ctx, n)
+	return t, err
+}
+
+// CreateTaskEvent is CreateTask that also returns the created event.
+func (s *Store) CreateTaskEvent(ctx context.Context, n store.NewTask) (store.Task, store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	defer unlock()
 	logs, err := s.readAll(ctx, TasksPrefix, nil)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	tasks, _ := fold(logs)
 	if existing, err := store.PrepareCreate(&n, tasks); err != nil {
-		return existing, err
+		return existing, store.Event{}, err
 	}
 	shorts := make(map[string]bool, len(tasks))
 	for _, t := range tasks {
@@ -342,21 +348,21 @@ func (s *Store) CreateTask(ctx context.Context, n store.NewTask) (store.Task, er
 	}
 	e, err := s.opts.Created(n, func(sh string) bool { return shorts[sh] })
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	var d store.CreatedData
 	if err := json.Unmarshal(e.Data, &d); err != nil {
-		return store.Task{}, fmt.Errorf("new task: %w", err)
+		return store.Task{}, store.Event{}, fmt.Errorf("new task: %w", err)
 	}
 	log := taskLog{ref: TasksPrefix + e.ID}
 	if err := s.commit(ctx, log, []store.Event{e}, message([]store.Event{e}, d.Short)); err != nil {
 		if errors.Is(err, git.ErrRefMoved) {
-			return store.Task{}, fmt.Errorf("new task: %w", ErrConflict)
+			return store.Task{}, store.Event{}, fmt.Errorf("new task: %w", ErrConflict)
 		}
-		return store.Task{}, err
+		return store.Task{}, store.Event{}, err
 	}
 	t, _, _, _ := store.Fold([]store.Event{e})
-	return t, nil
+	return t, e, nil
 }
 
 // Task resolves ref (full ULID, short id or slug) to a task.
@@ -400,22 +406,31 @@ func (s *Store) Tasks(ctx context.Context, f store.TaskFilter) ([]store.Task, er
 // store lock, so that check is best-effort across a stale-lock break, as in
 // CreateTask; see lock.
 func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, _, err := s.UpdateEvents(ctx, ref, next)
+	return t, err
+}
+
+// UpdateEvents is Update that also returns the events it appended, as
+// stamped, in log order; none if next returned none.
+func (s *Store) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	defer unlock()
 	log, err := s.resolve(ctx, ref)
 	if err != nil {
-		return store.Task{}, err
+		return store.Task{}, nil, err
 	}
 	if next == nil {
-		return store.Task{}, errors.New("update: no callback")
+		return store.Task{}, nil, errors.New("update: no callback")
 	}
+	written := []store.Event{}
 	out, skipped, err := s.appendLoop(ctx, log, func(cur []store.Event, parseSkipped int) ([]store.Event, string, error) {
+		written = []store.Event{}
 		task, findings, _, _ := store.Fold(cur)
 		if task.ID != "" {
 			task.Skipped += parseSkipped
@@ -453,16 +468,20 @@ func (s *Store) Update(ctx context.Context, ref string, next func(store.Task, []
 		if len(stamped) == 0 {
 			return nil, "", nil
 		}
+		written = stamped
 		return stamped, message(stamped, task.Short), nil
 	})
 	if err != nil {
-		return store.Task{}, err
+		if cerr := ctx.Err(); cerr != nil && !errors.Is(err, cerr) {
+			err = errors.Join(cerr, err)
+		}
+		return store.Task{}, nil, err
 	}
 	task, _, _, _ := store.Fold(out)
 	if task.ID != "" {
 		task.Skipped += skipped
 	}
-	return task, nil
+	return task, written, nil
 }
 
 // Events returns a task's log in (seq, id) order.
@@ -493,17 +512,23 @@ func (s *Store) Findings(ctx context.Context, ref string) ([]store.Finding, erro
 // AddNote appends a note to its task's log, or to refs/rig/notes when n.Task
 // is empty.
 func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
+	note, _, err := s.AddNoteEvent(ctx, n)
+	return note, err
+}
+
+// AddNoteEvent is AddNote that also returns the note's event.
+func (s *Store) AddNoteEvent(ctx context.Context, n store.Note) (store.Note, store.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Note{}, err
+		return store.Note{}, store.Event{}, err
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
-		return store.Note{}, err
+		return store.Note{}, store.Event{}, err
 	}
 	defer unlock()
 	e, err := store.NewEvent(store.KindNote, store.NoteData{Kind: n.Kind, Text: n.Text})
 	if err != nil {
-		return store.Note{}, fmt.Errorf("add note: %w", err)
+		return store.Note{}, store.Event{}, fmt.Errorf("add note: %w", err)
 	}
 	var log taskLog
 	if n.Task != "" {
@@ -512,9 +537,10 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 		log, err = s.readOne(ctx, NotesRef)
 	}
 	if err != nil {
-		return store.Note{}, err
+		return store.Note{}, store.Event{}, err
 	}
 	var id string
+	var written store.Event
 	out, _, err := s.appendLoop(ctx, log, func(cur []store.Event, _ int) ([]store.Event, string, error) {
 		stamped, err := s.opts.Stamp(cur, []store.Event{e})
 		if err != nil {
@@ -525,6 +551,7 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 			return nil, "", fmt.Errorf("add note: %w", err)
 		}
 		id = stamped[0].ID
+		written = stamped[0]
 		short := d.Short
 		if t, _, _, _ := store.Fold(cur); t.Short != "" {
 			short = t.Short
@@ -532,15 +559,15 @@ func (s *Store) AddNote(ctx context.Context, n store.Note) (store.Note, error) {
 		return stamped, message(stamped, short), nil
 	})
 	if err != nil {
-		return store.Note{}, err
+		return store.Note{}, store.Event{}, err
 	}
 	_, _, notes, _ := store.Fold(out)
 	for _, note := range notes {
 		if note.ID == id {
-			return note, nil
+			return note, written, nil
 		}
 	}
-	return store.Note{}, errors.New("add note: the note did not fold")
+	return store.Note{}, store.Event{}, errors.New("add note: the note did not fold")
 }
 
 // Notes lists notes, newest first. With no task it reads every log under

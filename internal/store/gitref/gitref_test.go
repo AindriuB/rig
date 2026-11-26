@@ -247,6 +247,33 @@ func TestRacingWriterMakesStepIllegal(t *testing.T) {
 	}
 }
 
+// A retry whose callback returns nothing must not report the first attempt's events.
+func TestUpdateEventsRetryReturnsOnlyWritten(t *testing.T) {
+	repo := newRepo(t)
+	a, b := open(t, repo), unlocked(t, repo)
+	task := newTask(t, a, "phantom")
+	calls := 0
+	_, got, err := a.UpdateEvents(ctx, task.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		calls++
+		if calls == 1 {
+			if _, err := b.Update(ctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+				e, err := store.NewEvent(store.KindTransition, store.TransitionData{From: "todo", To: "doing"})
+				return []store.Event{e}, err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if cur.State != "todo" {
+			return nil, nil
+		}
+		e, err := store.NewEvent(store.KindTransition, store.TransitionData{From: "todo", To: "dropped"})
+		return []store.Event{e}, err
+	})
+	if err != nil || calls != 2 || len(got) != 0 {
+		t.Fatalf("err %v, %d calls, %d events returned; want nil, 2, 0", err, calls, len(got))
+	}
+}
+
 // After 8 lost races the write gives up with ErrConflict and writes nothing.
 func TestConflictAfterEightTries(t *testing.T) {
 	repo := newRepo(t)
@@ -591,5 +618,85 @@ func TestSkippedCountsOnEveryPath(t *testing.T) {
 	}
 	if res.Skipped != 2 {
 		t.Fatalf("Update result Skipped = %d, want 2", res.Skipped)
+	}
+}
+
+func TestCause(t *testing.T) {
+	storetest.Cause(t, func(t *testing.T, o store.Options) store.Store {
+		s, err := Open(newRepo(t), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	})
+}
+
+// The log line carries the cause key only when Options.Cause is set.
+func TestCauseInLogLine(t *testing.T) {
+	for _, tc := range []struct {
+		cause *store.Cause
+		want  string
+	}{
+		{&store.Cause{Event: "E", Hook: "h", Depth: 2}, `"cause":{"event":"E","hook":"h","depth":2}`},
+		{nil, ""},
+	} {
+		repo := newRepo(t)
+		s, err := Open(repo, store.Options{Actor: "tester", Cause: tc.cause})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := newTask(t, s, "line")
+		if err := addCount(s, task.ID); err != nil {
+			t.Fatal(err)
+		}
+		raw := gitc(t, repo.Dir, "show", TasksPrefix+task.ID+":"+LogFile)
+		for _, line := range strings.Split(raw, "\n") {
+			if tc.want == "" && strings.Contains(line, `"cause"`) {
+				t.Fatalf("cause key with none set: %s", line)
+			}
+			if tc.want != "" && !strings.Contains(line, tc.want) {
+				t.Fatalf("line lacks %s: %s", tc.want, line)
+			}
+		}
+	}
+}
+
+// A line with a cause, or an unknown top-level key, folds the same as one
+// without and is not skipped.
+func TestCauseAndUnknownKeyNotSkipped(t *testing.T) {
+	repo := newRepo(t)
+	id := "01JD00000000000000000000A1"
+	writeLog(t, repo, TasksPrefix+id, strings.Join([]string{
+		`{"v":1,"id":"` + id + `","seq":1,"time":"2026-11-22T10:00:00Z","actor":"a","kind":"created","data":{"short":"t-a1","slug":"x","title":"X","workflow":{"name":"basic","version":1},"state":"todo"}}`,
+		`{"v":1,"id":"01JD00000000000000000000B1","seq":2,"time":"2026-11-22T10:01:00Z","actor":"a","kind":"count","data":{"counter":"n","by":1},"cause":{"event":"E","hook":"h","depth":1}}`,
+		`{"v":1,"id":"01JD00000000000000000000B2","seq":3,"time":"2026-11-22T10:02:00Z","actor":"a","kind":"count","data":{"counter":"n","by":1},"future":{"x":1}}`,
+		`{"v":1,"id":"01JD00000000000000000000B3","seq":4,"time":"2026-11-22T10:03:00Z","actor":"a","kind":"count","data":{"counter":"n","by":1}}`,
+	}, "\n")+"\n")
+	task, err := open(t, repo).Task(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Skipped != 0 || task.Counters["n"] != 3 {
+		t.Fatalf("skipped %d counts %v", task.Skipped, task.Counters)
+	}
+}
+
+// A context cancelled while Update holds the store lock returns the context's
+// error and leaves no lock file.
+func TestUpdateCancelledHoldingLock(t *testing.T) {
+	repo := newRepo(t)
+	s := open(t, repo)
+	task := newTask(t, s, "cancel")
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	_, err := s.Update(cctx, task.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		cancel()
+		return []store.Event{countEvent(t)}, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(lockFile(t, repo)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock file left behind: %v", err)
 	}
 }

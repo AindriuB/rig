@@ -198,3 +198,15 @@ func TestFoldTrackerPushIsInvisible(t *testing.T) {
 		t.Fatalf("an intent with no marker: skipped %d, want 1", skipped)
 	}
 }
+
+// An event with a cause folds like one without, and is not skipped.
+func TestFoldIgnoresCause(t *testing.T) {
+	plain := sampleLog(t)
+	caused := slices.Clone(plain)
+	caused[4].Cause = &Cause{Event: "E", Hook: "h", Depth: 1}
+	a, af, an, askip := Fold(plain)
+	b, bf, bn, bskip := Fold(caused)
+	if askip != 0 || bskip != 0 || !reflect.DeepEqual(a, b) || !reflect.DeepEqual(af, bf) || !reflect.DeepEqual(an, bn) {
+		t.Fatalf("fold differs: %+v vs %+v (skipped %d, %d)", a, b, askip, bskip)
+	}
+}

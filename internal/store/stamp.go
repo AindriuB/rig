@@ -56,7 +56,16 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("new task: %w", err)
 	}
-	return Event{V: Version, ID: id, Seq: 1, Time: now, Actor: o.Actor, Kind: KindCreated, Data: raw}, nil
+	return Event{V: Version, ID: id, Seq: 1, Time: now, Actor: o.Actor, Kind: KindCreated, Data: raw, Cause: o.cause()}, nil
+}
+
+// cause returns a copy of o.Cause, or nil.
+func (o Options) cause() *Cause {
+	if o.Cause == nil {
+		return nil
+	}
+	c := *o.Cause
+	return &c
 }
 
 // Stamp prepares events an Update callback returned for appending to log.
@@ -87,6 +96,7 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 	for _, e := range events {
 		seq++
 		e.V, e.ID, e.Seq, e.Time, e.Actor = Version, NewULID(now), seq, now, o.Actor
+		e.Cause = o.cause()
 		var err error
 		switch e.Kind {
 		case KindTransition:
