@@ -132,11 +132,50 @@ type Findings struct {
 	Fields     map[string]Field `json:"fields,omitempty"`
 }
 
-// Hook runs a program after a transition is written. On is "enter:<state>",
-// "leave:<state>" or "transition"; Run is an argument vector.
+// Hook modes.
+const (
+	ModeInline = "inline"
+	ModeQueued = "queued"
+)
+
+// Hook runs a program after an event is written. On lists selectors, any of
+// which fires the hook: "transition", "enter:<state>", "leave:<state>",
+// "kind:<kind>" (or "kind:*") and "final". Run is an argument vector. Name,
+// Mode, Timeout, Env, From and MaxDepth are optional; From and MaxDepth are
+// read but not acted on yet.
 type Hook struct {
-	On  string   `json:"on"`
-	Run []string `json:"run"`
+	Name     string    `json:"name,omitempty"`
+	On       StateList `json:"on"`
+	Run      []string  `json:"run"`
+	Mode     string    `json:"mode,omitempty"`
+	Timeout  string    `json:"timeout,omitempty"`
+	Env      []string  `json:"env,omitempty"`
+	From     string    `json:"from,omitempty"`
+	MaxDepth *int      `json:"maxDepth,omitempty"`
+}
+
+// HookName returns the name of hook i: its own, else "hook-<i+1>".
+func (w *Workflow) HookName(i int) string {
+	if n := w.Hooks[i].Name; n != "" {
+		return n
+	}
+	return fmt.Sprintf("hook-%d", i+1)
+}
+
+// HookWarnings lists what is worth telling the user about the hooks without
+// being wrong: unnamed hooks and queued hooks, which this version does not
+// deliver.
+func (w *Workflow) HookWarnings() []string {
+	var out []string
+	for i, h := range w.Hooks {
+		if h.Name == "" {
+			out = append(out, fmt.Sprintf("hooks[%d] has no name; it is called %s", i, w.HookName(i)))
+		}
+		if h.Mode == ModeQueued {
+			out = append(out, fmt.Sprintf("hooks[%d] (%s) is queued, which is not delivered by this version; it will not run", i, w.HookName(i)))
+		}
+	}
+	return out
 }
 
 // Gate kinds.

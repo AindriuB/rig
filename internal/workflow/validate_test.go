@@ -144,6 +144,21 @@ func TestValidate(t *testing.T) {
 		{"hook state", `"on": "enter:s"`, `"on": "leave:z"`, "hooks[0].on"},
 		{"hook empty run", `["prog", "{short}", "--", "{reason}"]`, `[]`, "hooks[0].run"},
 		{"hook placeholder", `"{reason}"]`, `"{why}"]`, "hooks[0].run[3]"},
+		{"hook name", `"hooks": [{`, `"hooks": [{"name": "Bad_Name", `, "hooks[0].name"},
+		{"hook name dup", `"hooks": [{"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]}]`, `"hooks": [{"name": "hook-2", "on": "enter:s", "run": ["p"]}, {"on": "enter:s", "run": ["p"]}]`, "hooks[1].name"},
+		{"hook mode", `"hooks": [{`, `"hooks": [{"mode": "later", `, "hooks[0].mode"},
+		{"hook timeout bad", `"hooks": [{`, `"hooks": [{"timeout": "soon", `, "hooks[0].timeout"},
+		{"hook timeout zero", `"hooks": [{`, `"hooks": [{"timeout": "0s", `, "hooks[0].timeout"},
+		{"hook timeout long", `"hooks": [{`, `"hooks": [{"timeout": "31s", `, "hooks[0].timeout"},
+		{"hook queued timeout long", `"hooks": [{`, `"hooks": [{"mode": "queued", "timeout": "31m", `, "hooks[0].timeout"},
+		{"hook env empty", `"hooks": [{`, `"hooks": [{"env": [""], `, "hooks[0].env"},
+		{"hook env star", `"hooks": [{`, `"hooks": [{"env": ["*"], `, "hooks[0].env"},
+		{"hook from", `"hooks": [{`, `"hooks": [{"from": "then", `, "hooks[0].from"},
+		{"hook maxDepth", `"hooks": [{`, `"hooks": [{"maxDepth": 0, `, "hooks[0].maxDepth"},
+		{"hook on empty", `"on": "enter:s"`, `"on": []`, "hooks[0].on"},
+		{"hook kind unknown", `"on": "enter:s"`, `"on": ["kind:nope"]`, "hooks[0].on"},
+		{"hook kind star reason", `"on": "enter:s"`, `"on": "kind:*"`, "hooks[0].run"},
+		{"hook kind note sha", `"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]`, `"on": ["kind:note"], "run": ["p", "{sha}"]`, "hooks[0].run"},
 		{"unreachable", `"s": {}`, `"s": {}, "d": {}`, "states.d"},
 		{"duplicate route", `{"from": "b", "to": "c"}`, `{"from": "b", "to": "c"}, {"from": ["a", "b"], "to": "c"}`, "transitions[2]"},
 		{"duplicate in one list", `{"from": "b", "to": "c"}`, `{"from": ["b", "b"], "to": "c"}`, "transitions[1]"},
@@ -230,5 +245,38 @@ func TestValidateRefusesOverlappingRoutes(t *testing.T) {
 	ps := w.Validate()
 	if len(ps) != 1 || ps[0].Path != "transitions[8]" || !strings.Contains(ps[0].Message, "reviewed → implementing is also taken by transitions[3]") {
 		t.Fatalf("problems = %v", ps)
+	}
+}
+
+func TestQueuedHookNeedsName(t *testing.T) {
+	src := strings.Replace(valid, `"hooks": [{"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]}]`,
+		`"hooks": [{"on": "kind:transition", "run": ["p"], "mode": "queued"}]`, 1)
+	w, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := w.Validate()
+	if len(ps) != 1 || ps[0].Path != "hooks[0].name" {
+		t.Fatalf("problems = %v", ps)
+	}
+}
+
+func TestHookKeysValid(t *testing.T) {
+	src := strings.Replace(valid, `"hooks": [{"on": "enter:s", "run": ["prog", "{short}", "--", "{reason}"]}]`,
+		`"hooks": [
+  {"name": "a-1", "on": ["enter:s", "final", "kind:count", "kind:*"], "run": ["p", "{state}"], "timeout": "20s", "env": ["GH_*", "X"], "from": "now", "maxDepth": 2},
+  {"name": "q-1", "on": "kind:transition", "run": ["p", "{sha}"], "mode": "queued", "timeout": "10m"},
+  {"on": "leave:s", "run": ["p"]}]`, 1)
+	w, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := w.Validate(); len(ps) != 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	ws := w.HookWarnings()
+	if len(ws) != 2 || !strings.Contains(ws[0], "hooks[1]") || !strings.Contains(ws[0], "not delivered by this version") ||
+		!strings.Contains(ws[1], "hook-3") {
+		t.Fatalf("warnings = %q", ws)
 	}
 }
