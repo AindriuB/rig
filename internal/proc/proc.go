@@ -44,8 +44,20 @@ type Options struct {
 	// environment before Env is applied. Names match case-insensitively on
 	// Windows and exactly elsewhere. A variable named in Env is still set.
 	ScrubTokens bool
-	Timeout     time.Duration // 0: only ctx limits the run
-	Stdin       io.Reader
+	// EnvAllow, when non-nil, limits the inherited environment to variables
+	// whose names equal an entry or start with the prefix of a "PREFIX*"
+	// entry (case-insensitive on Windows). Env is still appended unfiltered.
+	// Nil inherits the whole parent environment.
+	EnvAllow []string
+	Timeout  time.Duration // 0: only ctx limits the run
+	// Grace, on Unix, makes a deadline or cancel send SIGTERM to the process
+	// group first and SIGKILL once Grace has passed. Zero kills at once.
+	// Windows ignores it.
+	Grace time.Duration
+	// JobBreakaway, on Windows, lets processes in Run's job leave it (see
+	// Spawn). Unix ignores it.
+	JobBreakaway bool
+	Stdin        io.Reader
 	// Stdout and Stderr redirect Interactive's output; Run ignores them.
 	Stdout io.Writer
 	Stderr io.Writer
@@ -87,8 +99,8 @@ func Run(ctx context.Context, o Options, name string, args ...string) (Result, e
 	cmd.Stdin = o.Stdin
 	stdout, stderr := &capped{}, &capped{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	cmd.WaitDelay = waitDelay
-	afterStart, done := killTree(cmd)
+	cmd.WaitDelay = waitDelay + o.Grace
+	afterStart, done := killTree(cmd, o)
 	defer done()
 
 	if err = cmd.Start(); err == nil {
@@ -175,20 +187,83 @@ func Interactive(ctx context.Context, o Options, name string, args ...string) (i
 	return code, fmt.Errorf("%s: %w", name, err)
 }
 
+// Spawn starts name with args detached from the caller and returns its pid
+// without waiting. The child has no stdin, stdout or stderr, leads its own
+// session (Unix) or is detached and outside any job (Windows), and gets no
+// RIG_HOOK_* variable, whatever o says. o.Timeout, Grace and Stdin are
+// ignored: the child outlives the caller.
+func Spawn(o Options, name string, args ...string) (int, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return 0, fmt.Errorf("%s %w", name, ErrNotFound)
+	}
+	cmd := exec.Command(path, args...)
+	cmd.Dir = o.Dir
+	env := buildEnv(o, os.Environ())
+	if env == nil {
+		env = os.Environ()
+	}
+	clean := make([]string, 0, len(env))
+	for _, kv := range env {
+		n, _, _ := strings.Cut(kv, "=")
+		if runtime.GOOS == "windows" {
+			n = strings.ToUpper(n)
+		}
+		if strings.HasPrefix(n, "RIG_HOOK_") {
+			continue
+		}
+		clean = append(clean, kv)
+	}
+	cmd.Env = clean
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	pid := cmd.Process.Pid
+	go cmd.Wait() // reap the child if it ends while the caller lives
+	return pid, nil
+}
+
 // buildEnv returns the child's environment, or nil to inherit the parent's
 // unchanged (no Env and no scrub).
 func buildEnv(o Options, parent []string) []string {
-	if len(o.Env) == 0 && !o.ScrubTokens {
+	if len(o.Env) == 0 && !o.ScrubTokens && o.EnvAllow == nil {
 		return nil
 	}
 	env := make([]string, 0, len(parent)+len(o.Env))
 	for _, kv := range parent {
+		if o.EnvAllow != nil && !envAllowed(kv, o.EnvAllow) {
+			continue
+		}
 		if o.ScrubTokens && isTokenVar(kv) {
 			continue
 		}
 		env = append(env, kv)
 	}
 	return append(env, o.Env...)
+}
+
+// envAllowed reports whether the "NAME=value" entry matches an allow entry:
+// an exact name, or a prefix when the entry ends in "*".
+func envAllowed(kv string, allow []string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	fold := runtime.GOOS == "windows"
+	if fold {
+		name = strings.ToUpper(name)
+	}
+	for _, a := range allow {
+		if fold {
+			a = strings.ToUpper(a)
+		}
+		if prefix, ok := strings.CutSuffix(a, "*"); ok {
+			if strings.HasPrefix(name, prefix) {
+				return true
+			}
+		} else if name == a {
+			return true
+		}
+	}
+	return false
 }
 
 // isTokenVar reports whether the "NAME=value" entry names a RIG_<X>_TOKEN.

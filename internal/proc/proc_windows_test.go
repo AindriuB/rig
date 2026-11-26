@@ -34,6 +34,14 @@ func TestMain(m *testing.M) {
 		}
 		time.Sleep(time.Minute)
 		os.Exit(0)
+	case "spawn-wait":
+		pid, err := Spawn(Options{Env: []string{"RIG_PROC_ROLE=grandchild"}}, os.Args[0])
+		if err != nil {
+			os.Exit(2)
+		}
+		fmt.Println(pid)
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	case "grandchild":
 		time.Sleep(time.Minute)
 		os.Exit(0)
@@ -120,5 +128,23 @@ func TestRunCancelKillsGrandchild(t *testing.T) {
 	}
 	if pid := grandchildPid(t, res.Stdout); !waitGone(pid) {
 		t.Fatalf("grandchild %d still running", pid)
+	}
+}
+
+func TestJobLimitFlags(t *testing.T) {
+	if jobLimitFlags(false) != 0 || jobLimitFlags(true)&windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK == 0 {
+		t.Fatal("breakaway flag not wired")
+	}
+}
+
+func TestSpawnSurvivesBreakawayRunTimeout(t *testing.T) {
+	res, err := Run(context.Background(), Options{Timeout: 3 * time.Second, JobBreakaway: true, Env: []string{"RIG_PROC_ROLE=spawn-wait"}}, helperExe(t))
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	pid := grandchildPid(t, res.Stdout)
+	time.Sleep(500 * time.Millisecond)
+	if !running(pid) {
+		t.Fatalf("spawned child %d died with the job", pid)
 	}
 }
