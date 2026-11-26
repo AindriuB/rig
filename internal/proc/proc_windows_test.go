@@ -35,9 +35,14 @@ func TestMain(m *testing.M) {
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	case "spawn-wait":
-		pid, err := Spawn(Options{Env: []string{"RIG_PROC_ROLE=grandchild"}}, os.Args[0])
+		pid, refused, err := Start(Options{Env: []string{"RIG_PROC_ROLE=grandchild"}}, os.Args[0])
 		if err != nil {
 			os.Exit(2)
+		}
+		if os.Getenv("RIG_PROC_EXPECT") == "refused" {
+			fmt.Println(refused)
+			fmt.Println(pid)
+			os.Exit(0)
 		}
 		fmt.Println(pid)
 		time.Sleep(time.Minute)
@@ -137,7 +142,7 @@ func TestJobLimitFlags(t *testing.T) {
 	}
 }
 
-func TestSpawnSurvivesBreakawayRunTimeout(t *testing.T) {
+func TestStartSurvivesBreakawayRunTimeout(t *testing.T) {
 	res, err := Run(context.Background(), Options{Timeout: 3 * time.Second, JobBreakaway: true, Env: []string{"RIG_PROC_ROLE=spawn-wait"}}, helperExe(t))
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
@@ -146,5 +151,21 @@ func TestSpawnSurvivesBreakawayRunTimeout(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if !running(pid) {
 		t.Fatalf("spawned child %d died with the job", pid)
+	}
+}
+
+func TestStartFallsBackWhenBreakawayRefused(t *testing.T) {
+	res, err := Run(context.Background(), Options{Timeout: 3 * time.Second, JobBreakaway: false, Env: []string{"RIG_PROC_ROLE=spawn-wait", "RIG_PROC_EXPECT=refused"}}, helperExe(t))
+	if err != nil {
+		t.Fatalf("run: %v (a failed Start exits 2)", err)
+	}
+	lines := strings.Fields(string(res.Stdout))
+	if len(lines) != 2 || lines[0] != "true" {
+		t.Fatalf("output %q, want refused=true and a pid", res.Stdout)
+	}
+	pid := grandchildPid(t, []byte(lines[1]))
+	time.Sleep(500 * time.Millisecond)
+	if !running(pid) {
+		t.Fatalf("spawned child %d not running", pid)
 	}
 }
