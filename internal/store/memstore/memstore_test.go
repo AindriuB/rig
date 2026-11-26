@@ -12,3 +12,7 @@ func TestContract(t *testing.T) {
 		return New(store.Options{Actor: "tester"})
 	})
 }
+
+func TestCause(t *testing.T) {
+	storetest.Cause(t, func(_ *testing.T, o store.Options) store.Store { return New(o) })
+}

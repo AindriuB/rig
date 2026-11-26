@@ -160,6 +160,13 @@ type Store interface {
 	// Time and Actor. If next returns an error, Update returns it and writes
 	// nothing. A backend may call next more than once.
 	Update(ctx context.Context, ref string, next func(Task, []Finding) ([]Event, error)) (Task, error)
+	// UpdateEvents is Update that also returns the events it appended, as
+	// stamped, in log order. A callback that returns none yields an empty slice.
+	UpdateEvents(ctx context.Context, ref string, next func(Task, []Finding) ([]Event, error)) (Task, []Event, error)
+	// CreateTaskEvent is CreateTask that also returns the created event.
+	CreateTaskEvent(ctx context.Context, t NewTask) (Task, Event, error)
+	// AddNoteEvent is AddNote that also returns the note's event.
+	AddNoteEvent(ctx context.Context, n Note) (Note, Event, error)
 	// Events returns a task's log in (seq, id) order.
 	Events(ctx context.Context, ref string) ([]Event, error)
 	// Findings returns a task's findings in the order they were added.
@@ -198,6 +205,7 @@ func (e *AmbiguousError) Is(target error) bool { return target == ErrAmbiguous }
 type Options struct {
 	Now   func() time.Time // nil: time.Now
 	Actor string           // "": "unknown"
+	Cause *Cause           // nil: events carry no cause
 }
 
 // WithDefaults fills the zero fields of o.
