@@ -2,9 +2,13 @@ package workflow
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/AindriuB/rig/internal/store"
 )
 
 // Problem is one rule a workflow breaks. Path is the JSON path of the value
@@ -33,6 +37,16 @@ func (e *InvalidError) Error() string {
 // argPlaceholders are the placeholders a hook or command gate argument may
 // be, each as a whole argument.
 var argPlaceholders = []string{"{short}", "{id}", "{slug}", "{state}", "{reason}", "{sha}"}
+
+// hookNameRE is what a hook's name looks like.
+var hookNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+// hookKinds are the event kinds a kind: selector may name.
+var hookKinds = []string{
+	store.KindCreated, store.KindTransition, store.KindField, store.KindCount,
+	store.KindFinding, store.KindFindingStatus, store.KindNote,
+	store.KindParent, store.KindExternal, store.KindTrackerSync, store.KindTrackerReport, store.KindTrackerPush,
+}
 
 var fieldTypes = []string{TypeString, TypeText, TypeInt, TypeBool, TypeList, TypeEnum, TypePaths, TypeTasks}
 
@@ -222,23 +236,79 @@ func (w *Workflow) Validate() []Problem {
 	}
 
 	// Hooks.
-	for i, h := range w.Hooks {
+	hookNames := map[string]int{}
+	for i := range w.Hooks {
+		h := w.Hooks[i]
 		path := fmt.Sprintf("hooks[%d]", i)
-		event, state, _ := strings.Cut(h.On, ":")
-		switch {
-		case h.On == "transition":
-		case (event == "enter" || event == "leave") && state != "":
-			if !declared(state) {
-				add(path+".on", "state %q is not declared", state)
+		if h.Name != "" && !hookNameRE.MatchString(h.Name) {
+			add(path+".name", "is %q; want lower-case letters, digits and '-', starting with a letter or digit, at most 40 long", h.Name)
+		}
+		if j, ok := hookNames[w.HookName(i)]; ok {
+			add(path+".name", "%q is also the name of hooks[%d]", w.HookName(i), j)
+		} else {
+			hookNames[w.HookName(i)] = i
+		}
+		if h.Mode != "" && h.Mode != ModeInline && h.Mode != ModeQueued {
+			add(path+".mode", "is %q; want %s or %s", h.Mode, ModeInline, ModeQueued)
+		}
+		if h.Timeout != "" {
+			max := Limit
+			if h.Mode == ModeQueued {
+				max = 30 * time.Minute
 			}
-		default:
-			add(path+".on", "is %q; want enter:<state>, leave:<state> or transition", h.On)
+			d, err := time.ParseDuration(h.Timeout)
+			switch {
+			case err != nil || d <= 0:
+				add(path+".timeout", "is %q; want a duration above zero such as 10s", h.Timeout)
+			case d > max:
+				add(path+".timeout", "is %s; the longest for this mode is %s", h.Timeout, max)
+			}
+		}
+		for _, e := range h.Env {
+			if e == "" || e == "*" {
+				add(path+".env", "has the entry %q; want a name or PREFIX*", e)
+			}
+		}
+		if h.From != "" && h.From != "start" && h.From != "now" {
+			add(path+".from", "is %q; want start or now", h.From)
+		}
+		if h.MaxDepth != nil && *h.MaxDepth < 1 {
+			add(path+".maxDepth", "is %d; want 1 or more", *h.MaxDepth)
+		}
+		if len(h.On) == 0 {
+			add(path+".on", "is empty; want a selector or a list of them")
+		}
+		wide := false // a selector whose events are not all transitions
+		for _, sel := range h.On {
+			event, arg, _ := strings.Cut(sel, ":")
+			switch {
+			case sel == "transition", sel == "final":
+			case (event == "enter" || event == "leave") && arg != "":
+				if !declared(arg) {
+					add(path+".on", "state %q is not declared", arg)
+				}
+			case event == "kind" && arg != "":
+				if arg == "*" || (arg != store.KindTransition && slices.Contains(hookKinds, arg)) {
+					wide = true
+				} else if !slices.Contains(hookKinds, arg) {
+					add(path+".on", "kind %q is unknown; want * or one of %s", arg, strings.Join(hookKinds, ", "))
+				}
+			default:
+				add(path+".on", "is %q; want transition, enter:<state>, leave:<state>, kind:<kind> or final", sel)
+			}
 		}
 		if len(h.Run) == 0 || h.Run[0] == "" {
 			add(path+".run", "is not a non-empty argument vector")
 			continue
 		}
 		validateArgv(add, path+".run", h.Run)
+		if wide {
+			for _, a := range h.Run {
+				if a == "{reason}" || a == "{sha}" {
+					add(path+".run", "uses %s, which only a transition has, but a selector fires for other events", a)
+				}
+			}
+		}
 	}
 
 	// Reachability, only when the graph is well enough formed to walk.
