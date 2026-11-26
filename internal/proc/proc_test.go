@@ -76,3 +76,26 @@ func TestRunCancel(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRunGraceLetsTermTrapFinish(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	script := "trap 'echo done > " + marker + "; exit 0' TERM; while :; do sleep 0.1; done"
+	_, err := Run(context.Background(), Options{Timeout: 500 * time.Millisecond, Grace: 3 * time.Second}, "sh", "-c", script)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker missing: %v", err)
+	}
+}
+
+func TestRunGraceKillsTermIgnorer(t *testing.T) {
+	start := time.Now()
+	_, err := Run(context.Background(), Options{Timeout: 500 * time.Millisecond, Grace: time.Second}, "sh", "-c", "trap '' TERM; while :; do sleep 0.1; done")
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond+time.Second+2*time.Second {
+		t.Fatalf("took %v", d)
+	}
+}

@@ -5,6 +5,8 @@ package proc
 import (
 	"os/exec"
 	"sync"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -14,7 +16,7 @@ import (
 // terminates the job. If the job cannot be made or assigned, cancel kills the
 // direct child only. The job does not kill on close, so descendants of a
 // successful run keep running, as on Unix. done closes the job handle.
-func killTree(cmd *exec.Cmd) (afterStart func(), done func()) {
+func killTree(cmd *exec.Cmd, o Options) (afterStart func(), done func()) {
 	var (
 		mu  sync.Mutex
 		job windows.Handle
@@ -41,6 +43,15 @@ func killTree(cmd *exec.Cmd) (afterStart func(), done func()) {
 			return
 		}
 		defer windows.CloseHandle(p)
+		if o.JobBreakaway {
+			info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+			info.BasicLimitInformation.LimitFlags = jobLimitFlags(true)
+			if _, err := windows.SetInformationJobObject(h, windows.JobObjectExtendedLimitInformation,
+				uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+				windows.CloseHandle(h)
+				return
+			}
+		}
 		if err := windows.AssignProcessToJobObject(h, p); err != nil {
 			windows.CloseHandle(h)
 			return
@@ -58,4 +69,19 @@ func killTree(cmd *exec.Cmd) (afterStart func(), done func()) {
 		}
 	}
 	return afterStart, done
+}
+
+// jobLimitFlags returns the job's limit flags: none, or breakaway-allowed.
+func jobLimitFlags(breakaway bool) uint32 {
+	if breakaway {
+		return windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK
+	}
+	return 0
+}
+
+// detach starts the child outside the caller's job, console and process group.
+func detach(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB | windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+	}
 }
