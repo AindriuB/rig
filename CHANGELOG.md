@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-26
+
+Tracker create and push have been tested against fakes only. A live check against GitHub, GitLab and Jira Cloud is planned for 0.7.0.
+
+### Added
+
+- `rig tracker push` creates issues in the linked tracker for tasks that have none, and sub-issues under a parent. It works with Jira, GitHub, GitLab and `exec` trackers. A retry does not create a duplicate: each attempt is recorded as an intent event and the issue carries a marker label `rig/<repo>/<slug>-<8 hex>` that a retry searches for. A partial failure returns the created key and URL with the error. It writes a `tracker-push` event, which older versions skip. (#78, #80)
+- The workflow file's `tracker` key gains `push` with `levels` and `types`, which choose the issue type for each task level. `rig workflow show` prints them, and validation names the path of a bad value. (#69)
+- The tracker port gains `Create` and `IssueTypes`, with a contract test suite that adapters must pass. (#70)
+- GitHub adapter creates issues and sub-issues, with labels and, when the organisation has them, issue types. (#71)
+- Jira adapter creates issues on Cloud and on Server/Data Center, including a parent through `fields.parent` or an Epic Link field. (#73)
+- GitLab adapter creates project work items with a parent, creating missing labels first, and group epics are keyed `epic-<iid>`. (#74, #76)
+- The `exec` tracker protocol gains the ops `create` and `types`. A program that answers `unsupported` keeps working, and the protocol version stays 1. (#72)
+- Release runbook and site: a rig-site rebuild is dispatched on release. (#68)
+- Docs: `rig tracker push` in the README, `docs/design.md`, `docs/workflows.md` and `docs/phase-3.5.md`, and Mermaid diagrams for the release flow, the command map, task moves, the review loop and tracker links. (#81, #82, #83)
+
+### Changed
+
+- `rig` with no command or an unknown one prints an indented usage screen with one-line descriptions, at most 100 columns wide. `rig tracker` usage lists `push`. (#79)
+- Pushing a task under a parent already on the tracker picks the issue type by one rule: the task's own type, else its own issue's type, else one level below the parent. Push refuses only when the parent's type is not a known level. (#80)
+- The CI `go test` step runs with a 20 minute timeout on all three operating systems. (#77)
+
+### Fixed
+
+- GitHub create sends the body and acceptance checklist exactly, and returns the created parent. When attaching or re-reading fails after the issue was created, it returns the issue's key and link with the error. (#75, #80)
+- The `exec` adapter reports `create` and `types` only when the program supports them, validates the key a create returns, and returns `ErrUnsupported` for `types` when the program has none. (#75)
+
 ## [0.5.0] - 2026-11-24
 
 ### Added
@@ -73,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rig version`.
 - Optional `.claude/rig.json` with the keys `forge`, `host` and `pushPrefixes`.
 
-[Unreleased]: https://github.com/AindriuB/rig/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/AindriuB/rig/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/AindriuB/rig/compare/v0.5.3...v0.6.0
 [0.5.0]: https://github.com/AindriuB/rig/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AindriuB/rig/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AindriuB/rig/compare/v0.1.0...v0.3.0
