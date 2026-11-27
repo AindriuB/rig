@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-27
+
 ### Added
 
 - Hooks have a `name`, a per-hook `timeout` (up to 30 seconds), `env` and a `mode`. Selectors are `transition`, `enter:<state>`, `leave:<state>`, `final`, `kind:<kind>` and `kind:*`, and `on` may be a list. `queued` mode and the `from` and `maxDepth` keys are accepted but not acted on yet. A hook without a name is called `hook-<n>` with a warning.
@@ -113,7 +115,8 @@ Tracker create and push have been tested against fakes only. A live check agains
 - `rig version`.
 - Optional `.claude/rig.json` with the keys `forge`, `host` and `pushPrefixes`.
 
-[Unreleased]: https://github.com/AindriuB/rig/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/AindriuB/rig/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/AindriuB/rig/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/AindriuB/rig/compare/v0.5.3...v0.6.0
 [0.5.0]: https://github.com/AindriuB/rig/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AindriuB/rig/compare/v0.3.0...v0.4.0
