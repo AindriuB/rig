@@ -529,6 +529,17 @@ func TestHookDepthEnvInvalid(t *testing.T) {
 	}
 }
 
+// RIG_HOOK_DEPTH is not clamped to the guard depth: 5 records 6.
+func TestHookDepthEnvAboveGuard(t *testing.T) {
+	e := newHookEnv(t, kindHooks())
+	short := e.newTask("dg")
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"], e.env["RIG_HOOK_DEPTH"] = "01ELSEWHERE", short, "5"
+	e.mustRig("task", "set", short, "--field", "owner=a")
+	if c := e.lastCause(short); c == nil || c.Depth != 6 {
+		t.Fatalf("cause %+v", c)
+	}
+}
+
 // A huge RIG_HOOK_DEPTH must not overflow past the guard.
 func TestHookDepthEnvHuge(t *testing.T) {
 	e := newHookEnv(t, kindHooks())
