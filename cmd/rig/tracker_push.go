@@ -196,10 +196,43 @@ func attachIncomplete(ctx context.Context, w *work, spec trackerSpec, t store.Ta
 	if err != nil {
 		return "", false, err
 	}
-	if _, _, ok := pushIntent(log, spec.Link); !ok {
+	if !intentLinkedTo(log, spec.Link, t.External.Key) {
 		return "", false, nil
 	}
 	return p.External.Key, true, nil
+}
+
+// intentLinkedTo reports whether the latest push intent for the tracker was
+// linked, by the first external event after it, to issue key. A task relinked
+// by hand to another issue has an intent that names a different key.
+func intentLinkedTo(log []store.Event, l trackerLink, key string) bool {
+	at := -1
+	for i := len(log) - 1; i >= 0 && at < 0; i-- {
+		if log[i].Kind != store.KindTrackerPush || log[i].V != store.Version {
+			continue
+		}
+		var d store.TrackerPushData
+		if json.Unmarshal(log[i].Data, &d) != nil || d.Marker == "" {
+			continue
+		}
+		if d.Kind == l.Kind && strings.EqualFold(d.Host, l.Host) && strings.EqualFold(d.Project, l.Project) {
+			at = i
+		}
+	}
+	if at < 0 {
+		return false
+	}
+	for _, e := range log[at+1:] {
+		if e.Kind != store.KindExternal {
+			continue
+		}
+		var d store.ExternalData
+		if json.Unmarshal(e.Data, &d) != nil {
+			continue
+		}
+		return d.Key != "" && strings.EqualFold(d.Key, key)
+	}
+	return false
 }
 
 // pushSelect returns the tasks to consider, parents first, with each one's

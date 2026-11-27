@@ -98,7 +98,8 @@ type ParentData struct {
 
 // ExternalData links a task to an issue in a tracker. Owned lists the rig
 // fields the tracker owns; Type is the tracker's own level label; ParentKey is
-// the issue's parent when that parent has no task yet. An external event whose
+// the issue's parent when that parent has no task yet, or, when the parent has
+// a task, the parent key push confirmed attached. An external event whose
 // Kind and Key are both empty clears the task's link and drops its snapshot;
 // Stamp refuses it on a task that is not linked, and refuses an event with only
 // one of Kind and Key.
