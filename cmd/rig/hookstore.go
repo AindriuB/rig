@@ -13,6 +13,18 @@ import (
 	"github.com/AindriuB/rig/internal/store/gitref"
 )
 
+type cmdKey struct{}
+
+// withCmd names the running command ("task move") for messages from hooks.
+func withCmd(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, cmdKey{}, name)
+}
+
+func cmdFrom(ctx context.Context) string {
+	s, _ := ctx.Value(cmdKey{}).(string)
+	return s
+}
+
 // maxHookDepth is the depth at which a write made inside a hook stops firing
 // hooks: the third write in a chain.
 const maxHookDepth = 3
@@ -25,7 +37,6 @@ type hookWriter struct {
 	store.Store
 	w      *work
 	a      *app
-	cmd    string
 	warned bool
 	errs   []error
 }
@@ -83,6 +94,7 @@ func (h *hookWriter) take() []error {
 // (the repository's notes log when id is ""). A failure is printed and kept;
 // the write stands.
 func (h *hookWriter) after(ctx context.Context, id string, evs []store.Event) {
+	cmd := cmdFrom(ctx)
 	wf := h.w.wf
 	if len(evs) == 0 || wf == nil || len(wf.Hooks) == 0 {
 		return
@@ -92,19 +104,19 @@ func (h *hookWriter) after(ctx context.Context, id string, evs []store.Event) {
 		for i, e := range evs {
 			ids[i] = e.ID
 		}
-		fmt.Fprintf(h.out(), "rig %s: hook depth %d reached: no hooks run for event %s\n", h.cmd, c.Depth, strings.Join(ids, ", "))
+		fmt.Fprintf(h.out(), "rig %s: hook depth %d reached: no hooks run for event %s\n", cmd, c.Depth, strings.Join(ids, ", "))
 		return
 	}
 	if !h.warned {
 		h.warned = true
 		for _, m := range wf.HookWarnings() {
-			fmt.Fprintf(h.out(), "rig %s: warning: %s\n", h.cmd, m)
+			fmt.Fprintf(h.out(), "rig %s: warning: %s\n", cmd, m)
 		}
 	}
 	runner := h.w.env().Runner
 	fail := func(errs []error) {
 		for _, e := range errs {
-			fmt.Fprintf(h.out(), "rig %s: hook: %v\n", h.cmd, e)
+			fmt.Fprintf(h.out(), "rig %s: hook: %v\n", cmd, e)
 			h.errs = append(h.errs, e)
 		}
 	}

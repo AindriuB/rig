@@ -38,6 +38,9 @@ var slugRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 // edit. Exit codes: 0 done; 1 refused by a gate or the workflow (and, for
 // `is`, "not in that state"); 2 usage, a missing task or any other error.
 func (a *app) task(ctx context.Context, args []string) int {
+	if len(args) > 0 {
+		ctx = withCmd(ctx, "task "+args[0])
+	}
 	if len(args) == 0 {
 		return a.fail("task", "%s", taskUsage)
 	}

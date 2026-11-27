@@ -88,7 +88,7 @@ func (a *app) openWorkHooks(ctx context.Context, repoFlag string, needValid, hoo
 	}
 	w := &work{dir: dir, repo: git.Repo{Dir: dir}, st: st, wf: wf, src: src}
 	if hooks && wfErr == nil {
-		w.hooks = &hookWriter{Store: st, w: w, a: a, cmd: a.cmdName}
+		w.hooks = &hookWriter{Store: st, w: w, a: a}
 		w.st = w.hooks
 	}
 	return w, wfErr

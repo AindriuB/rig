@@ -12,6 +12,8 @@ import (
 	"github.com/AindriuB/rig/internal/git"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/store/gitref"
+	"github.com/AindriuB/rig/internal/tracker"
+	"github.com/AindriuB/rig/internal/tracker/fake"
 )
 
 // hookEnv is a real repository under a workflow whose hooks are the test
@@ -21,6 +23,8 @@ type hookEnv struct {
 	repo string
 	out  string
 	env  map[string]string
+	// tracker builds the tracker for rig tracker commands; nil is the default.
+	tracker trackerBuilder
 }
 
 // newHookEnv writes a workflow with the given hooks (JSON objects; "run" is
@@ -40,7 +44,8 @@ func newHookEnv(t *testing.T, hooks func(exe, repo string) string) *hookEnv {
     { "from": "open", "to": "stopped", "takes": "reason", "count": "rounds" },
     { "from": "stopped", "to": "open" }
   ],
-  "fields": { "owner": { "type": "string" } },
+  "fields": { "owner": { "type": "string" }, "type": { "type": "string" } },
+  "tracker": { "report": { "status": { "open": "In Progress" } }, "push": { "levels": ["Epic", "Story", "Subtask"], "types": ["Bug"] } },
   "findings": { "severities": ["P1"] },
   "counters": ["rounds"],
   "hooks": [` + hooks(exe, repo) + `]
@@ -59,7 +64,7 @@ func newHookEnv(t *testing.T, hooks func(exe, repo string) string) *hookEnv {
 func (e *hookEnv) rig(args ...string) result {
 	e.t.Helper()
 	var out, errOut bytes.Buffer
-	a := &app{stdout: &out, stderr: &errOut, cwd: e.repo, now: tick(),
+	a := &app{stdout: &out, stderr: &errOut, cwd: e.repo, now: tick(), tracker: e.tracker,
 		getenv: func(k string) string { return e.env[k] }}
 	a.store = a.openStore
 	code := a.run(context.Background(), append(args, "--repo", e.repo))
@@ -171,8 +176,15 @@ func TestHooksRunForEveryWriteCommand(t *testing.T) {
 	for _, args := range steps {
 		before := len(e.delivered())
 		e.mustRig(args...)
-		if len(e.delivered()) <= before {
+		got := e.delivered()
+		if len(got) <= before {
 			t.Fatalf("%v ran no hook", args)
+		}
+		// A repository note's payload has no task.
+		if args[0] == "note" && len(args) > 2 && args[2] == "--kind" {
+			if last := got[len(got)-1]; kindOf(last) != "note" || last["task"] != nil {
+				t.Fatalf("repository note payload: %v", last)
+			}
 		}
 	}
 	// finding set
@@ -190,36 +202,69 @@ func TestHooksRunForEveryWriteCommand(t *testing.T) {
 	if len(e.delivered()) <= before {
 		t.Fatal("finding set ran no hook")
 	}
-	// A repository note's payload has no task.
-	if last := e.delivered()[len(e.delivered())-1]; last["task"] != nil && kindOf(last) == "note" {
-		_ = last
-	}
 }
 
+func ptr(n int) *int { return &n }
+
+// trackerEnv points e at a github tracker (a fake) through a throwaway HOME.
+func (e *hookEnv) trackerEnv(tr tracker.Tracker) {
+	e.t.Helper()
+	home := e.t.TempDir()
+	e.t.Setenv("HOME", home)
+	e.t.Setenv("USERPROFILE", home)
+	e.t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	e.t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	e.env["HOME"], e.env["USERPROFILE"] = home, home
+	if err := os.MkdirAll(filepath.Join(home, ".rig"), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	cfg := `{"tracker":{"kind":"github","project":"acme/rig"}}`
+	if err := os.WriteFile(filepath.Join(home, ".rig", "config.json"), []byte(cfg), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	gitc(e.t, e.repo, "remote", "set-url", "origin", "git@github.com:acme/rig.git")
+	e.tracker = func(context.Context, trackerSpec) (tracker.Tracker, error) { return tr, nil }
+}
+
+// AC2: rig tracker pull, refresh, report and push write through the plain
+// store, so they run no hook; rig task link runs one.
 func TestHooksTrackerRunsNone(t *testing.T) {
 	e := newHookEnv(t, kindHooks("*"))
-	short := e.newTask("tr")
+	caps := tracker.Caps{Parent: true, Children: true, Types: true, Search: true, Comment: true, SetStatus: true, Create: true}
+	mk := func(key, title string) tracker.Issue {
+		return tracker.Issue{Key: key, URL: "https://t.example/" + key, Title: title, Description: "about " + title, Type: "Task", Status: "Open"}
+	}
+	fk := fake.New(caps, []tracker.Issue{mk("12", "First"), mk("13", "Second")}, []string{"In Progress"})
+	fk.Types = []tracker.IssueType{{Name: "Epic", Level: ptr(3)}, {Name: "Story", Level: ptr(2)}, {Name: "Subtask", Level: ptr(1)}, {Name: "Bug"}}
+	e.trackerEnv(fk)
+	local := e.newTask("pushme")
+	e.mustRig("task", "set", local, "--field", "type=Bug")
+	steps := [][]string{
+		{"tracker", "pull", "12"},
+		{"tracker", "refresh", "--all"},
+		{"tracker", "report", "12-first", "--comment", "summary"},
+		{"tracker", "push", local},
+	}
+	for _, args := range steps {
+		n := len(e.delivered())
+		r := e.rig(args...)
+		if r.code != 0 {
+			t.Fatalf("%v: %+v", args, r)
+		}
+		if len(e.delivered()) != n {
+			t.Fatalf("%v ran a hook: %v", args, e.delivered()[n:])
+		}
+	}
+	// The tracker commands did write: pull made the task and its log grew.
+	if got := e.events("12-first"); len(got) == 0 {
+		t.Fatal("pull wrote no task")
+	}
+	// task link goes through the hook-running store.
+	short := e.newTask("lk")
 	n := len(e.delivered())
-	// A tracker write with no tracker configured fails, but a refused write
-	// is still no hook: write straight through the plain work.
-	a := &app{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, cwd: e.repo, now: tick(),
-		getenv: func(k string) string { return e.env[k] }}
-	a.store = a.openStore
-	w, err := a.openWorkPlain(context.Background(), e.repo, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.st.Update(context.Background(), short, func(store.Task, []store.Finding) ([]store.Event, error) {
-		ev, err := store.NewEvent(store.KindField, store.FieldData{Name: "owner", Value: "x"})
-		return []store.Event{ev}, err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(e.delivered()) != n {
-		t.Fatal("the plain store ran a hook")
-	}
-	if w.hooks != nil {
-		t.Fatal("plain work has a hook wrapper")
+	e.mustRig("task", "link", short, "github:13")
+	if len(e.delivered()) <= n {
+		t.Fatal("task link ran no hook")
 	}
 }
 
