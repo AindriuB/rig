@@ -17,7 +17,7 @@ func (a *app) openStore(ctx context.Context, dir string) (store.Store, error) {
 	if _, err := repo.CommonDir(ctx); err != nil {
 		return nil, fmt.Errorf("open store: %s is not in a git repository: %w", dir, err)
 	}
-	opts := store.Options{Now: a.now, Actor: a.actor(ctx, dir)}
+	opts := store.Options{Now: a.now, Actor: a.actor(ctx, dir), Once: a.onceKey}
 	st, err := gitref.Open(repo, opts)
 	if err != nil {
 		return nil, err

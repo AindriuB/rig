@@ -46,6 +46,10 @@ type app struct {
 	tracker trackerBuilder
 	// actorFlag is --actor/--role for this run; it beats $RIG_ACTOR.
 	actorFlag string
+	// onceKey is --once for this run (or its default inside a hook), and
+	// onceJSON says a repeat is reported as JSON; see onceFlag.
+	onceKey  string
+	onceJSON bool
 	// updateTransport is rig update's HTTP transport; nil is the default.
 	updateTransport http.RoundTripper
 	// updater runs an update; nil is selfupdate.Update.
@@ -65,30 +69,31 @@ const usage = `usage: rig <command>
 Tasks:
   rig task new                              Create a task from a slug and a title
       --slug <s> --title <text> [--body <text> | --body-file <path>] [--field <name>=<value>]...
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task new                              Create a task from a tracker issue
-      --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]... [--actor <name>]
-      [--json] [--repo <dir>]
+      --from [<kind>:]<key> [--state <s>] [--slug <s>] [--field <name>=<value>]...
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task show <task>                      Show a task, with its findings, notes or history
       [--findings] [--notes] [--history] [--children]
       [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
   rig task edit <task>                      Edit a task in your editor
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task list                             List tasks, as a flat list or a tree
       [--state <s>]... [--all] [--parent <task> | --roots | --tree]
       [--format <text|json|markdown> | --json | --markdown] [--repo <dir>]
   rig task parent <task> <parent|none>      Set a task's parent, or clear it with none
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task link <task> [<kind>:]<key>       Link a task to a tracker issue
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task unlink <task>                    Remove a task's tracker link
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task move <task> <state>              Move a task to another workflow state
-      [--sha <sha>] [--pr <n>] [--reason <text>] [--actor <name>] [--json] [--repo <dir>]
+      [--sha <sha>] [--pr <n>] [--reason <text>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task set <task>                       Set fields on a task
-      --field <name>=<value>... [--actor <name>] [--json] [--repo <dir>]
+      --field <name>=<value>... [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task count <task> <counter>           Increment a task counter
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig task start <slug>                     Create the task's branch and worktree
       [--task-file <path>] [--json] [--repo <dir>]
   rig task finish <task>                    Merge a task's verified commit, remove worktree
@@ -101,13 +106,13 @@ Tasks:
 Findings and notes:
   rig finding add <task>                    Record a review finding on a task
       --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]...
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig finding list <task>                   List a task's findings
       [--status <s>]... [--blocking] [--json] [--repo <dir>]
   rig finding set <task> <finding>          Change a finding's status
-      --status <s> [--actor <name>] [--json] [--repo <dir>]
+      --status <s> [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig note add [<task>]                     Add a note to a task
-      --kind <k> --text <text> [--actor <name>] [--json] [--repo <dir>]
+      --kind <k> --text <text> [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig note list [<task>]                    List notes
       [--kind <k>] [--limit <n>] [--json] [--repo <dir>]
 
@@ -147,7 +152,7 @@ Tracker:
       [<task> | --all] [--dry-run] [--actor <name>] [--json] [--repo <dir>]
   rig tracker report <task>                 Post a task's status or a comment to its tracker issue
       [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run]
-      [--actor <name>] [--json] [--repo <dir>]
+      [--actor <name>] [--once <k>] [--json] [--repo <dir>]
   rig tracker show <key>                    Show a tracker issue
       [--json] [--repo <dir>]
   rig tracker status                        Check the tracker connection and configuration
@@ -199,6 +204,7 @@ func (a *app) run(ctx context.Context, args []string) int {
 	// --actor belongs to this run only; a reused app (tests) must not
 	// stamp one run's events with another run's flag.
 	a.actorFlag = ""
+	a.onceKey, a.onceJSON = "", false
 	// Only the Windows swap leaves <rig>.old; elsewhere it is the user's file.
 	if a.goos == "windows" || (a.goos == "" && runtime.GOOS == "windows") {
 		cleanupOld(a.executable)

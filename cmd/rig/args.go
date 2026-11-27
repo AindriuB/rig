@@ -43,7 +43,7 @@ var knownOptions = map[string]bool{
 	"--draft": true, "--dry-run": true, "--field": true, "--findings": true, "--format": true,
 	"--from": true, "--global": true, "--head": true, "--help": true, "--history": true,
 	"--include": true, "--json": true, "--key": true, "--kind": true, "--label": true, "--limit": true,
-	"--local": true, "--markdown": true, "--mine": true, "--notes": true, "--parent": true,
+	"--local": true, "--markdown": true, "--mine": true, "--notes": true, "--once": true, "--parent": true,
 	"--pat": true, "--path": true, "--pr": true, "--query": true, "--reason": true,
 	"--repo": true, "--role": true, "--roots": true, "--run": true, "--severity": true,
 	"--sha": true, "--show-origin": true, "--slug": true, "--state": true, "--status": true,
