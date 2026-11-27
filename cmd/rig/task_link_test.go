@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
@@ -530,6 +531,24 @@ func TestTaskSetUsesLinkOwnedFields(t *testing.T) {
 	}
 	if code := e.run("task", "set", x.Short, "--field", "body=Mine"); code != 0 {
 		t.Fatalf("body is not owned by this link: exit %d: %s", code, e.err.String())
+	}
+}
+
+// A refresh plan that fails (here the sync event's timestamp cannot be
+// encoded) fails the whole link: non-zero exit, and neither the link nor any
+// other event is recorded.
+func TestTaskLinkRefreshPlanFailureRecordsNothing(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("12", "Remote")}, nil)
+	x := e.mkTask("x")
+	n := e.eventCount(x.ID)
+	e.a.now = func() time.Time { return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) }
+	if code := e.run("task", "link", x.Short, "12"); code == 0 {
+		t.Fatalf("exit 0 with a failing refresh plan; stdout %q", e.out.String())
+	}
+	got, _ := e.st().Task(ctx, x.ID)
+	if got.External != nil || e.eventCount(x.ID) != n {
+		t.Fatalf("a link was recorded: %+v, events %d -> %d", got.External, n, e.eventCount(x.ID))
 	}
 }
 
