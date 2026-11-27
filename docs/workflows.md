@@ -147,7 +147,8 @@ never blocks anything.
 A hook is a program rig runs after it has written an event. `on` is a selector
 or a list of them: `transition`, `enter:<state>`, `leave:<state>`, `final`,
 `kind:<kind>` or `kind:*`. Hooks run in file order, for every event a single-task
-write produces, not only for the first. A hook gets
+write produces, not only for the first. No `rig tracker` command runs
+inline hooks. A hook gets
 `{"format":1,"event","task","effective"}` as JSON on standard input, runs with
 an allowlisted environment (add what it needs with `"env": ["GH_TOKEN"]`) and
 has 30 seconds by default. A hook that fails is reported on standard error, and

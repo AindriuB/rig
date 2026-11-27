@@ -46,7 +46,7 @@ validation problem stopping every move.
 | `enter:<state>` | A transition whose target is `<state>`. The state must be declared. |
 | `leave:<state>` | A transition whose source is `<state>`. The state must be declared. |
 | `final` | A transition into a state marked `"final": true` (`merged` in the kit-loop workflow). |
-| `kind:<kind>` | An event of that kind. `<kind>` is one of `created`, `transition`, `field`, `count`, `finding`, `finding-status`, `note`, `parent`, `external`, `tracker-sync`, `tracker-report`, `tracker-push`. |
+| `kind:<kind>` | An event of that kind. `<kind>` is one of `created`, `transition`, `field`, `count`, `finding`, `finding-status`, `note`, `parent`, `external`, `tracker-sync`, `tracker-report`, `tracker-push`. Only `rig events` sees the three `tracker-*` kinds; `rig tracker` runs no inline hooks. |
 | `kind:*` | Every event of every kind, bookkeeping kinds such as `count` and `field` included. |
 
 `on` may be a list, such as `["enter:pr_open", "final"]`. One hook then sees
@@ -61,7 +61,8 @@ selector that can fire for another kind is refused when the workflow loads.
 
 ### When hooks run
 
-Every event written by a single-task command fires its own hooks. `rig task
+Every event written by a single-task command fires its own hooks, except
+`rig tracker` commands, which run no inline hooks (see Known limits). `rig task
 move` writes a `transition` and then a `count` when the transition counts
 something, and each fires the hooks that match it. A hook for a note is fired
 by `rig note add`, one for a finding by `rig finding add` and `set`, and so on.
@@ -302,10 +303,12 @@ cursor.
 
 ## Known limits
 
-- **Bulk `rig tracker` commands run no inline hooks.** `rig tracker pull`,
-  `refresh`, `report` and `push` write to many tasks in one run, and a 1-second
-  hook would turn a 500-task sync into minutes. A consumer that must see their
-  events reads `rig events`.
+- **`rig tracker` commands run no inline hooks.** Every `rig tracker` command,
+  including single-task `report` and `push`, opens the store without hooks, so
+  no hook fires for the events it writes. `pull`, `refresh`, `report` and `push`
+  can write to many tasks in one run, and a 1-second hook would turn a 500-task
+  sync into minutes. The `tracker-sync`, `tracker-report` and `tracker-push`
+  events are seen only by `rig events`.
 - **A state change that writes nothing fires nothing.** When a commit lands on a
   task bound to a sha, the task is read as back in `implementing` and nothing is
   written. No hook sees it.

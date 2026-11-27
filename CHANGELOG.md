@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Hooks have a `name`, a per-hook `timeout` (up to 30 seconds), `env` and a `mode`. Selectors are `transition`, `enter:<state>`, `leave:<state>`, `final`, `kind:<kind>` and `kind:*`, and `on` may be a list. `queued` mode and the `from` and `maxDepth` keys are accepted but not acted on yet. A hook without a name is called `hook-<n>` with a warning.
-- Hooks run for every event a single-task write produces, not only the first event of `rig task move`. Their payload is `{"format":1,"event","task","effective"}`. Bulk `rig tracker` commands run no inline hooks.
+- Hooks run for every event a single-task write produces, not only the first event of `rig task move`. Their payload is `{"format":1,"event","task","effective"}`. No `rig tracker` command runs inline hooks, including single-task `report` and `push`; `rig events` sees their events.
 - Hooks run as `RIG_ACTOR=hook:<name>`, with `RIG_HOOK_NAME`, `RIG_HOOK_EVENT` and `RIG_HOOK_TASK`. A write a hook makes records a `cause` with a depth read from the log, and a write at depth 3 runs no inline hooks. A hook that times out gets SIGTERM and 5 seconds before it is killed (Unix).
 - `rig events [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json]` lists events across all tasks and repository notes, from a cursor.
 - `rig hooks start [--json] [--] <cmd> [args...]` starts long work that outlives its hook, without the `RIG_HOOK_*` variables.
