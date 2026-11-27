@@ -407,3 +407,67 @@ func TestHookWarningOnce(t *testing.T) {
 		t.Fatalf("validate: %+v", v)
 	}
 }
+
+// f-7ms2: an inline hook's task.state is the recorded state, as rig events
+// shows it, while effective is the state after the sha-bound check.
+func TestHookPayloadRecordedState(t *testing.T) {
+	e := newHookEnv(t, kindHooks("note"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, _ := json.Marshal([]string{exe})
+	wf := `{
+  "name": "sb", "version": 1, "initial": "implementing", "branch": "task/{short}-{slug}",
+  "states": { "implementing": { "action": "start" }, "reviewed": { "action": "merge", "shaBound": true } },
+  "transitions": [ { "from": "implementing", "to": "reviewed" } ],
+  "onNewCommit": "implementing",
+  "hooks": [{"name":"h","on":"kind:note","run":` + string(argv) + `,"env":["RIG_CMD_HELPER","RIG_CMD_EXIT"]}]
+}`
+	if err := os.WriteFile(e.env["RIG_WORKFLOW"], []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	short := e.newTask("sb")
+	branch := "task/" + short + "-sb"
+	gitc(t, e.repo, "branch", branch)
+	e.mustRig("task", "move", short, "reviewed", "--sha", gitc(t, e.repo, "rev-parse", branch))
+	gitc(t, e.repo, "checkout", "-q", branch)
+	gitc(t, e.repo, "commit", "-q", "--allow-empty", "-m", "more")
+	gitc(t, e.repo, "checkout", "-q", "main")
+
+	before := len(e.delivered())
+	e.mustRig("note", "add", short, "--kind", "decision", "--text", "n")
+	got := e.delivered()
+	if len(got) != before+1 {
+		t.Fatalf("delivered: %v", got)
+	}
+	last := got[len(got)-1]
+	if st := last["task"].(map[string]any)["state"]; st != "reviewed" {
+		t.Fatalf("hook task.state = %v, want reviewed", st)
+	}
+	if last["effective"] != "implementing" {
+		t.Fatalf("hook effective = %v", last["effective"])
+	}
+	id := last["event"].(map[string]any)["id"]
+	// rig events --json shows the task as recorded right after the event.
+	r := e.mustRig("events", "--json", "--from-start")
+	found := false
+	for _, ln := range strings.Split(strings.TrimSpace(r.out), "\n") {
+		var it struct {
+			Event struct{ ID string }
+			Task  *struct{ State string }
+		}
+		if err := json.Unmarshal([]byte(ln), &it); err != nil {
+			t.Fatalf("events line %q: %v", ln, err)
+		}
+		if it.Event.ID == id {
+			found = true
+			if it.Task == nil || it.Task.State != last["task"].(map[string]any)["state"] {
+				t.Fatalf("events task = %+v, hook task.state = %v", it.Task, last["task"].(map[string]any)["state"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("event %v not in the feed", id)
+	}
+}
