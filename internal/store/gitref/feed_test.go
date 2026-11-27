@@ -122,9 +122,15 @@ func TestFeedBaselineHoldsUnreadableLog(t *testing.T) {
 	ref := TasksPrefix + bad.ID
 	n := 0
 	tip0, _, _ := repo.ResolveRef(ctx, ref)
+	var e1 []byte
 	appendRaw(t, repo, ref, func(old []byte) []byte {
 		n = len(parseLogEvents(old))
-		return append(append(append([]byte{}, old...), "junk\n"...), old...)
+		e1 = old
+		return append(append([]byte{}, old...), "junk\n"...)
+	})
+	// e2 in its own commit, so the walk must pass an unreadable ancestor.
+	appendRaw(t, repo, ref, func(old []byte) []byte {
+		return append(append([]byte{}, old...), e1...)
 	})
 	// AC1
 	res, err := s.Feed(ctx, nil)
