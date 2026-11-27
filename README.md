@@ -118,6 +118,8 @@ rig login <service> [--url <site>] [--user <email>] [--token] [--repo] [--store 
 rig login status [--json]
 rig logout <service> [--url <site>] [--repo]   (jira; github and gitlab print the gh/glab command)
 rig version
+rig events [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json] [--repo <dir>]
+rig hooks start [--json] [--] <cmd> [args...]
 rig update [--check] [--to <version>] [--json]
 ```
 
@@ -149,6 +151,8 @@ is trimmed; an empty one, one with a control character, or `--actor` and
 | `rig workflow` | Shows the workflow in effect, or checks a workflow file. | 0; `validate` 1 invalid; 2 on any error |
 | `rig next`, `rig context` | List what each open task needs, and print a size-limited brief for one task. They never call the forge. | 0; 2 on any error |
 | `rig config` | Reads and writes settings in `~/.rig/config.json` (`--global`, `--repo`) or `<repo>/.rig/config.json` (`--local`). `rig config set` needs a scope. | 0; `get` 1 not set; 2 on any error |
+| `rig events` | Prints every event across all tasks, and notes that belong to no task, from a cursor file, optionally following new ones. See [docs/hooks.md](docs/hooks.md). | 0; 2 on any error |
+| `rig hooks start` | Starts a program detached, without the `RIG_HOOK_*` variables, so long work outlives the hook that starts it. Prints its process id. | 0; 2 on any error |
 | `rig login`, `rig logout` | `login` hands over to `gh` or `glab` for GitHub and GitLab, and stores a Jira token in the keychain. `rig login status` shows where you are logged in, never a token. | 0; 1 a login failed; 2 on any error |
 
 `--format markdown` (or `--markdown`) prints `rig task show`, `rig task list`
@@ -188,6 +192,8 @@ flowchart LR
   rig --> tracker
   rig --> login
   rig --> logout["rig logout"]
+  rig --> events["rig events"]
+  rig --> hooks
   subgraph pr [pr]
     pr_view["view"]
     pr_list["list"]
@@ -229,6 +235,9 @@ flowchart LR
     config_set["set"]
     config_unset["unset"]
     config_list["list"]
+  end
+  subgraph hooks [hooks]
+    hooks_start["start"]
   end
   subgraph tracker [tracker]
     tracker_pull["pull"]
