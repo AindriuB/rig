@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -469,5 +471,121 @@ func TestHookPayloadRecordedState(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("event %v not in the feed", id)
+	}
+}
+
+// lastCause is the cause of the newest event in the log of ref.
+func (e *hookEnv) lastCause(ref string) *store.Cause {
+	e.t.Helper()
+	log := e.events(ref)
+	return log[len(log)-1].Cause
+}
+
+// AC2: a cause that is not in this repository falls back to RIG_HOOK_DEPTH.
+func TestHookDepthEnvFallback(t *testing.T) {
+	e := newHookEnv(t, kindHooks("*"))
+	short := e.newTask("df")
+	n := len(e.delivered())
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"], e.env["RIG_HOOK_DEPTH"] = "01ELSEWHERE", short, "2"
+	r := e.mustRig("task", "set", short, "--field", "owner=a")
+	if c := e.lastCause(short); c == nil || c.Depth != 3 {
+		t.Fatalf("cause %+v", c)
+	}
+	if len(e.delivered()) != n || !strings.Contains(r.errOut, "depth 3") {
+		t.Fatalf("hooks ran or no guard line: %q", r.errOut)
+	}
+}
+
+// AC3: a cause found in the log wins over RIG_HOOK_DEPTH.
+func TestHookDepthLogWins(t *testing.T) {
+	e := newHookEnv(t, kindHooks())
+	short := e.newTask("dl")
+	st, _ := gitref.Open(git.Repo{Dir: e.repo}, store.Options{Cause: &store.Cause{Event: "01X", Hook: "h", Depth: 1}})
+	_, evs, err := st.UpdateEvents(context.Background(), short, func(store.Task, []store.Finding) ([]store.Event, error) {
+		ev, err := store.NewEvent(store.KindField, store.FieldData{Name: "owner", Value: "z"})
+		return []store.Event{ev}, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"], e.env["RIG_HOOK_DEPTH"] = evs[0].ID, short, "5"
+	e.mustRig("task", "set", short, "--field", "owner=a")
+	if c := e.lastCause(short); c == nil || c.Depth != 2 {
+		t.Fatalf("cause %+v", c)
+	}
+}
+
+// AC4: an invalid RIG_HOOK_DEPTH is ignored and the write succeeds.
+func TestHookDepthEnvInvalid(t *testing.T) {
+	e := newHookEnv(t, kindHooks())
+	short := e.newTask("di")
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"] = "01ELSEWHERE", short
+	for _, v := range []string{"x", "-1", ""} {
+		e.env["RIG_HOOK_DEPTH"] = v
+		e.mustRig("task", "set", short, "--field", "owner="+"a"+v)
+		if c := e.lastCause(short); c == nil || c.Depth != 1 {
+			t.Fatalf("RIG_HOOK_DEPTH=%q: cause %+v", v, c)
+		}
+	}
+}
+
+// RIG_HOOK_DEPTH is not clamped to the guard depth: 5 records 6.
+func TestHookDepthEnvAboveGuard(t *testing.T) {
+	e := newHookEnv(t, kindHooks())
+	short := e.newTask("dg")
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"], e.env["RIG_HOOK_DEPTH"] = "01ELSEWHERE", short, "5"
+	e.mustRig("task", "set", short, "--field", "owner=a")
+	if c := e.lastCause(short); c == nil || c.Depth != 6 {
+		t.Fatalf("cause %+v", c)
+	}
+}
+
+// A huge RIG_HOOK_DEPTH must not overflow past the guard.
+func TestHookDepthEnvHuge(t *testing.T) {
+	e := newHookEnv(t, kindHooks())
+	short := e.newTask("dh")
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"] = "01ELSEWHERE", short
+	e.env["RIG_HOOK_DEPTH"] = strconv.Itoa(math.MaxInt)
+	e.mustRig("task", "set", short, "--field", "owner=a")
+	if c := e.lastCause(short); c == nil || c.Depth < maxHookDepth {
+		t.Fatalf("cause %+v", c)
+	}
+}
+
+// AC5: two repositories whose hooks write to each other stop at the guard:
+// each hop carries the event and depth the previous hook would have seen.
+func TestHookDepthTwoRepoLoop(t *testing.T) {
+	a := newHookEnv(t, kindHooks("*"))
+	b := newHookEnv(t, kindHooks("*"))
+	ta, tb := a.newTask("loop"), b.newTask("loop")
+	envs := []*hookEnv{a, b}
+	refs := []string{ta, tb}
+	prev := a.events(ta)[0] // the event that starts the chain, in repo a
+	caused, stopped := 0, false
+	for hop := 0; hop < 10; hop++ {
+		to, ref := envs[(hop+1)%2], refs[(hop+1)%2]
+		depth := 0
+		if prev.Cause != nil {
+			depth = prev.Cause.Depth
+		}
+		to.env["RIG_HOOK_EVENT"], to.env["RIG_HOOK_TASK"] = prev.ID, "01UNKNOWN"
+		to.env["RIG_HOOK_NAME"], to.env["RIG_HOOK_DEPTH"] = "h", strconv.Itoa(depth)
+		t.Setenv("RIG_CMD_HELPER", to.out) // this repo's hooks write to its own output
+		n := len(to.delivered())
+		r := to.mustRig("task", "set", ref, "--field", "owner="+strconv.Itoa(hop))
+		caused++
+		log := to.events(ref)
+		prev = log[len(log)-1]
+		if len(to.delivered()) == n {
+			// the guard stopped the hooks: it must be the depth guard, at depth 3
+			if prev.Cause == nil || prev.Cause.Depth != 3 || !strings.Contains(r.errOut, "hook depth 3 reached") {
+				t.Fatalf("hop %d stopped without the depth guard: cause %+v stderr %q", hop, prev.Cause, r.errOut)
+			}
+			stopped = true
+			break
+		}
+	}
+	if !stopped || caused != 3 {
+		t.Fatalf("stopped=%v after %d hook-caused writes, want the guard at 3", stopped, caused)
 	}
 }
