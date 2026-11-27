@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -301,24 +300,18 @@ func TestEventsFollow(t *testing.T) {
 }
 
 // TestEventsFollowHelper is not a test: with RIG_EVENTS_HELPER set it runs
-// `rig events --follow` the way main does (SIGTERM cancels the context) and
-// exits with its code.
+// `rig events --follow` through the real main, which exits with its code.
 func TestEventsFollowHelper(t *testing.T) {
 	repo := os.Getenv("RIG_EVENTS_HELPER")
 	if repo == "" {
 		t.Skip("helper for TestEventsFollowSIGTERM")
 	}
-	sctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	a := &app{stdout: os.Stdout, stderr: os.Stderr, cwd: repo, now: time.Now,
-		getenv: func(k string) string {
-			if k == "RIG_WORKFLOW" {
-				return "basic"
-			}
-			return ""
-		}}
-	a.store = a.openStore
-	os.Exit(a.run(sctx, []string{"events", "--follow", "--cursor-file", os.Getenv("RIG_EVENTS_CURSOR"), "--json"}))
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("RIG_WORKFLOW", "basic")
+	os.Args = []string{"rig", "events", "--follow", "--cursor-file", os.Getenv("RIG_EVENTS_CURSOR"), "--json"}
+	main()
 }
 
 // AC8: a real SIGTERM ends --follow with exit 0 and the cursor covers what
@@ -386,6 +379,9 @@ func TestEventsFollowSIGTERM(t *testing.T) {
 	r := e.events("--since", c, "--json")
 	if r.code != 0 {
 		t.Fatalf("%+v", r)
+	}
+	if _, err := os.Stat(c); err != nil {
+		t.Fatalf("cursor file not written: %v", err)
 	}
 	for _, l := range strings.Split(r.out, "\n") {
 		if l == first {
