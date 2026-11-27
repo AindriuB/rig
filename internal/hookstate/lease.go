@@ -135,7 +135,18 @@ func (l *Lease) Release() error {
 // Beat returns the holder's last heartbeat and whether its process is live.
 // With no lease it returns the zero time and false.
 func Beat(dir, hook string) (time.Time, bool, error) {
-	h, err := readLease(leasePath(dir, hook))
+	path := leasePath(dir, hook)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return time.Time{}, false, nil
+	}
+	// Read under the lock: on Windows an open reader would make the holder's
+	// rename fail.
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer unlock()
+	h, err := readLease(path)
 	if err != nil {
 		return time.Time{}, false, err
 	}
