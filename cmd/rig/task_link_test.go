@@ -183,8 +183,8 @@ func TestTaskLink(t *testing.T) {
 		len(v.External.Drift) != 0 || v.External.SyncedAt.IsZero() {
 		t.Fatalf("%+v", v)
 	}
-	if c.n != 2 {
-		t.Fatalf("%d tracker calls, want the fetch and one refresh", c.n)
+	if c.n != 1 {
+		t.Fatalf("%d tracker calls, want the one fetch", c.n)
 	}
 	if v.External.URL != "https://t.example/12" || v.External.Type != "Task" {
 		t.Fatalf("link URL/Type: %+v", v.External)
@@ -584,7 +584,7 @@ func TestTaskLinkReadsFirst(t *testing.T) {
 	e := newTrkEnv(t, ghCfg())
 	e.tr = &failAfter{Tracker: fake.New(allCaps, []tracker.Issue{base}, nil), n: 1}
 	x := e.mkTask("x")
-	if code := e.run("task", "link", x.Short, "12"); code != 2 || !strings.Contains(e.err.String(), "link stands") {
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, e.err.String())
 	}
 	got, _ := e.st().Task(ctx, x.ID)

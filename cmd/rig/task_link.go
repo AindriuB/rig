@@ -181,39 +181,58 @@ func (a *app) taskLink(ctx context.Context, args []string) int {
 		}
 		data.ParentKey = p.Key
 	}
-	after := t
-	// Already linked to this very issue: no link event, only the refresh.
-	if _, same := store.Linked(&store.External{Kind: data.Kind, Host: data.Host, Project: data.Project, Key: data.Key}, []store.Task{t}); !same {
-		ev, err := store.NewEvent(store.KindExternal, data)
-		if err != nil {
-			return a.storeFail(cmd, err)
-		}
-		after, err = w.st.Update(ctx, t.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
-			return []store.Event{ev}, nil
-		})
-		if errors.Is(err, store.ErrLinked) {
-			return a.storeFail(cmd, &refusal{reason: err.Error()})
-		}
-		if err != nil {
-			return a.storeFail(cmd, err)
-		}
-	}
-	// The link write stamped --once; the refresh and parent writes carry no
-	// key, or they would be refused as a repeat of it.
-	a.onceKey = ""
-	if w, err = a.openWork(ctx, *repo, true); err != nil {
+	// One write carries the link, the refresh and the parent, so the --once
+	// key marks the whole result: a failure anywhere leaves nothing recorded
+	// and a retry with the key starts over. The tasks the parent lookup needs
+	// are read first, as the callback must not call the store.
+	tasks, err := w.st.Tasks(ctx, store.TaskFilter{})
+	if err != nil {
 		return a.storeFail(cmd, err)
 	}
-	res := a.refreshOne(ctx, w, tr, spec, after, false)
-	if res.Status != "updated" && res.Status != "unchanged" {
-		why := res.Error
-		if res.Status == "gone" {
-			why = key + " was not found in the tracker"
+	link := &store.External{Kind: data.Kind, Host: data.Host, Project: data.Project, Key: data.Key,
+		URL: data.URL, Type: data.Type, Owned: data.Owned, ParentKey: data.ParentKey}
+	values := ownedValues(w.wf, issue, data.Owned)
+	var warns []string
+	after, err := w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		var evs []store.Event
+		warns = nil
+		// Already linked to this very issue: no link event, only the refresh.
+		if _, same := store.Linked(link, []store.Task{cur}); !same {
+			ev, err := store.NewEvent(store.KindExternal, data)
+			if err != nil {
+				return nil, err
+			}
+			evs = append(evs, ev)
+			cur.External = link
 		}
-		return a.fail(cmd, "linked %s to %s, but the refresh failed: %s; the link stands, run `rig tracker refresh %s` to retry", after.Short, key, why, after.Short)
+		plan, err := a.planRefresh(cur, issue, values)
+		if err != nil {
+			return nil, err
+		}
+		evs = append(evs, plan.events...)
+		if cur.External.ParentKey != "" && cur.Parent == "" {
+			id, warn := parentFor(cur, tasks)
+			if warn != "" {
+				warns = append(warns, warn)
+			}
+			if id != "" {
+				ev, err := store.NewEvent(store.KindParent, store.ParentData{Task: id})
+				if err != nil {
+					return nil, err
+				}
+				evs = append(evs, ev)
+			}
+		}
+		return evs, nil
+	})
+	if errors.Is(err, store.ErrLinked) {
+		return a.storeFail(cmd, &refusal{reason: err.Error()})
 	}
-	if after, err = w.st.Task(ctx, t.ID); err != nil {
+	if err != nil {
 		return a.storeFail(cmd, err)
+	}
+	for _, warn := range warns {
+		fmt.Fprintf(a.stderr, "rig %s: warning: %s\n", cmd, warn)
 	}
 	return a.printTask(ctx, cmd, w, after, *asJSON)
 }

@@ -248,8 +248,18 @@ func TestOnceTaskLink(t *testing.T) {
 	if code := e.run("task", "link", x.Short, "github:12", "--once", "k"); code != 0 {
 		t.Fatalf("first run: exit %d, stderr %q", code, e.err.String())
 	}
-	if onceKindCount(e.eventsByTask()[x.ID], store.KindTrackerSync) != 1 {
+	evs := e.eventsByTask()[x.ID]
+	if onceKindCount(evs, store.KindTrackerSync) != 1 {
 		t.Fatal("no tracker-sync snapshot after the first run")
+	}
+	// One write: the link, the owned fields and the snapshot all carry k.
+	for _, ev := range evs {
+		switch ev.Kind {
+		case store.KindExternal, store.KindTrackerSync, store.KindField:
+			if ev.Once != "k" {
+				t.Fatalf("%s event not stamped: %+v", ev.Kind, ev)
+			}
+		}
 	}
 	n := e.eventCount(x.ID)
 	e.out.Reset()
@@ -284,5 +294,32 @@ func TestOnceReportPartialSendIsNotStamped(t *testing.T) {
 	}
 	if evs := e.reports(); len(evs) != 2 || evs[1].Once != "k" {
 		t.Fatalf("events after retry %+v", evs)
+	}
+}
+
+// AC11: the parent is part of the same stamped write as the link.
+func TestOnceTaskLinkParentInOneWrite(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	child := issue("12", "Child")
+	child.Parent = &tracker.IssueRef{Key: "7"}
+	e.tr = fake.New(allCaps, []tracker.Issue{child, issue("7", "Parent")}, nil)
+	p, x := e.mkTask("p"), e.mkTask("x")
+	if code := e.run("task", "link", p.Short, "github:7"); code != 0 {
+		t.Fatalf("link parent: exit %d, stderr %q", code, e.err.String())
+	}
+	if code := e.run("task", "link", x.Short, "github:12", "--once", "k"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, e.err.String())
+	}
+	var parents int
+	for _, ev := range e.eventsByTask()[x.ID] {
+		if ev.Kind == store.KindParent {
+			parents++
+			if ev.Once != "k" {
+				t.Fatalf("parent event not stamped: %+v", ev)
+			}
+		}
+	}
+	if parents != 1 || e.parentOf(x.Short) != p.ID {
+		t.Fatalf("%d parent events, parent %q", parents, e.parentOf(x.Short))
 	}
 }
