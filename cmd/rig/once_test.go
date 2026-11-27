@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -256,5 +258,31 @@ func TestOnceTaskLink(t *testing.T) {
 	}
 	if e.eventCount(x.ID) != n {
 		t.Fatal("the repeat wrote events")
+	}
+}
+
+// AC12: a report with --once whose comment fails after the status went
+// through is recorded without the key, so a retry with the same key posts
+// the comment instead of reporting a repeat.
+func TestOnceReportPartialSendIsNotStamped(t *testing.T) {
+	e := newReportEnv(t, reportCaps, statuses3...)
+	e.mustRun("task", "move", e.task, "doing")
+	e.rec.commentErr = errors.New("boom")
+	if code := e.run("tracker", "report", e.task, "--once", "k"); code != 2 {
+		t.Fatalf("exit %d: %s", code, e.err.String())
+	}
+	evs := e.reports()
+	if len(evs) != 1 || evs[0].Once != "" {
+		t.Fatalf("partial send events %+v", evs)
+	}
+	e.rec.commentErr = nil
+	e.rec.log = nil
+	e.out.Reset()
+	e.mustRun("tracker", "report", e.task, "--once", "k")
+	if strings.Contains(e.out.String(), "repeat") || !slices.Equal(e.rec.log, []string{"comment"}) {
+		t.Fatalf("retry sent %v, out %q", e.rec.log, e.out.String())
+	}
+	if evs := e.reports(); len(evs) != 2 || evs[1].Once != "k" {
+		t.Fatalf("events after retry %+v", evs)
 	}
 }

@@ -336,7 +336,16 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	}
 	if sent.Status != nil || sent.Comment != nil {
 		sent.At = a.now().UTC()
-		_, err := w.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
+		rec := w
+		if fail != 0 {
+			// A partial send is recorded without the --once key, so a retry
+			// with the same key runs again and sends the failed part.
+			a.onceKey = ""
+			if rec, err = a.openWorkPlain(ctx, *repo, true); err != nil {
+				return a.storeFail(cmd, err)
+			}
+		}
+		_, err := rec.st.Update(ctx, t.ID, func(cur store.Task, _ []store.Finding) ([]store.Event, error) {
 			if cur.External == nil || !strings.EqualFold(cur.External.Key, ext.Key) || cur.External.Kind != ext.Kind {
 				return nil, errors.New("the task's link changed during the report")
 			}
