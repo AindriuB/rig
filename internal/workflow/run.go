@@ -197,9 +197,10 @@ func (w *Workflow) hookMatches(h Hook, kind string, d store.TransitionData) bool
 // the task after the event and headSha its branch head now ("" when the
 // branch does not exist). Each hook gets {"format":1,"event":…,"task":…,
 // "effective":…} on stdin, where task.state is the recorded state and
-// effective the state after the sha-bound check and runs for its timeout (Limit by default). A hook
-// that fails does not stop the others; its error is returned, and the write,
-// already made, stands. Queued hooks are not run.
+// effective the state after the sha-bound check, and runs for its timeout
+// (Limit by default). A hook that fails does not stop the others; its error
+// is returned, and the write, already made, stands. Queued hooks are not
+// run.
 func (w *Workflow) RunHooks(ctx context.Context, r Runner, event store.Event, t store.Task, headSha string) []error {
 	return w.runHooks(ctx, r, event, &t, headSha)
 }
