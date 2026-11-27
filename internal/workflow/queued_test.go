@@ -22,7 +22,10 @@ func TestQueuedHooksSelectAndDepth(t *testing.T) {
 	if m, _ := w.QueuedMatches(1, store.Event{Kind: "count"}); m {
 		t.Error("kind:note matched a count")
 	}
-	if w.QueuedMaxDepth(1) != 3 || w.QueuedMaxDepth(2) != DefaultMaxDepth {
-		t.Errorf("maxDepth %d, %d", w.QueuedMaxDepth(1), w.QueuedMaxDepth(2))
+	if m, ok := w.QueuedMaxDepth(1); !ok || m != 3 {
+		t.Errorf("maxDepth = %d, %v; want 3, true", m, ok)
+	}
+	if _, ok := w.QueuedMaxDepth(2); ok {
+		t.Error("a hook with no maxDepth has a cap")
 	}
 }

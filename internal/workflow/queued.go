@@ -12,10 +12,6 @@ import (
 // QueuedTimeout is how long a queued hook may run when it sets no timeout.
 const QueuedTimeout = 2 * time.Minute
 
-// DefaultMaxDepth is the depth above which a queued hook does not run when it
-// sets no maxDepth: the depth at which inline hooks stop.
-const DefaultMaxDepth = 2
-
 // QueuedHooks returns the indexes of the workflow's queued hooks that have a
 // command, in file order.
 func (w *Workflow) QueuedHooks() []int {
@@ -39,12 +35,13 @@ func (w *Workflow) QueuedMatches(i int, event store.Event) (bool, error) {
 	return w.hookMatches(w.Hooks[i], event.Kind, d), nil
 }
 
-// QueuedMaxDepth is the deepest cause.depth hook i runs for.
-func (w *Workflow) QueuedMaxDepth(i int) int {
+// QueuedMaxDepth is the deepest cause.depth hook i runs for. ok is false when
+// the hook sets no maxDepth: it is then uncapped.
+func (w *Workflow) QueuedMaxDepth(i int) (max int, ok bool) {
 	if m := w.Hooks[i].MaxDepth; m != nil {
-		return *m
+		return *m, true
 	}
-	return DefaultMaxDepth
+	return 0, false
 }
 
 // RunQueued runs queued hook i once for one event and returns its error. t is

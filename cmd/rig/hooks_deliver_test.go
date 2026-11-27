@@ -349,6 +349,23 @@ func TestDeliverDepthAboveMaxDepthIsParked(t *testing.T) {
 	}
 }
 
+// AC13
+func TestDeliverNoMaxDepthIsUncapped(t *testing.T) {
+	e := newDeliverEnv(t, fromStart(queuedHook))
+	a := e.newTask("a")
+	e.env["RIG_HOOK_EVENT"], e.env["RIG_HOOK_TASK"], e.env["RIG_HOOK_DEPTH"] = "01ELSEWHERE", a, "2"
+	e.note(a)
+	delete(e.env, "RIG_HOOK_EVENT")
+	ids := e.ids(a)
+	if c := e.events(a)[1].Cause; c == nil || c.Depth != 3 {
+		t.Fatalf("setup: cause %+v", c)
+	}
+	e.pass()
+	if got := e.fake.events(); !eq(got, ids) {
+		t.Fatalf("delivered %v, want all of %v", got, ids)
+	}
+}
+
 // AC7
 func TestDeliverFiltersByWorkflow(t *testing.T) {
 	e := newDeliverEnv(t, fromStart(queuedHook))

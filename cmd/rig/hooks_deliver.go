@@ -60,7 +60,7 @@ func (a *app) hooksDeliver(ctx context.Context, args []string) int {
 	repoFlag, follow := fs.str("--repo"), fs.boolean("--follow")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) > 0 {
-		return a.fail("hooks deliver", "%s", hooksUsage)
+		return a.fail("hooks deliver", "%s", hooksDeliverUsage)
 	}
 	// The runner's own reads need no hooks, and it never runs inline hooks.
 	w, err := a.openWorkPlain(ctx, *repoFlag, true)
@@ -397,7 +397,7 @@ func (d *deliverer) deliver(ctx context.Context, i int, it store.FeedItem) outco
 	if ev.Cause != nil {
 		depth = ev.Cause.Depth
 	}
-	if max := d.wf.QueuedMaxDepth(i); depth > max {
+	if max, capped := d.wf.QueuedMaxDepth(i); capped && depth > max {
 		return outcome{kind: outParked, reason: fmt.Sprintf("depth %d exceeds maxDepth %d", depth, max)}
 	}
 	var last error

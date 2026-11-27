@@ -9,7 +9,11 @@ import (
 	"github.com/AindriuB/rig/internal/proc"
 )
 
-const hooksUsage = "usage: rig hooks start [--json] [--] <cmd> [args...] | rig hooks deliver [--follow] [--repo <dir>]"
+const (
+	hooksUsage        = "usage: rig hooks start|deliver ..."
+	hooksDeliverUsage = "usage: rig hooks deliver [--follow] [--repo <dir>]"
+	hooksStartUsage   = "usage: rig hooks start [--json] [--] <cmd> [args...]"
+)
 
 func (a *app) hooks(ctx context.Context, args []string) int {
 	if len(args) == 0 {
@@ -41,7 +45,7 @@ func (a *app) hooksStart(args []string) int {
 		}
 	}
 	if len(args) == 0 {
-		return a.fail("hooks start", "no command given; %s", hooksUsage)
+		return a.fail("hooks start", "no command given; %s", hooksStartUsage)
 	}
 	pid, refused, err := proc.Start(proc.Options{Dir: a.cwd}, args[0], args[1:]...)
 	if err != nil {
