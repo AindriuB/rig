@@ -351,3 +351,30 @@ func TestHookTimeoutAndQueued(t *testing.T) {
 		}
 	}
 }
+
+// AC1: the hook sees the depth of the event it runs for, not plus one.
+func TestHookDepthEnvironment(t *testing.T) {
+	r, exe, out := helperRunner(t)
+	w := hookWF(Hook{Name: "d", On: StateList{"kind:note"}, Run: []string{exe}})
+	task := store.Task{ID: "01X", Short: "t-1", State: "a"}
+	for _, c := range []struct {
+		cause *store.Cause
+		want  string
+	}{{&store.Cause{Event: "e", Hook: "h", Depth: 2}, "RIG_HOOK_DEPTH=2"}, {nil, "RIG_HOOK_DEPTH=0"}} {
+		os.Remove(out)
+		note, _ := store.NewEvent(store.KindNote, store.NoteData{Text: "x"})
+		note.Cause = c.cause
+		if errs := w.RunHooks(ctx, r, note, task, ""); errs != nil {
+			t.Fatal(errs)
+		}
+		var got []string
+		for _, e := range records(t, out)[0].Env {
+			if strings.HasPrefix(e, "RIG_HOOK_DEPTH=") {
+				got = append(got, e)
+			}
+		}
+		if len(got) != 1 || got[0] != c.want {
+			t.Fatalf("want %s, env %v", c.want, got)
+		}
+	}
+}

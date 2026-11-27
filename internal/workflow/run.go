@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -247,6 +248,11 @@ func (w *Workflow) runHooks(ctx context.Context, r Runner, event store.Event, t 
 		}
 		name := w.HookName(i)
 		env := []string{"RIG_HOOK_NAME=" + name, "RIG_HOOK_EVENT=" + event.ID, "RIG_ACTOR=hook:" + name}
+		depth := 0
+		if event.Cause != nil {
+			depth = event.Cause.Depth
+		}
+		env = append(env, "RIG_HOOK_DEPTH="+strconv.Itoa(depth))
 		if taskID != "" {
 			env = append(env, "RIG_HOOK_TASK="+taskID)
 		}
