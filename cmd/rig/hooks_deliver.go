@@ -77,7 +77,8 @@ func (a *app) hooksDeliver(ctx context.Context, args []string) int {
 	}
 	root := w.dir
 	if wts, err := w.repo.Worktrees(ctx); err == nil && len(wts) > 0 && !wts[0].Bare {
-		root = wts[0].Path
+		// git prints forward slashes on Windows; hooks get the native form.
+		root = filepath.FromSlash(wts[0].Path)
 	}
 	d := &deliverer{a: a, wf: w.wf, feeder: feeder, common: common, runner: deliverRunner(root),
 		leases: map[string]*hookstate.Lease{}, heldBy: map[string]bool{}, held: map[string]map[string]bool{}}
