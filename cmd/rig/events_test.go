@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -406,4 +407,59 @@ func newPipe() (*os.File, *os.File) {
 		panic(err)
 	}
 	return r, w
+}
+
+// scriptFeeder wraps a store and answers Feed from a script of held lists.
+type scriptFeeder struct {
+	store.Store
+	held  [][]store.HeldLog
+	calls atomic.Int32
+}
+
+func (f *scriptFeeder) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, error) {
+	i := min(int(f.calls.Add(1))-1, len(f.held)-1)
+	return store.FeedResult{Next: store.NewCursor(), Held: f.held[i]}, nil
+}
+
+func TestEventsHeldWarnsOncePerChange(t *testing.T) {
+	e := newEventsEnv(t)
+	h := []store.HeldLog{{Name: "bad", Skipped: 2}}
+	f := &scriptFeeder{Store: e.st, held: [][]store.HeldLog{h, h, h, nil}}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.run(cctx, []string{"events", "--follow"}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for f.calls.Load() < 4 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if f.calls.Load() < 4 {
+		t.Fatalf("only %d scans", f.calls.Load())
+	}
+	s := errOut.String()
+	if n := strings.Count(s, "bad held: 2 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, s)
+	}
+	if n := strings.Count(s, "bad no longer held"); n != 1 {
+		t.Errorf("release line printed %d times: %q", n, s)
+	}
+}
+
+func TestEventsOneShotHeldOnce(t *testing.T) {
+	e := newEventsEnv(t)
+	f := &scriptFeeder{Store: e.st, held: [][]store.HeldLog{{{Name: "bad", Skipped: 1}}}}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	if code := a.run(ctx, []string{"events"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if n := strings.Count(errOut.String(), "bad held: 1 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, errOut.String())
+	}
 }

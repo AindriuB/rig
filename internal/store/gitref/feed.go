@@ -1,7 +1,9 @@
 package gitref
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -60,7 +62,7 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 		}
 		events, skipped := parseLog(blobs[i].Data)
 		old, seen := cur.Logs[name]
-		if baseline {
+		if baseline && skipped == 0 {
 			next.Logs[name] = store.LogPos{Tip: tips[name], Count: len(events)}
 			continue
 		}
@@ -74,7 +76,9 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 				}
 			}
 			res.Held = append(res.Held, store.HeldLog{Name: label, Skipped: skipped})
-			if seen {
+			if baseline {
+				next.Logs[name] = store.LogPos{Tip: tips[name], Count: readableBeforeUnreadable(blobs[i].Data)}
+			} else if seen {
 				next.Logs[name] = old
 			}
 			continue
@@ -94,4 +98,25 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 		next.Logs[name] = store.LogPos{Tip: tips[name], Count: len(events)}
 	}
 	return res, nil
+}
+
+// readableBeforeUnreadable counts the readable lines before the first
+// unreadable one, in line order, using parseLog's test for readable.
+func readableBeforeUnreadable(raw []byte) int {
+	n := 0
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var head struct {
+			V int `json:"v"`
+		}
+		var e store.Event
+		if json.Unmarshal(line, &head) != nil || head.V != store.Version || json.Unmarshal(line, &e) != nil {
+			return n
+		}
+		n++
+	}
+	return n
 }
