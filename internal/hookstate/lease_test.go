@@ -114,6 +114,12 @@ func TestAC7ReleaseAfterTakeoverKeepsNewHolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := old.Touch(); err == nil {
+		t.Fatal("Touch after takeover succeeded")
+	}
+	if h, _ := readLease(leasePath(dir, "chat")); h == nil || h.Token != nl.me.Token {
+		t.Fatal("Touch disturbed the new holder's lease")
+	}
 	if err := old.Release(); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +127,16 @@ func TestAC7ReleaseAfterTakeoverKeepsNewHolder(t *testing.T) {
 		t.Fatal("new holder's lease was removed")
 	}
 	if err := nl.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Acquire(dir, "chat"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnparsableLeaseIsStale(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(leasePath(dir, "chat"), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Acquire(dir, "chat"); err != nil {

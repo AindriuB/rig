@@ -41,6 +41,8 @@ func newState() *State {
 }
 
 // Load reads the state at path. A missing file returns nil and no error.
+// On Windows a read outside Update can make a concurrent Update's rename
+// fail; callers that read while a runner writes should read inside Update.
 func Load(path string) (*State, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

@@ -95,3 +95,16 @@ func TestAC8Path(t *testing.T) {
 		t.Fatalf("chat2 read chat: %v %v", s, err)
 	}
 }
+
+func TestLoadRejectsUnknownFormat(t *testing.T) {
+	p := Path(t.TempDir(), "w", "chat")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"format":999,"parked":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("unknown format accepted")
+	}
+}
