@@ -160,7 +160,7 @@ func TestHooks(t *testing.T) {
 		t.Fatalf("hook task = %+v", in.Task)
 	}
 
-	// The hook's task is the view at the head given.
+	// The hook's task is the recorded state; effective is at the head given.
 	bound := &Workflow{States: map[string]State{"ready": {ShaBound: true}}, OnNewCommit: "implementing",
 		Hooks: []Hook{{On: StateList{"enter:ready"}, Run: []string{"h"}}}}
 	fr := &fakeRunner{}
@@ -169,7 +169,7 @@ func TestHooks(t *testing.T) {
 	if errs := bound.RunHooks(ctx, fr, rev, ready, "s2"); errs != nil {
 		t.Fatal(errs)
 	}
-	if !strings.Contains(fr.stdin, `"state":"implementing","recordedState":"ready"`) || !strings.Contains(fr.stdin, `"headSha":"s2"`) {
+	if !strings.Contains(fr.stdin, `"state":"ready","recordedState":"ready"`) || !strings.Contains(fr.stdin, `"effective":"implementing"`) || !strings.Contains(fr.stdin, `"headSha":"s2"`) {
 		t.Fatalf("hook stdin = %s", fr.stdin)
 	}
 

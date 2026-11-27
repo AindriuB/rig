@@ -196,9 +196,11 @@ func (w *Workflow) hookMatches(h Hook, kind string, d store.TransitionData) bool
 // RunHooks runs, in file order, every inline hook the event matches. t is
 // the task after the event and headSha its branch head now ("" when the
 // branch does not exist). Each hook gets {"format":1,"event":…,"task":…,
-// "effective":…} on stdin and runs for its timeout (Limit by default). A hook
-// that fails does not stop the others; its error is returned, and the write,
-// already made, stands. Queued hooks are not run.
+// "effective":…} on stdin, where task.state is the recorded state and
+// effective the state after the sha-bound check, and runs for its timeout
+// (Limit by default). A hook that fails does not stop the others; its error
+// is returned, and the write, already made, stands. Queued hooks are not
+// run.
 func (w *Workflow) RunHooks(ctx context.Context, r Runner, event store.Event, t store.Task, headSha string) []error {
 	return w.runHooks(ctx, r, event, &t, headSha)
 }
@@ -221,7 +223,11 @@ func (w *Workflow) runHooks(ctx context.Context, r Runner, event store.Event, t 
 	var taskID string
 	if t != nil {
 		v := w.View(*t, headSha)
-		in.Task, in.Effective, taskID = &v, v.State, t.ID
+		// task is the task as recorded right after the event, as rig events
+		// shows it; effective is the state after the sha-bound check.
+		in.Effective, taskID = v.State, t.ID
+		v.State = v.RecordedState
+		in.Task = &v
 		state := t.State
 		if event.Kind == store.KindTransition {
 			state = d.To
