@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -542,7 +543,22 @@ func TestTaskLinkRefreshPlanFailureRecordsNothing(t *testing.T) {
 	e.tr = fake.New(allCaps, []tracker.Issue{issue("12", "Remote")}, nil)
 	x := e.mkTask("x")
 	n := e.eventCount(x.ID)
-	e.a.now = func() time.Time { return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) }
+	// The store stamps events with a.now too, so only a call from planRefresh
+	// gets the year-10000 time; every store write still works. A link written
+	// before the refresh is planned would therefore be recorded.
+	base := e.a.now
+	e.a.now = func() time.Time {
+		pcs := make([]uintptr, 16)
+		frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+		for f, more := frames.Next(); ; f, more = frames.Next() {
+			if strings.HasSuffix(f.Function, ".planRefresh") {
+				return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+			}
+			if !more {
+				return base()
+			}
+		}
+	}
 	if code := e.run("task", "link", x.Short, "12"); code == 0 {
 		t.Fatalf("exit 0 with a failing refresh plan; stdout %q", e.out.String())
 	}
