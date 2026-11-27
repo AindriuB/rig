@@ -55,6 +55,9 @@ const findingUsage = `usage: rig finding add <task> --severity <sev> --summary <
 
 // finding implements `rig finding add|list|set`.
 func (a *app) finding(ctx context.Context, args []string) int {
+	if len(args) > 0 {
+		ctx = withCmd(ctx, "finding "+args[0])
+	}
 	if len(args) == 0 {
 		return a.fail("finding", "%s", findingUsage)
 	}

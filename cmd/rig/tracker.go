@@ -384,7 +384,7 @@ func (a *app) trackerPull(ctx context.Context, args []string) int {
 			return a.fail(cmd, "--limit must be a number of 1 or more")
 		}
 	}
-	w, err := a.openWork(ctx, *repo, true)
+	w, err := a.openWorkPlain(ctx, *repo, true)
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}
@@ -731,7 +731,7 @@ func (a *app) trackerRefresh(ctx context.Context, args []string) int {
 	if err := actorOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
-	w, err := a.openWork(ctx, *repo, true)
+	w, err := a.openWorkPlain(ctx, *repo, true)
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}

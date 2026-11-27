@@ -177,7 +177,7 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 		return a.fail(cmd, "--include needs a comment: it adds to the comment, which --status alone does not send")
 	}
 
-	w, err := a.openWork(ctx, *repo, true)
+	w, err := a.openWorkPlain(ctx, *repo, true)
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}

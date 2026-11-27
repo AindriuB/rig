@@ -73,6 +73,9 @@ func (a *app) workflowShow(ctx context.Context, args []string) int {
 		return a.storeFail("workflow show", err)
 	}
 	src := a.sourceView(w.src)
+	for _, m := range w.wf.HookWarnings() {
+		fmt.Fprintf(a.stderr, "rig workflow show: warning: %s\n", m)
+	}
 	if *asJSON {
 		return a.printJSON(struct {
 			Source   sourceView         `json:"source"`
@@ -207,6 +210,11 @@ func (a *app) workflowValidate(ctx context.Context, args []string) int {
 		}
 	}
 
+	if wf != nil {
+		for _, m := range wf.HookWarnings() {
+			fmt.Fprintf(a.stderr, "rig workflow validate: warning: %s\n", m)
+		}
+	}
 	code := 0
 	if len(problems) > 0 {
 		code = 1

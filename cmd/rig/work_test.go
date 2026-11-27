@@ -26,6 +26,13 @@ import (
 // appends its stdin to that file and exits RIG_CMD_EXIT, without running
 // tests. No shell is involved, so this works on every OS.
 func TestMain(m *testing.M) {
+	if os.Getenv("RIG_HOOK_REENTER") != "" {
+		// A hook that runs rig again with its own arguments.
+		cwd, _ := os.Getwd()
+		a := &app{stdout: os.Stdout, stderr: os.Stderr, getenv: os.Getenv, cwd: cwd, now: time.Now}
+		a.store = a.openStore
+		os.Exit(a.run(context.Background(), os.Args[1:]))
+	}
 	if out := os.Getenv("RIG_CMD_HELPER"); out != "" {
 		stdin, _ := io.ReadAll(os.Stdin)
 		f, err := os.OpenFile(out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -289,19 +296,24 @@ type racyStore struct {
 }
 
 func (r *racyStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, _, err := r.UpdateEvents(ctx, ref, next)
+	return t, err
+}
+
+func (r *racyStore) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
 	r.calls++
 	if r.calls <= r.races {
 		ev, err := store.NewEvent(store.KindField, store.FieldData{Name: "note", Value: strconv.Itoa(r.calls)})
 		if err != nil {
-			return store.Task{}, err
+			return store.Task{}, nil, err
 		}
 		if _, err := r.Store.Update(ctx, ref, func(store.Task, []store.Finding) ([]store.Event, error) {
 			return []store.Event{ev}, nil
 		}); err != nil {
-			return store.Task{}, err
+			return store.Task{}, nil, err
 		}
 	}
-	return r.Store.Update(ctx, ref, next)
+	return r.Store.UpdateEvents(ctx, ref, next)
 }
 
 func TestMoveRetriesWhenTheTaskChanged(t *testing.T) {
@@ -376,12 +388,17 @@ type sneakyStore struct {
 }
 
 func (s *sneakyStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, _, err := s.UpdateEvents(ctx, ref, next)
+	return t, err
+}
+
+func (s *sneakyStore) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
 	s.calls++
 	if s.before != nil {
 		s.before(ref)
 		s.before = nil
 	}
-	return s.Store.Update(ctx, ref, next)
+	return s.Store.UpdateEvents(ctx, ref, next)
 }
 
 // fixed is a clock that never moves, so a change keeps the task's Updated.
