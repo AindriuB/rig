@@ -156,6 +156,8 @@ Tracker:
 Hooks:
   rig hooks start <cmd> [<args>...]         Start long-running work that outlives the hook
       [--json]
+  rig events                                List events across all tasks, from a cursor
+      [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json] [--repo <dir>]
 
 Setup:
   rig config get <key>                      Print a config value
@@ -230,6 +232,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.trackerCmd(ctx, args[1:])
 	case "hooks":
 		return a.hooks(ctx, args[1:])
+	case "events":
+		return a.events(ctx, args[1:])
 	case "login":
 		return a.login(ctx, args[1:])
 	case "logout":
