@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hooks have a `name`, a per-hook `timeout` (up to 30 seconds), `env` and a `mode`. Selectors are `transition`, `enter:<state>`, `leave:<state>`, `final`, `kind:<kind>` and `kind:*`, and `on` may be a list. `queued` mode and the `from` and `maxDepth` keys are accepted but not acted on yet. A hook without a name is called `hook-<n>` with a warning.
+- Hooks run for every event a single-task write produces, not only the first event of `rig task move`. Their payload is `{"format":1,"event","task","effective"}`. No `rig tracker` command runs inline hooks, including single-task `report` and `push`; `rig events` sees their events.
+- Hooks run as `RIG_ACTOR=hook:<name>`, with `RIG_HOOK_NAME`, `RIG_HOOK_EVENT` and `RIG_HOOK_TASK`. A write a hook makes records a `cause` with a depth read from the log, and a write at depth 3 runs no inline hooks. A hook that times out gets SIGTERM and 5 seconds before it is killed (Unix).
+- `rig events [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json]` lists events across all tasks and repository notes, from a cursor.
+- `rig hooks start [--json] [--] <cmd> [args...]` starts long work that outlives its hook, without the `RIG_HOOK_*` variables.
+- `docs/hooks.md`: the hook reference, with recipes.
+
+### Changed
+
+- Hooks now get an allowlisted environment instead of rig's whole environment. `PATH`, `HOME`, locale, proxy, desktop-session and tool-config variables and `RIG_WORKFLOW` pass; `GH_TOKEN`, `RIG_*_TOKEN`, cloud credentials and `SSH_AUTH_SOCK` do not. A hook that relied on one lists it, for example `{ "on": "enter:pr_open", "env": ["GH_TOKEN"], "run": ["pr-comment", "{short}"] }`. `command` gates and `exec` tracker programs are unchanged.
+
 ## [0.6.0] - 2026-11-26
 
 Tracker create and push have been tested against fakes only. A live check against GitHub, GitLab and Jira Cloud is planned for 0.7.0.

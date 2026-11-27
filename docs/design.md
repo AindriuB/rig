@@ -233,6 +233,17 @@ with different values, is exit 2 with nothing written, and every other command
 rejects them as unknown options (exit 2); `RIG_JIRA_TOKEN` overrides a stored Jira token at use
 time.
 
+**Hooks and the event feed (0.7.0).** A hook is given
+`{"format":1,"event","task","effective"}` on standard input, and `rig events
+--json` prints the same object per line without `effective`. `format` is the
+payload's version. New event kinds and new event fields are additive, a
+`kind:*` consumer ignores kinds it does not know, and a change to an existing
+kind's `data` bumps the event's `v`. A write made inside a hook records a
+`cause` (`event`, `hook`, `depth`), with the depth read from the log, and a
+write at depth 3 runs no inline hooks. Hooks get an allowlisted environment,
+plus `RIG_ACTOR=hook:<name>` and `RIG_HOOK_*`. The full reference is
+[hooks.md](hooks.md).
+
 **Stable text output**
 
 - `rig pr wait`, green: exactly one line, `CI green: PR #<n>` or

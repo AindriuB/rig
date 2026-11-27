@@ -144,11 +144,19 @@ never blocks anything.
 { "on": "enter:stopped", "run": ["notify-user", "{short}", "{reason}"] }
 ```
 
-`on` is `enter:<state>`, `leave:<state>` or `transition`. Hooks run, in file
-order, after a move has been written. A hook gets `{event, task}` as JSON on
-standard input and has 30 seconds. A hook that fails is reported on standard
-error, and in `hookErrors` with `--json`, but it never undoes the move.
-Something that must be able to refuse a move is a `command` gate, not a hook.
+A hook is a program rig runs after it has written an event. `on` is a selector
+or a list of them: `transition`, `enter:<state>`, `leave:<state>`, `final`,
+`kind:<kind>` or `kind:*`. Hooks run in file order, for every event a single-task
+write produces, not only for the first. No `rig tracker` command runs
+inline hooks. A hook gets
+`{"format":1,"event","task","effective"}` as JSON on standard input, runs with
+an allowlisted environment (add what it needs with `"env": ["GH_TOKEN"]`) and
+has 30 seconds by default. A hook that fails is reported on standard error, and
+in `hookErrors` with `--json`, but it never undoes the write. Something that
+must be able to refuse a move is a `command` gate, not a hook.
+
+Names, selectors, the payload, the environment, the loop guard, `rig hooks
+start`, `rig events` and recipes are in [hooks.md](hooks.md).
 
 What `rig task move` does, in order:
 
@@ -161,8 +169,9 @@ What `rig task move` does, in order:
 4. Otherwise it writes the move. If the task, its findings or its branch head
    changed since they were read, it starts again from step 1, a few times, and
    then gives up with a conflict.
-5. Only after the write do the hooks run. A hook that fails is reported, and
-   the move stands.
+5. Only after the write do the hooks run, once for each event the move wrote
+   (the `transition`, and a `count` when the transition counts something). A
+   hook that fails is reported, and the move stands.
 
 ```mermaid
 %% alt: A task move looks up the transition, checks every gate, refuses and writes nothing if one fails, otherwise writes (retrying if the task changed) and then runs hooks whose failures never undo the move.
@@ -176,7 +185,7 @@ flowchart TD
   E -- "changed: retry" --> B
   E -- "changed too often" --> X["Conflict error: nothing written"]
   E -- "unchanged" --> F["Write the move"]
-  F --> G["Run hooks in file order"]
+  F --> G["Run hooks in file order, for every event the move wrote"]
   G --> H{"A hook failed?"}
   H -- "yes" --> I["Report it on standard error and in hookErrors; the move stands"]
   H -- "no" --> J["Done"]
@@ -190,8 +199,9 @@ and never through a shell. An argument that is exactly `{short}`, `{id}`,
 `{slug}`, `{state}`, `{reason}` or `{sha}` is replaced by that value, and the
 value stays one argument whatever it contains, spaces and `;` included. A
 placeholder inside longer text, such as `--to={state}`, is refused by
-validation. In a hook `{state}` is the state entered; in a gate it is the state
-the move leaves.
+validation. In a hook `{state}` is the task's state after the event, and
+`{reason}` and `{sha}` are refused when the hook's `on` selector can fire for a
+kind other than `transition`; in a gate `{state}` is the state the move leaves.
 
 ## Linking tasks to a tracker
 
