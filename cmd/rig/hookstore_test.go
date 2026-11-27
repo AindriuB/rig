@@ -246,10 +246,23 @@ func TestHooksTrackerRunsNone(t *testing.T) {
 		{"tracker", "push", local},
 	}
 	for _, args := range steps {
+		if args[1] == "refresh" {
+			// Change the remote issue so refresh has something to write.
+			if _, err := fk.SetStatus(context.Background(), "12", "In Progress"); err != nil {
+				t.Fatal(err)
+			}
+		}
 		n := len(e.delivered())
+		before := 0
+		if args[1] == "refresh" {
+			before = len(e.events("12-first"))
+		}
 		r := e.rig(args...)
 		if r.code != 0 {
 			t.Fatalf("%v: %+v", args, r)
+		}
+		if args[1] == "refresh" && len(e.events("12-first")) <= before {
+			t.Fatalf("refresh wrote nothing: %+v", r)
 		}
 		if len(e.delivered()) != n {
 			t.Fatalf("%v ran a hook: %v", args, e.delivered()[n:])
