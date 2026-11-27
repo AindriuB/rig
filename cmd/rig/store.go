@@ -17,7 +17,15 @@ func (a *app) openStore(ctx context.Context, dir string) (store.Store, error) {
 	if _, err := repo.CommonDir(ctx); err != nil {
 		return nil, fmt.Errorf("open store: %s is not in a git repository: %w", dir, err)
 	}
-	return gitref.Open(repo, store.Options{Now: a.now, Actor: a.actor(ctx, dir)})
+	opts := store.Options{Now: a.now, Actor: a.actor(ctx, dir)}
+	st, err := gitref.Open(repo, opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Cause = a.hookCause(ctx, st, repo); opts.Cause == nil {
+		return st, nil
+	}
+	return gitref.Open(repo, opts)
 }
 
 // actor is who events record: --actor or --role, else $RIG_ACTOR, else git's user.name for the

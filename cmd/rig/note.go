@@ -14,6 +14,9 @@ const noteUsage = `usage: rig note add [<task>] --kind <k> --text <text> [--acto
 
 // note implements `rig note add|list`.
 func (a *app) note(ctx context.Context, args []string) int {
+	if len(args) > 0 {
+		ctx = withCmd(ctx, "note "+args[0])
+	}
 	if len(args) == 0 {
 		return a.fail("note", "%s", noteUsage)
 	}
