@@ -42,7 +42,7 @@ func (a *app) events(ctx context.Context, args []string) int {
 	if *since != "" && *cursorFile != "" {
 		return a.fail("events", "--since and --cursor-file are exclusive; %s", eventsUsage)
 	}
-	w, err := a.openWork(ctx, *repoFlag, true)
+	w, err := a.openWorkPlain(ctx, *repoFlag, true)
 	if err != nil {
 		return a.storeFail("events", err)
 	}

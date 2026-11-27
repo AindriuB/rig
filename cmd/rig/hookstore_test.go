@@ -449,23 +449,21 @@ func TestHookPayloadRecordedState(t *testing.T) {
 		t.Fatalf("hook effective = %v", last["effective"])
 	}
 	id := last["event"].(map[string]any)["id"]
-	// rig events shows the task as the feed folds it right after the event.
-	// (The hook-wrapped store the command opens has no feed, so read the
-	// store's feed directly.)
-	st, err := gitref.Open(git.Repo{Dir: e.repo}, store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := st.Feed(context.Background(), store.NewCursor())
-	if err != nil {
-		t.Fatal(err)
-	}
+	// rig events --json shows the task as recorded right after the event.
+	r := e.mustRig("events", "--json", "--from-start")
 	found := false
-	for _, it := range res.Items {
+	for _, ln := range strings.Split(strings.TrimSpace(r.out), "\n") {
+		var it struct {
+			Event struct{ ID string }
+			Task  *struct{ State string }
+		}
+		if err := json.Unmarshal([]byte(ln), &it); err != nil {
+			t.Fatalf("events line %q: %v", ln, err)
+		}
 		if it.Event.ID == id {
 			found = true
-			if it.Task == nil || it.Task.State != "reviewed" {
-				t.Fatalf("feed task = %+v", it.Task)
+			if it.Task == nil || it.Task.State != last["task"].(map[string]any)["state"] {
+				t.Fatalf("events task = %+v, hook task.state = %v", it.Task, last["task"].(map[string]any)["state"])
 			}
 		}
 	}
