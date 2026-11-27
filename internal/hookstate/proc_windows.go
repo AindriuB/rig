@@ -7,7 +7,7 @@ import (
 // processStart returns pid's creation time (FILETIME ticks) and whether the
 // process exists.
 func processStart(pid int) (uint64, bool, error) {
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		if err == windows.ERROR_INVALID_PARAMETER {
 			return 0, false, nil
@@ -15,11 +15,13 @@ func processStart(pid int) (uint64, bool, error) {
 		return 0, false, err
 	}
 	defer windows.CloseHandle(h)
-	var code uint32
-	if err := windows.GetExitCodeProcess(h, &code); err != nil {
+	// A zero-timeout wait is signalled once the process has exited, even if
+	// its exit code happens to be 259 (STILL_ACTIVE).
+	ev, err := windows.WaitForSingleObject(h, 0)
+	if err != nil {
 		return 0, false, err
 	}
-	if code != 259 { // STILL_ACTIVE
+	if ev != uint32(windows.WAIT_TIMEOUT) {
 		return 0, false, nil
 	}
 	var c, e, k, u windows.Filetime

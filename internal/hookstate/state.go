@@ -102,6 +102,9 @@ func writeAtomic(path string, v any) error {
 	}
 	tmp := f.Name()
 	_, werr := f.Write(append(b, '\n'))
+	if werr == nil {
+		werr = f.Sync()
+	}
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
 		os.Remove(tmp)
