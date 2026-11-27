@@ -6,8 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -292,6 +297,100 @@ func TestEventsFollow(t *testing.T) {
 	}
 	if r := e.events("--since", c, "--json"); r.code != 0 || r.out != "" {
 		t.Fatalf("cursor does not cover the event: %+v", r)
+	}
+}
+
+// TestEventsFollowHelper is not a test: with RIG_EVENTS_HELPER set it runs
+// `rig events --follow` the way main does (SIGTERM cancels the context) and
+// exits with its code.
+func TestEventsFollowHelper(t *testing.T) {
+	repo := os.Getenv("RIG_EVENTS_HELPER")
+	if repo == "" {
+		t.Skip("helper for TestEventsFollowSIGTERM")
+	}
+	sctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	a := &app{stdout: os.Stdout, stderr: os.Stderr, cwd: repo, now: time.Now,
+		getenv: func(k string) string {
+			if k == "RIG_WORKFLOW" {
+				return "basic"
+			}
+			return ""
+		}}
+	a.store = a.openStore
+	os.Exit(a.run(sctx, []string{"events", "--follow", "--cursor-file", os.Getenv("RIG_EVENTS_CURSOR"), "--json"}))
+}
+
+// AC8: a real SIGTERM ends --follow with exit 0 and the cursor covers what
+// was printed.
+func TestEventsFollowSIGTERM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signals")
+	}
+	e := newEventsEnv(t)
+	e.newTask("a")
+	c := filepath.Join(t.TempDir(), "c")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEventsFollowHelper$")
+	cmd.Env = append(os.Environ(), "RIG_EVENTS_HELPER="+e.repo, "RIG_EVENTS_CURSOR="+c)
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	lines := make(chan string, 16)
+	go func() {
+		s := bufio.NewScanner(out)
+		for s.Scan() {
+			lines <- s.Text()
+		}
+		close(lines)
+	}()
+	// Child start-up time varies, so keep adding tasks until one shows up
+	// after the child's baseline scan.
+	var first string
+	deadline := time.After(20 * time.Second)
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for n := 0; first == ""; {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("child ended early: %q", errOut.String())
+			}
+			first = l
+		case <-tick.C:
+			n++
+			e.newTask("t" + strconv.Itoa(n))
+		case <-deadline:
+			t.Fatalf("no event from child; stderr %q", errOut.String())
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	waited = true
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("child did not exit 0: %v; stderr %q", err, errOut.String())
+	}
+	r := e.events("--since", c, "--json")
+	if r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	for _, l := range strings.Split(r.out, "\n") {
+		if l == first {
+			t.Fatalf("cursor does not cover printed event %s", first)
+		}
 	}
 }
 
