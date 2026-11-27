@@ -172,6 +172,34 @@ type pushStep struct {
 	parentTask string
 	// parentKey and parentType are the parent's issue when it is linked.
 	parentKey, parentType string
+	// resume marks a linked task whose parent attach may be incomplete: it
+	// is verified or attached, never created.
+	resume bool
+}
+
+// attachIncomplete reports whether linked task t has a parent link that push
+// has not confirmed, and returns that parent's issue key. It makes no tracker
+// call. The task must have a push intent for this tracker (so push created
+// it), a linked parent, and a ParentKey other than the parent's key.
+func attachIncomplete(ctx context.Context, w *work, spec trackerSpec, t store.Task, byID map[string]store.Task) (string, bool, error) {
+	if t.External == nil || t.Parent == "" || linkMismatch(t.External, spec) != "" {
+		return "", false, nil
+	}
+	p, ok := byID[t.Parent]
+	if !ok || p.External == nil || linkMismatch(p.External, spec) != "" || p.External.Key == "" {
+		return "", false, nil
+	}
+	if strings.EqualFold(t.External.ParentKey, p.External.Key) {
+		return "", false, nil
+	}
+	log, err := w.st.Events(ctx, t.ID)
+	if err != nil {
+		return "", false, err
+	}
+	if _, _, ok := pushIntent(log, spec.Link); !ok {
+		return "", false, nil
+	}
+	return p.External.Key, true, nil
 }
 
 // pushSelect returns the tasks to consider, parents first, with each one's
@@ -371,6 +399,14 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 	}
 	for i, t := range selected {
 		if t.External != nil {
+			pk, resume, err := attachIncomplete(ctx, w, spec, t, byID)
+			if err != nil {
+				return a.storeFail(cmd, err)
+			}
+			if resume {
+				steps = append(steps, &pushStep{task: t, depth: depths[i], parentKey: pk, resume: true})
+				continue
+			}
 			out.Skipped = append(out.Skipped, pushItem{Task: t.Short, Title: t.Title, Key: t.External.Key, Type: t.External.Type, Status: "skipped"})
 			continue
 		}
@@ -423,23 +459,52 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail(cmd, "%v", err)
 	}
-	if !caps.Create {
+	if !caps.Parent {
+		// No parent links here, so nothing to resume.
+		kept := steps[:0]
+		for _, s := range steps {
+			if s.resume {
+				x := s.task.External
+				out.Skipped = append(out.Skipped, pushItem{Task: s.task.Short, Title: s.task.Title, Key: x.Key, Type: x.Type, Status: "skipped"})
+				continue
+			}
+			kept = append(kept, s)
+		}
+		steps = kept
+		if len(steps) == 0 {
+			return a.pushReport(cmd, out, *asJSON, false)
+		}
+	}
+	creating := 0
+	for _, s := range steps {
+		if !s.resume {
+			creating++
+		}
+	}
+	if creating > 0 && !caps.Create {
 		return a.refusePush(cmd, []string{"this tracker cannot create issues"})
 	}
-	types, err := tr.IssueTypes(ctx)
+	var types []tracker.IssueType
 	typesKnown := true
-	switch {
-	case errors.Is(err, tracker.ErrUnsupported):
-		typesKnown = false
-		fmt.Fprintf(a.stderr, "rig %s: warning: this tracker lists no issue types; sending no type\n", cmd)
-	case err != nil:
-		return a.fail(cmd, "issue types: %v", err)
+	if creating > 0 {
+		var err error
+		types, err = tr.IssueTypes(ctx)
+		switch {
+		case errors.Is(err, tracker.ErrUnsupported):
+			typesKnown = false
+			fmt.Fprintf(a.stderr, "rig %s: warning: this tracker lists no issue types; sending no type\n", cmd)
+		case err != nil:
+			return a.fail(cmd, "issue types: %v", err)
+		}
 	}
 	level := map[string]*int{}
 	for _, it := range types {
 		level[it.Name] = it.Level
 	}
 	for _, s := range steps {
+		if s.resume {
+			continue
+		}
 		if !typesKnown {
 			s.typ = ""
 			continue
@@ -478,6 +543,11 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 
 	if *dry {
 		for _, s := range steps {
+			if s.resume {
+				x := s.task.External
+				out.Pushed = append(out.Pushed, pushItem{Task: s.task.Short, Title: s.task.Title, Key: x.Key, Type: x.Type, Parent: s.parentKey, Status: "would-verify"})
+				continue
+			}
 			item := pushItem{Task: s.task.Short, Title: s.task.Title, Type: s.typ, Status: "would-create", Parent: s.parentKey}
 			if p := inRun[s.parentTask]; p != nil {
 				item.Parent = "(new issue of " + p.task.Short + ")"
@@ -531,6 +601,31 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 		if err != nil {
 			stop(i, s, "%v", err)
 			break
+		}
+		if s.resume {
+			x := cur.External
+			if x == nil || !strings.EqualFold(x.Key, s.task.External.Key) || strings.EqualFold(x.ParentKey, s.parentKey) {
+				if x != nil {
+					keys[s.task.ID] = x.Key
+					out.Skipped = append(out.Skipped, pushItem{Task: s.task.Short, Title: s.task.Title, Key: x.Key, Type: x.Type, Status: "skipped"})
+				}
+				continue
+			}
+			keys[s.task.ID] = x.Key
+			item.Key, item.URL, item.Type, item.Parent = x.Key, x.URL, x.Type, s.parentKey
+			status, rerr := a.pushResume(ctx, w, tr, s, cur)
+			item.Status = status
+			out.Pushed = append(out.Pushed, item)
+			if rerr != nil {
+				out.Pushed[len(out.Pushed)-1].Error = rerr.Error()
+				fmt.Fprintf(a.stderr, "rig %s: task %s: %s: %v\n", cmd, s.task.Short, status, rerr)
+				failed = true
+				for _, r := range steps[i+1:] {
+					out.NotPushed = append(out.NotPushed, pushItem{Task: r.task.Short, Title: r.task.Title, Type: r.typ, Status: "not-pushed"})
+				}
+				break
+			}
+			continue
 		}
 		if cur.External != nil {
 			keys[s.task.ID] = cur.External.Key
@@ -592,7 +687,7 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 				} else {
 					found.Rev = ""
 				}
-				if err := a.pushRecord(ctx, w, spec, s, found, found.Rev != ""); err != nil {
+				if err := a.pushRecord(ctx, w, spec, s, found, found.Rev != "", ""); err != nil {
 					stop(i, s, "found %s but could not link it: %v", found.Key, err)
 					break
 				}
@@ -625,11 +720,14 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			}
 			// The issue exists. Link it, so a re-run does not make another.
 			item.Key, item.URL, item.Status, item.Error = issue.Key, issue.URL, "created-with-error", cerr.Error()
+			if errors.Is(cerr, tracker.ErrNotAttached) {
+				item.Status = "created-not-attached"
+			}
 			if err := checkIssueKey("created issue", issue.Key); err != nil {
 				stop(i, s, "%v", err)
 				break
 			}
-			if err := a.pushRecord(ctx, w, spec, s, issue, issue.Rev != ""); err != nil {
+			if err := a.pushRecord(ctx, w, spec, s, issue, issue.Rev != "", ""); err != nil {
 				stop(i, s, "created %s (%v) but could not link it: %v", issue.Key, cerr, err)
 				break
 			}
@@ -647,7 +745,7 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 			stop(i, s, "%v", err)
 			break
 		}
-		if err := a.pushRecord(ctx, w, spec, s, issue, true); err != nil {
+		if err := a.pushRecord(ctx, w, spec, s, issue, true, parentKey); err != nil {
 			stop(i, s, "created %s but could not link it: %v; a re-run finds it by %s", issue.Key, err, s.marker)
 			break
 		}
@@ -671,8 +769,9 @@ func (a *app) refusePush(cmd string, refusals []string) int {
 }
 
 // pushRecord links the task to the issue and, with snapshot, records the
-// tracker-sync snapshot with the issue's revision, in one write.
-func (a *app) pushRecord(ctx context.Context, w *work, spec trackerSpec, s *pushStep, issue tracker.Issue, snapshot bool) error {
+// tracker-sync snapshot with the issue's revision, in one write. parentKey is
+// recorded only when the parent link is known complete.
+func (a *app) pushRecord(ctx context.Context, w *work, spec trackerSpec, s *pushStep, issue tracker.Issue, snapshot bool, parentKey string) error {
 	owned := w.wf.OwnedFields()
 	typ := issue.Type
 	if typ == "" {
@@ -680,7 +779,7 @@ func (a *app) pushRecord(ctx context.Context, w *work, spec trackerSpec, s *push
 	}
 	link, err := store.NewEvent(store.KindExternal, store.ExternalData{
 		Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project, Key: issue.Key,
-		URL: issue.URL, Type: typ, Owned: owned,
+		URL: issue.URL, Type: typ, Owned: owned, ParentKey: parentKey,
 	})
 	if err != nil {
 		return err
@@ -700,6 +799,65 @@ func (a *app) pushRecord(ctx context.Context, w *work, spec trackerSpec, s *push
 		return events, nil
 	})
 	return err
+}
+
+// pushResume finishes the parent link of a linked task whose attach is not
+// recorded, without creating anything. It returns the item status and, for a
+// failure, the error.
+func (a *app) pushResume(ctx context.Context, w *work, tr tracker.Tracker, s *pushStep, cur store.Task) (string, error) {
+	key, parent := cur.External.Key, s.parentKey
+	issue, err := tr.Issue(ctx, key)
+	if err != nil {
+		return "not-verified", fmt.Errorf("read %s: %w", key, err)
+	}
+	status := "verified"
+	switch {
+	case issue.Parent != nil && strings.EqualFold(issue.Parent.Key, parent):
+	case issue.Parent != nil:
+		return "wrong-parent", fmt.Errorf("%s is under %s on the tracker, not %s; not moving it", key, issue.Parent.Key, parent)
+	default:
+		att, ok := tr.(tracker.ParentAttacher)
+		if !ok {
+			return "attach-failed", fmt.Errorf("this tracker cannot attach issues to a parent; attach %s to %s on the tracker, then re-run", key, parent)
+		}
+		if err := att.AttachParent(ctx, key, parent); err != nil {
+			return "attach-failed", fmt.Errorf("attach %s to %s: %w", key, parent, err)
+		}
+		issue, err = tr.Issue(ctx, key)
+		if err != nil {
+			return "not-verified", fmt.Errorf("attached %s to %s, but reading it back failed: %w", key, parent, err)
+		}
+		if issue.Parent == nil || !strings.EqualFold(issue.Parent.Key, parent) {
+			return "not-verified", fmt.Errorf("attached %s to %s, but the tracker does not show that parent", key, parent)
+		}
+		status = "attached"
+	}
+	ext := cur.External
+	link, err := store.NewEvent(store.KindExternal, store.ExternalData{
+		Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.Key,
+		URL: ext.URL, Type: ext.Type, Owned: ext.Owned, ParentKey: parent,
+	})
+	if err != nil {
+		return status, err
+	}
+	events := []store.Event{link}
+	if issue.Rev != "" {
+		sync, err := store.NewEvent(store.KindTrackerSync, store.TrackerSyncData{Rev: issue.Rev, Values: ownedValues(w.wf, issue, ext.Owned)})
+		if err != nil {
+			return status, err
+		}
+		events = append(events, sync)
+	}
+	_, err = w.st.Update(ctx, s.task.ID, func(c store.Task, _ []store.Finding) ([]store.Event, error) {
+		if c.External == nil || !strings.EqualFold(c.External.Key, key) {
+			return nil, errors.New("the task's link changed during the push")
+		}
+		return events, nil
+	})
+	if err != nil {
+		return status, fmt.Errorf("%s is attached to %s, but recording it failed: %w", key, parent, err)
+	}
+	return status, nil
 }
 
 // pushReport prints the outcome and returns the exit code.

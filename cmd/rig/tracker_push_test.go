@@ -908,3 +908,189 @@ func TestTrackerPushTreeRefusesUntypedChildUnderUnlistedRootType(t *testing.T) {
 		t.Fatalf("exit %d, creates %d: %s", code, len(e.fk.Created), e.err.String())
 	}
 }
+
+// attachEnv makes epic > story, pushes the epic, and arms the fake so the
+// story's create (the second) goes wrong.
+func attachEnv(t *testing.T) (e *pushEnv, epic, story string) {
+	t.Helper()
+	e = newPushEnv(t, pushCaps)
+	epic = e.task("epic", "")
+	story = e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	return
+}
+
+func (e *pushEnv) pushJSON(t *testing.T, want int, short string) pushJSON {
+	t.Helper()
+	var out pushJSON
+	e.err.Reset()
+	if code := e.json(&out, "tracker", "push", short); code != want {
+		t.Fatalf("exit %d, want %d: %s", code, want, e.err.String())
+	}
+	return out
+}
+
+func statusOf(t *testing.T, out pushJSON) string {
+	t.Helper()
+	if len(out.Pushed) != 1 {
+		t.Fatalf("pushed %+v", out)
+	}
+	return out.Pushed[0].Status
+}
+
+// AC1, AC2, AC3: a failed attach is reported, linked without ParentKey, and
+// resumed on a later push without a second create.
+func TestTrackerPushResumesFailedAttach(t *testing.T) {
+	e, epic, story := attachEnv(t)
+	e.fk.CreateAttachFailN = 2
+	if got := statusOf(t, e.pushJSON(t, 2, story)); got != "created-not-attached" {
+		t.Fatalf("status %q", got)
+	}
+	x := e.linkOf(story)
+	if x == nil || x.ParentKey != "" || len(e.fk.Created) != 2 {
+		t.Fatalf("link %+v, %d creates", x, len(e.fk.Created))
+	}
+	// AC3: attach fails again.
+	e.fk.AttachErr = errors.New("boom")
+	out := e.pushJSON(t, 2, story)
+	if got := statusOf(t, out); got != "attach-failed" || len(e.fk.Created) != 2 || len(e.fk.Attached) != 1 || e.linkOf(story).ParentKey != "" {
+		t.Fatalf("status %q, %d creates, %d attaches, link %+v", got, len(e.fk.Created), len(e.fk.Attached), e.linkOf(story))
+	}
+	// AC2: attach works.
+	e.fk.AttachErr = nil
+	out = e.pushJSON(t, 0, story)
+	pk := e.linkOf(epic).Key
+	x = e.linkOf(story)
+	is, _ := e.fk.Issue(ctx, x.Key)
+	if got := statusOf(t, out); got != "attached" || len(e.fk.Created) != 2 || len(e.fk.Attached) != 2 ||
+		e.fk.Attached[1].Key != x.Key || e.fk.Attached[1].Parent != pk ||
+		is.Parent == nil || is.Parent.Key != pk || x.ParentKey != pk || x.Rev == "" || x.Rev != is.Rev {
+		t.Fatalf("status %q, link %+v, issue %+v", got, x, is)
+	}
+	// Recorded: skipped, no tracker call.
+	n := len(e.fk.IssueCalls)
+	if out := e.pushJSON(t, 0, story); len(out.Skipped) != 1 || len(e.fk.IssueCalls) != n || len(e.fk.Attached) != 2 {
+		t.Fatalf("%+v, %d issue calls", out, len(e.fk.IssueCalls))
+	}
+}
+
+// AC4, AC5: a read-back failure leaves the issue attached; the next push
+// verifies it without create or attach, and the one after skips it.
+func TestTrackerPushVerifiesAttachedChild(t *testing.T) {
+	e, epic, story := attachEnv(t)
+	e.fk.FailCreateReadN = 2
+	if got := statusOf(t, e.pushJSON(t, 2, story)); got != "created-with-error" {
+		t.Fatalf("status %q", got)
+	}
+	if x := e.linkOf(story); x.ParentKey != "" || x.Rev != "" || x.Snapshot != nil {
+		t.Fatalf("link %+v", x)
+	}
+	if got := statusOf(t, e.pushJSON(t, 0, story)); got != "verified" {
+		t.Fatalf("status %q", got)
+	}
+	x := e.linkOf(story)
+	if len(e.fk.Created) != 2 || len(e.fk.Attached) != 0 || x.ParentKey != e.linkOf(epic).Key || x.Rev == "" || x.Snapshot == nil {
+		t.Fatalf("%d creates, %d attaches, link %+v", len(e.fk.Created), len(e.fk.Attached), x)
+	}
+	n := len(e.fk.IssueCalls)
+	if out := e.pushJSON(t, 0, story); len(out.Skipped) != 1 || len(e.fk.IssueCalls) != n {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// AC6: nothing to resume, so skipped with no tracker call.
+func TestTrackerPushSkipsWhenNothingToResume(t *testing.T) {
+	t.Run("root and clean create", func(t *testing.T) {
+		e, epic, story := attachEnv(t)
+		if code := e.run("tracker", "push", story); code != 0 {
+			t.Fatalf("push: %d", code)
+		}
+		if x := e.linkOf(story); x.ParentKey != e.linkOf(epic).Key { // AC9
+			t.Fatalf("clean create link %+v", x)
+		}
+		n := len(e.fk.IssueCalls)
+		if out := e.pushJSON(t, 0, epic); len(out.Skipped) != 1 || len(out.Pushed) != 0 {
+			t.Fatalf("root: %+v", out)
+		}
+		if out := e.pushJSON(t, 0, story); len(out.Skipped) != 1 || len(out.Pushed) != 0 {
+			t.Fatalf("recorded: %+v", out)
+		}
+		if len(e.fk.IssueCalls) != n {
+			t.Fatal("an Issue call was made")
+		}
+	})
+	t.Run("no push intent", func(t *testing.T) {
+		e, epic, story := attachEnv(t)
+		made, err := e.fk.Create(ctx, tracker.NewIssue{Type: "Story", Title: "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code := e.run("task", "link", story, "github:"+made.Key); code != 0 {
+			t.Fatalf("link: %d %s", code, e.err.String())
+		}
+		_ = epic
+		n := len(e.fk.IssueCalls)
+		if out := e.pushJSON(t, 0, story); len(out.Skipped) != 1 || len(out.Pushed) != 0 || len(e.fk.IssueCalls) != n || len(e.fk.Attached) != 0 {
+			t.Fatalf("%+v", out)
+		}
+	})
+	t.Run("no parent capability", func(t *testing.T) {
+		e, _, story := attachEnv(t)
+		e.fk.CreateAttachFailN = 2
+		e.pushJSON(t, 2, story)
+		caps := pushCaps
+		caps.Parent = false
+		noParent := fake.New(caps, nil, nil)
+		e.tr = noParent
+		if out := e.pushJSON(t, 0, story); len(out.Skipped) != 1 || len(out.Pushed) != 0 || len(noParent.IssueCalls) != 0 {
+			t.Fatalf("%+v", out)
+		}
+	})
+}
+
+// AC7: a child under another parent is reported, never moved.
+func TestTrackerPushWrongParent(t *testing.T) {
+	e, epic, story := attachEnv(t)
+	other := e.task("other", "")
+	if code := e.run("tracker", "push", other); code != 0 {
+		t.Fatal(e.err.String())
+	}
+	e.fk.CreateAttachFailN = 3
+	e.pushJSON(t, 2, story)
+	if err := e.fk.AttachParent(ctx, e.linkOf(story).Key, e.linkOf(other).Key); err != nil {
+		t.Fatal(err)
+	}
+	n := len(e.fk.Attached)
+	out := e.pushJSON(t, 2, story)
+	if got := statusOf(t, out); got != "wrong-parent" || len(e.fk.Attached) != n ||
+		!strings.Contains(out.Pushed[0].Error, e.linkOf(other).Key) || !strings.Contains(out.Pushed[0].Error, e.linkOf(epic).Key) {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// AC8: a tracker that cannot attach says what to do.
+func TestTrackerPushNoAttacher(t *testing.T) {
+	e, _, story := attachEnv(t)
+	e.fk.CreateAttachFailN = 2
+	e.pushJSON(t, 2, story)
+	e.tr = fake.Plain{Tracker: e.fk}
+	out := e.pushJSON(t, 2, story)
+	if got := statusOf(t, out); got != "attach-failed" || !strings.Contains(out.Pushed[0].Error, "on the tracker, then re-run") || len(e.fk.Attached) != 0 {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// AC10: a dry run names the resume and calls nothing.
+func TestTrackerPushDryRunWouldVerify(t *testing.T) {
+	e, _, story := attachEnv(t)
+	e.fk.CreateAttachFailN = 2
+	e.pushJSON(t, 2, story)
+	n := len(e.fk.IssueCalls)
+	var out pushJSON
+	if code := e.json(&out, "tracker", "push", story, "--dry-run"); code != 0 || statusOf(t, out) != "would-verify" ||
+		len(e.fk.IssueCalls) != n || len(e.fk.Attached) != 0 || len(e.fk.Created) != 2 {
+		t.Fatalf("%d %+v", code, out)
+	}
+}
