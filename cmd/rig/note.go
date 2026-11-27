@@ -9,7 +9,7 @@ import (
 	"github.com/AindriuB/rig/internal/store"
 )
 
-const noteUsage = `usage: rig note add [<task>] --kind <k> --text <text> [--actor <name>] [--json] [--repo <dir>]
+const noteUsage = `usage: rig note add [<task>] --kind <k> --text <text> [--actor <name>] [--once <k>] [--json] [--repo <dir>]
        rig note list [<task>] [--kind <k>] [--limit <n>] [--json] [--repo <dir>]`
 
 // note implements `rig note add|list`.
@@ -32,6 +32,7 @@ func (a *app) note(ctx context.Context, args []string) int {
 func (a *app) noteAdd(ctx context.Context, args []string) int {
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, "note add", args)
 	repoFlag, jsonOut := fs.str("--repo"), fs.boolean("--json")
 	kind, text := fs.str("--kind"), fs.str("--text")
 	pos, err := fs.parse(args)
@@ -39,6 +40,9 @@ func (a *app) noteAdd(ctx context.Context, args []string) int {
 		return a.fail("note add", "%s", noteUsage)
 	}
 	if err := actorOK(); err != nil {
+		return a.fail("note add", "%v", err)
+	}
+	if err := onceOK(); err != nil {
 		return a.fail("note add", "%v", err)
 	}
 	w, err := a.openWork(ctx, *repoFlag, true)

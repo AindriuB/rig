@@ -445,3 +445,84 @@ func Cause(t *testing.T, newStore func(*testing.T, store.Options) store.Store) {
 		}
 	}
 }
+
+// Once is the contract for Options.Once: every event a write stamps carries
+// the key; a write whose log already has it returns ErrRepeat, calls no
+// callback and appends nothing; the check is per log. newStore opens a store
+// with the given options and returns it with a reopen func that returns a
+// store over the same data with other options. A memory store may change its
+// options in place, so use only the store reopen last returned.
+func Once(t *testing.T, newStore func(*testing.T, store.Options) (store.Store, func(store.Options) store.Store)) {
+	ctx := context.Background()
+	s, reopen := newStore(t, store.Options{Actor: "tester"})
+	a, b := create(t, s, "a"), create(t, s, "b")
+	k := reopen(store.Options{Actor: "tester", Once: "k"})
+
+	two := func(store.Task, []store.Finding) ([]store.Event, error) {
+		return []store.Event{countEv(t), countEv(t)}, nil
+	}
+	_, evs, err := k.UpdateEvents(ctx, a.ID, two)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("first write: %v, %d events", err, len(evs))
+	}
+	for _, e := range events(t, k, a.ID)[1:] {
+		if e.Once != "k" {
+			t.Fatalf("event %s once = %q, want k", e.Kind, e.Once)
+		}
+	}
+	if first := events(t, k, a.ID)[0]; first.Once != "" {
+		t.Fatalf("created event once = %q without a key", first.Once)
+	}
+
+	called := false
+	_, _, err = k.UpdateEvents(ctx, a.ID, func(store.Task, []store.Finding) ([]store.Event, error) {
+		called = true
+		return []store.Event{countEv(t)}, nil
+	})
+	if !errors.Is(err, store.ErrRepeat) || called {
+		t.Fatalf("repeat: err = %v, callback called = %v", err, called)
+	}
+	if n := len(events(t, k, a.ID)); n != 3 {
+		t.Fatalf("log has %d events after a repeat, want 3", n)
+	}
+
+	// The same key on another task is not a repeat.
+	if _, _, err := k.UpdateEvents(ctx, b.ID, two); err != nil {
+		t.Fatalf("same key on a different task: %v", err)
+	}
+
+	// A repository note, and a task's own note, are checked in their own logs.
+	if _, err := k.AddNote(ctx, store.Note{Kind: "n", Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.AddNote(ctx, store.Note{Kind: "n", Text: "x"}); !errors.Is(err, store.ErrRepeat) {
+		t.Fatalf("repeated repository note: %v", err)
+	}
+	if _, err := k.AddNote(ctx, store.Note{Task: a.ID, Kind: "n", Text: "x"}); !errors.Is(err, store.ErrRepeat) {
+		t.Fatalf("repeated task note: %v", err)
+	}
+	notes, err := k.Notes(ctx, store.NoteFilter{})
+	if err != nil || len(notes) != 1 {
+		t.Fatalf("%d notes, %v", len(notes), err)
+	}
+
+	// Created events are searched across every task log.
+	c := reopen(store.Options{Actor: "tester", Once: "c"}) // a memory store shares one options value: k is c from here
+	nt := store.NewTask{Slug: "c1", Title: "T", Workflow: basic, Initial: "todo"}
+	if _, _, err := c.CreateTaskEvent(ctx, nt); err != nil {
+		t.Fatal(err)
+	}
+	nt.Slug = "c2"
+	if _, _, err := c.CreateTaskEvent(ctx, nt); !errors.Is(err, store.ErrRepeat) {
+		t.Fatalf("repeated create: %v", err)
+	}
+	if _, err := c.Task(ctx, "c2"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("repeated create wrote a task: %v", err)
+	}
+	// The key on a task event is not a created-event repeat of the same key
+	// on a different kind of write, but a task with it in its log is one.
+	k = reopen(store.Options{Actor: "tester", Once: "k"})
+	if _, _, err := k.CreateTaskEvent(ctx, store.NewTask{Slug: "k1", Title: "T", Workflow: basic, Initial: "todo"}); err != nil {
+		t.Fatalf("a count event with the key is not a created repeat: %v", err)
+	}
+}

@@ -573,22 +573,28 @@ func (a *app) planRefresh(t store.Task, issue tracker.Issue, values map[string]a
 	return p, nil
 }
 
+// parentFor is the id of the task t's issue's parent is linked to among
+// tasks, or "" with a warning when that parent would make a cycle. It reads
+// nothing but its arguments.
+func parentFor(t store.Task, tasks []store.Task) (string, string) {
+	ext := t.External
+	pt, ok := store.Linked(&store.External{Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.ParentKey}, tasks)
+	if !ok {
+		return "", ""
+	}
+	if err := store.CheckParent(t.ID, pt.ID, tasks); err != nil {
+		return "", fmt.Sprintf("parent %s of %s is not linked: %v", ext.ParentKey, ext.Key, err)
+	}
+	return pt.ID, ""
+}
+
 // resolveParent links t to the task for its issue's parent, once that parent
 // is in the store. A parent that would make a cycle is a warning, and no
 // parent is set. With dry it writes nothing. It adds "parent" to res.Changed
 // when the parent is, or would be, set.
 func (a *app) resolveParent(ctx context.Context, w *work, t store.Task, dry bool, res *refreshTask) error {
 	ext := t.External
-	find := func(tasks []store.Task) (string, string) {
-		pt, ok := store.Linked(&store.External{Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.ParentKey}, tasks)
-		if !ok {
-			return "", ""
-		}
-		if err := store.CheckParent(t.ID, pt.ID, tasks); err != nil {
-			return "", fmt.Sprintf("parent %s of %s is not linked: %v", ext.ParentKey, ext.Key, err)
-		}
-		return pt.ID, ""
-	}
+	find := func(tasks []store.Task) (string, string) { return parentFor(t, tasks) }
 	tasks, err := w.st.Tasks(ctx, store.TaskFilter{})
 	if err != nil {
 		return err

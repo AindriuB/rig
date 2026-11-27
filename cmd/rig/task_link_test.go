@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/tracker"
@@ -183,8 +185,8 @@ func TestTaskLink(t *testing.T) {
 		len(v.External.Drift) != 0 || v.External.SyncedAt.IsZero() {
 		t.Fatalf("%+v", v)
 	}
-	if c.n != 2 {
-		t.Fatalf("%d tracker calls, want the fetch and one refresh", c.n)
+	if c.n != 1 {
+		t.Fatalf("%d tracker calls, want the one fetch", c.n)
 	}
 	if v.External.URL != "https://t.example/12" || v.External.Type != "Task" {
 		t.Fatalf("link URL/Type: %+v", v.External)
@@ -533,6 +535,39 @@ func TestTaskSetUsesLinkOwnedFields(t *testing.T) {
 	}
 }
 
+// A refresh plan that fails (here the sync event's timestamp cannot be
+// encoded) fails the whole link: non-zero exit, and neither the link nor any
+// other event is recorded.
+func TestTaskLinkRefreshPlanFailureRecordsNothing(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("12", "Remote")}, nil)
+	x := e.mkTask("x")
+	n := e.eventCount(x.ID)
+	// The store stamps events with a.now too, so only a call from planRefresh
+	// gets the year-10000 time; every store write still works. A link written
+	// before the refresh is planned would therefore be recorded.
+	base := e.a.now
+	e.a.now = func() time.Time {
+		pcs := make([]uintptr, 16)
+		frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+		for f, more := frames.Next(); ; f, more = frames.Next() {
+			if strings.HasSuffix(f.Function, ".planRefresh") {
+				return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+			}
+			if !more {
+				return base()
+			}
+		}
+	}
+	if code := e.run("task", "link", x.Short, "12"); code == 0 {
+		t.Fatalf("exit 0 with a failing refresh plan; stdout %q", e.out.String())
+	}
+	got, _ := e.st().Task(ctx, x.ID)
+	if got.External != nil || e.eventCount(x.ID) != n {
+		t.Fatalf("a link was recorded: %+v, events %d -> %d", got.External, n, e.eventCount(x.ID))
+	}
+}
+
 // failAfter lets n tracker reads through, then fails every later one.
 type failAfter struct {
 	tracker.Tracker
@@ -584,7 +619,7 @@ func TestTaskLinkReadsFirst(t *testing.T) {
 	e := newTrkEnv(t, ghCfg())
 	e.tr = &failAfter{Tracker: fake.New(allCaps, []tracker.Issue{base}, nil), n: 1}
 	x := e.mkTask("x")
-	if code := e.run("task", "link", x.Short, "12"); code != 2 || !strings.Contains(e.err.String(), "link stands") {
+	if code := e.run("task", "link", x.Short, "12"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, e.err.String())
 	}
 	got, _ := e.st().Task(ctx, x.ID)

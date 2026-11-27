@@ -56,7 +56,7 @@ func (o Options) Created(n NewTask, taken func(string) bool) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("new task: %w", err)
 	}
-	return Event{V: Version, ID: id, Seq: 1, Time: now, Actor: o.Actor, Kind: KindCreated, Data: raw, Cause: o.cause()}, nil
+	return Event{V: Version, ID: id, Seq: 1, Time: now, Actor: o.Actor, Kind: KindCreated, Data: raw, Cause: o.cause(), Once: o.Once}, nil
 }
 
 // cause returns a copy of o.Cause, or nil.
@@ -97,6 +97,7 @@ func (o Options) Stamp(log []Event, events []Event) ([]Event, error) {
 		seq++
 		e.V, e.ID, e.Seq, e.Time, e.Actor = Version, NewULID(now), seq, now, o.Actor
 		e.Cause = o.cause()
+		e.Once = o.Once
 		var err error
 		switch e.Kind {
 		case KindTransition:

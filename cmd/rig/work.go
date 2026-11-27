@@ -23,6 +23,8 @@ type work struct {
 	st   store.Store
 	wf   *workflow.Workflow
 	src  workflow.Source
+	// once is this run's --once key; see checkOnce.
+	once string
 	// hooks is st's hook wrapper, nil when the store runs no hooks.
 	hooks *hookWriter
 }
@@ -86,7 +88,7 @@ func (a *app) openWorkHooks(ctx context.Context, repoFlag string, needValid, hoo
 	if err != nil {
 		return nil, err
 	}
-	w := &work{dir: dir, repo: git.Repo{Dir: dir}, st: st, wf: wf, src: src}
+	w := &work{dir: dir, repo: git.Repo{Dir: dir}, st: st, wf: wf, src: src, once: a.onceKey}
 	if hooks && wfErr == nil {
 		w.hooks = &hookWriter{Store: st, w: w, a: a}
 		w.st = w.hooks
@@ -181,6 +183,9 @@ func (w *work) move(ctx context.Context, ref, to string, args workflow.Args) (mo
 func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args) (moveResult, error) {
 	t, err := w.st.Task(ctx, ref)
 	if err != nil {
+		return moveResult{}, err
+	}
+	if err := w.checkOnce(ctx, t.ID); err != nil {
 		return moveResult{}, err
 	}
 	findings, err := w.st.Findings(ctx, t.ID)
@@ -368,6 +373,9 @@ func snapshot(t store.Task, findings []store.Finding) ([]byte, error) {
 // such task, an ambiguous reference with its matches, a write conflict, an
 // invalid workflow, a store or git error).
 func (a *app) storeFail(cmd string, err error) int {
+	if errors.Is(err, store.ErrRepeat) && a.onceKey != "" {
+		return a.printRepeat()
+	}
 	var r *refusal
 	if errors.As(err, &r) {
 		fmt.Fprintf(a.stderr, "rig %s: %s\n", cmd, r.reason)

@@ -50,6 +50,9 @@ type Event struct {
 	// Cause says which event a hook was running for when it wrote this one.
 	// Fold ignores it.
 	Cause *Cause `json:"cause,omitempty"`
+	// Once is the --once key of the write that made this event. A write whose
+	// key is already in the log is a repeat. Fold ignores it.
+	Once string `json:"once,omitempty"`
 }
 
 // Cause records what made a write: the event a hook ran for, the hook, and
