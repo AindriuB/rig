@@ -247,21 +247,8 @@ func (w *Workflow) runHooks(ctx context.Context, r Runner, event store.Event, t 
 			continue
 		}
 		name := w.HookName(i)
-		env := []string{"RIG_HOOK_NAME=" + name, "RIG_HOOK_EVENT=" + event.ID, "RIG_ACTOR=hook:" + name}
-		depth := 0
-		if event.Cause != nil {
-			depth = event.Cause.Depth
-		}
-		env = append(env, "RIG_HOOK_DEPTH="+strconv.Itoa(depth))
-		if taskID != "" {
-			env = append(env, "RIG_HOOK_TASK="+taskID)
-		}
-		timeout := limit
-		if h.Timeout != "" {
-			if d, err := time.ParseDuration(h.Timeout); err == nil && d > 0 {
-				timeout = d
-			}
-		}
+		env := hookEnv(name, event, taskID)
+		timeout := hookTimeout(h, limit)
 		hr := HookRun{Timeout: timeout, Env: env,
 			EnvAllow: append(append([]string(nil), baseHookEnv...), h.Env...)}
 		if err := runHook(ctx, r, substitute(h.Run, values), stdin, hr); err != nil {
@@ -269,6 +256,30 @@ func (w *Workflow) runHooks(ctx context.Context, r Runner, event store.Event, t 
 		}
 	}
 	return errs
+}
+
+// hookEnv is the RIG_HOOK_* and RIG_ACTOR variables a hook is given.
+func hookEnv(name string, event store.Event, taskID string) []string {
+	env := []string{"RIG_HOOK_NAME=" + name, "RIG_HOOK_EVENT=" + event.ID, "RIG_ACTOR=hook:" + name}
+	depth := 0
+	if event.Cause != nil {
+		depth = event.Cause.Depth
+	}
+	env = append(env, "RIG_HOOK_DEPTH="+strconv.Itoa(depth))
+	if taskID != "" {
+		env = append(env, "RIG_HOOK_TASK="+taskID)
+	}
+	return env
+}
+
+// hookTimeout is h's own timeout when it has a valid one, else def.
+func hookTimeout(h Hook, def time.Duration) time.Duration {
+	if h.Timeout != "" {
+		if d, err := time.ParseDuration(h.Timeout); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 // runHook runs a hook under hr.Timeout. A runner that takes the hook's

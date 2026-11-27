@@ -9,13 +9,15 @@ import (
 	"github.com/AindriuB/rig/internal/proc"
 )
 
-const hooksUsage = "usage: rig hooks start [--json] [--] <cmd> [args...]"
+const hooksUsage = "usage: rig hooks start [--json] [--] <cmd> [args...] | rig hooks deliver [--follow] [--repo <dir>]"
 
-func (a *app) hooks(_ context.Context, args []string) int {
+func (a *app) hooks(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		return a.fail("hooks", "%s", hooksUsage)
 	}
 	switch args[0] {
+	case "deliver":
+		return a.hooksDeliver(ctx, args[1:])
 	case "start":
 		return a.hooksStart(args[1:])
 	}
