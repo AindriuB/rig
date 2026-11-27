@@ -195,7 +195,7 @@ func (a *app) hookCause(ctx context.Context, st store.Store, repo git.Repo) *sto
 	}
 	if !found {
 		if n, err := strconv.Atoi(strings.TrimSpace(a.getenv("RIG_HOOK_DEPTH"))); err == nil && n >= 0 {
-			c.Depth = n + 1
+			c.Depth = min(n, maxHookDepth) + 1
 		}
 	}
 	return c
