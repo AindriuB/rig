@@ -63,6 +63,7 @@ func (a *app) events(ctx context.Context, args []string) int {
 	if cur == nil && *fromStart {
 		cur = store.NewCursor()
 	}
+	held := map[string]bool{}
 	for {
 		res, err := feeder.Feed(ctx, cur)
 		if err != nil {
@@ -71,9 +72,19 @@ func (a *app) events(ctx context.Context, args []string) int {
 			}
 			return a.storeFail("events", err)
 		}
+		now := map[string]bool{}
 		for _, h := range res.Held {
-			fmt.Fprintf(a.stderr, "rig events: %s held: %d unreadable lines in its log\n", h.Name, h.Skipped)
+			now[h.Name] = true
+			if !held[h.Name] {
+				fmt.Fprintf(a.stderr, "rig events: %s held: %d unreadable lines in its log\n", h.Name, h.Skipped)
+			}
 		}
+		for name := range held {
+			if !now[name] {
+				fmt.Fprintf(a.stderr, "rig events: %s no longer held\n", name)
+			}
+		}
+		held = now
 		for _, it := range res.Items {
 			if err := a.printEvent(w.wf, it, *jsonOut); err != nil {
 				return a.fail("events", "%v", err)

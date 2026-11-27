@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -406,4 +407,113 @@ func newPipe() (*os.File, *os.File) {
 		panic(err)
 	}
 	return r, w
+}
+
+// scriptFeeder wraps a store and answers Feed from a script of held lists.
+type scriptFeeder struct {
+	store.Store
+	held  [][]store.HeldLog
+	calls atomic.Int32
+}
+
+func (f *scriptFeeder) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, error) {
+	i := min(int(f.calls.Add(1))-1, len(f.held)-1)
+	return store.FeedResult{Next: store.NewCursor(), Held: f.held[i]}, nil
+}
+
+func TestEventsHeldWarnsOncePerChange(t *testing.T) {
+	e := newEventsEnv(t)
+	h := []store.HeldLog{{Name: "bad", Skipped: 2}}
+	f := &scriptFeeder{Store: e.st, held: [][]store.HeldLog{h, h, h, nil}}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.run(cctx, []string{"events", "--follow"}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for f.calls.Load() < 4 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if f.calls.Load() < 4 {
+		t.Fatalf("only %d scans", f.calls.Load())
+	}
+	s := errOut.String()
+	if n := strings.Count(s, "bad held: 2 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, s)
+	}
+	if n := strings.Count(s, "bad no longer held"); n != 1 {
+		t.Errorf("release line printed %d times: %q", n, s)
+	}
+}
+
+func TestEventsOneShotHeldOnce(t *testing.T) {
+	e := newEventsEnv(t)
+	f := &scriptFeeder{Store: e.st, held: [][]store.HeldLog{{{Name: "bad", Skipped: 1}}}}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	if code := a.run(ctx, []string{"events"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if n := strings.Count(errOut.String(), "bad held: 1 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, errOut.String())
+	}
+}
+
+// countFeeder delegates Feed to the real store and counts the scans.
+type countFeeder struct {
+	store.Store
+	calls atomic.Int32
+}
+
+func (f *countFeeder) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, error) {
+	f.calls.Add(1)
+	return f.Store.(store.Feeder).Feed(ctx, cur)
+}
+
+// AC7: a baseline over a still-unreadable log stays held on the next scan.
+func TestEventsFollowBaselineHeldStaysHeld(t *testing.T) {
+	e := newEventsEnv(t)
+	bad := e.newTask("bad")
+	g := git.Repo{Dir: e.repo}
+	ref := gitref.TasksPrefix + bad.ID
+	tip, _, _ := g.ResolveRef(ctx, ref)
+	blobs, _ := g.ReadBlobs(ctx, []string{tip + ":" + gitref.LogFile})
+	blob, _ := g.WriteBlob(ctx, append(append([]byte{}, blobs[0].Data...), "not json\n"...))
+	tree, _ := g.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: gitref.LogFile}})
+	commit, err := g.CommitTree(ctx, tree, []string{tip}, "garbage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.UpdateRef(ctx, ref, commit, tip); err != nil {
+		t.Fatal(err)
+	}
+	f := &countFeeder{Store: e.st}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.run(cctx, []string{"events", "--follow"}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for f.calls.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if f.calls.Load() < 3 {
+		t.Fatalf("only %d scans", f.calls.Load())
+	}
+	s := errOut.String()
+	if n := strings.Count(s, "bad held: 1 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, s)
+	}
+	if strings.Contains(s, "no longer held") {
+		t.Errorf("released while still unreadable: %q", s)
+	}
 }

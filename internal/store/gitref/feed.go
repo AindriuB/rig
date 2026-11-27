@@ -60,7 +60,7 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 		}
 		events, skipped := parseLog(blobs[i].Data)
 		old, seen := cur.Logs[name]
-		if baseline {
+		if baseline && skipped == 0 {
 			next.Logs[name] = store.LogPos{Tip: tips[name], Count: len(events)}
 			continue
 		}
@@ -74,7 +74,15 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 				}
 			}
 			res.Held = append(res.Held, store.HeldLog{Name: label, Skipped: skipped})
-			if seen {
+			if baseline {
+				pos, ok, err := s.lastReadable(ctx, tips[name])
+				if err != nil {
+					return store.FeedResult{}, err
+				}
+				if ok {
+					next.Logs[name] = pos
+				}
+			} else if seen {
 				next.Logs[name] = old
 			}
 			continue
@@ -94,4 +102,30 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 		next.Logs[name] = store.LogPos{Tip: tips[name], Count: len(events)}
 	}
 	return res, nil
+}
+
+// lastReadable walks the first-parent ancestors of tip and returns the newest
+// whose log has no unreadable line, with that log's event count. ok is false
+// when there is none.
+func (s *Store) lastReadable(ctx context.Context, tip string) (store.LogPos, bool, error) {
+	for k := 1; ; k++ {
+		oid, found, err := s.git.ResolveRef(ctx, fmt.Sprintf("%s~%d", tip, k))
+		if err != nil {
+			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
+		}
+		if !found {
+			return store.LogPos{}, false, nil
+		}
+		blobs, err := s.git.ReadBlobs(ctx, []string{oid + ":" + LogFile})
+		if err != nil {
+			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
+		}
+		if blobs[0].Missing {
+			return store.LogPos{}, false, nil
+		}
+		events, skipped := parseLog(blobs[0].Data)
+		if skipped == 0 {
+			return store.LogPos{Tip: oid, Count: len(events)}, true, nil
+		}
+	}
 }
