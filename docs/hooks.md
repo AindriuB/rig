@@ -187,7 +187,10 @@ It starts `<cmd>` with no `RIG_HOOK_*` variables, detached in its own session
 (Unix) or outside the hook's job (Windows), with no standard input or output,
 and prints its process id (`{"pid": n}` with `--json`) and returns at once. rig
 flags before `<cmd>` belong to rig. Everything after `<cmd>` belongs to the
-program. It starts the program in the repository folder. On Windows, if the
+program. It starts the program in the current directory, so a hook that must
+run it elsewhere changes directory first. The program keeps the hook's
+allowlisted environment (the `env` names the hook lists) and `RIG_ACTOR`, which
+is `hook:<name>`; only the `RIG_HOOK_*` variables are removed. On Windows, if the
 hook's job forbids breakaway, rig warns that the child will not outlive the job.
 
 If you start work some other way, clear `RIG_HOOK_*` and detach it yourself
@@ -250,8 +253,10 @@ It runs on the machine that made the write. It misses a task that drops back to
   "run": ["rig", "hooks", "start", "--", "run-agent", "{short}", "{state}"] }
 ```
 
-The agent's own `rig` writes are not counted as hook-caused, so the loop does
-not stop after three rounds.
+The agent inherits only the variables the hook lists in `env`, so list what it
+needs. Its own `rig` writes are recorded with actor `hook:next-agent`, because
+the started program keeps `RIG_ACTOR`. They are not counted as hook-caused, so
+the loop does not stop after three rounds.
 
 **A dashboard.** Hooks are inline, so they can lose an event if the endpoint
 is down. A dashboard that must lose none reads the feed instead:

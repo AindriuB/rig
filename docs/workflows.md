@@ -198,8 +198,9 @@ and never through a shell. An argument that is exactly `{short}`, `{id}`,
 `{slug}`, `{state}`, `{reason}` or `{sha}` is replaced by that value, and the
 value stays one argument whatever it contains, spaces and `;` included. A
 placeholder inside longer text, such as `--to={state}`, is refused by
-validation. In a hook `{state}` is the state entered; in a gate it is the state
-the move leaves.
+validation. In a hook `{state}` is the task's state after the event, and
+`{reason}` and `{sha}` are refused when the hook's `on` selector can fire for a
+kind other than `transition`; in a gate `{state}` is the state the move leaves.
 
 ## Linking tasks to a tracker
 
