@@ -214,6 +214,7 @@ func TestEventsHeldLog(t *testing.T) {
 	tip, _, _ := g.ResolveRef(ctx, ref)
 	blobs, _ := g.ReadBlobs(ctx, []string{tip + ":" + gitref.LogFile})
 	data := append(append([]byte{}, blobs[0].Data...), "not json\n"...)
+	data = append(data, blobs[0].Data...)
 	blob, _ := g.WriteBlob(ctx, data)
 	tree, _ := g.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: gitref.LogFile}})
 	commit, err := g.CommitTree(ctx, tree, []string{tip}, "garbage")

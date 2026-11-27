@@ -71,7 +71,7 @@ func TestFeedHoldsLogWithUnreadableLines(t *testing.T) {
 	ref := TasksPrefix + bad.ID
 	tip, _, _ := repo.ResolveRef(ctx, ref)
 	blobs, _ := repo.ReadBlobs(ctx, []string{tip + ":" + LogFile})
-	blob, _ := repo.WriteBlob(ctx, append(append([]byte{}, blobs[0].Data...), "junk\n"...))
+	blob, _ := repo.WriteBlob(ctx, append(append(append([]byte{}, blobs[0].Data...), "junk\n"...), blobs[0].Data...))
 	tree, _ := repo.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: LogFile}})
 	commit, err := repo.CommitTree(ctx, tree, []string{tip}, "junk")
 	if err != nil {
