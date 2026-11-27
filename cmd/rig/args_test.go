@@ -74,3 +74,9 @@ func TestKnownOptionsCoverEveryRegisteredFlag(t *testing.T) {
 		t.Errorf("found only %d registrations: the scan is broken", seen)
 	}
 }
+
+func TestKnownOptionsHasOnce(t *testing.T) {
+	if !knownOptions["--once"] {
+		t.Fatal("--once is not in knownOptions")
+	}
+}

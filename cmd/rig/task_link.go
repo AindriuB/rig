@@ -67,13 +67,17 @@ func (a *app) taskParent(ctx context.Context, args []string) int {
 	const cmd = "task parent"
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, cmd, args)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 2 {
-		return a.fail(cmd, "usage: rig task parent <task> <parent|none> [--actor <name>] [--json] [--repo <dir>]")
+		return a.fail(cmd, "usage: rig task parent <task> <parent|none> [--actor <name>] [--once <k>] [--json] [--repo <dir>]")
 	}
 	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	if err := onceOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])
@@ -126,13 +130,17 @@ func (a *app) taskLink(ctx context.Context, args []string) int {
 	const cmd = "task link"
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, cmd, args)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 2 {
-		return a.fail(cmd, "usage: rig task link <task> [<kind>:]<key> [--actor <name>] [--json] [--repo <dir>]")
+		return a.fail(cmd, "usage: rig task link <task> [<kind>:]<key> [--actor <name>] [--once <k>] [--json] [--repo <dir>]")
 	}
 	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	if err := onceOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
 	kind, key, prefixed := splitRef(pos[1])
@@ -389,13 +397,17 @@ func (a *app) taskUnlink(ctx context.Context, args []string) int {
 	const cmd = "task unlink"
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, cmd, args)
 	repo := fs.str("--repo")
 	asJSON := fs.boolean("--json")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 {
-		return a.fail(cmd, "usage: rig task unlink <task> [--actor <name>] [--json] [--repo <dir>]")
+		return a.fail(cmd, "usage: rig task unlink <task> [--actor <name>] [--once <k>] [--json] [--repo <dir>]")
 	}
 	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	if err := onceOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
 	w, t, err := a.openTask(ctx, *repo, pos[0])

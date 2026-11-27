@@ -15,7 +15,7 @@ import (
 	"github.com/AindriuB/rig/internal/tracker"
 )
 
-const reportUsage = "usage: rig tracker report <task> [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run] [--actor <name>] [--json] [--repo <dir>]"
+const reportUsage = "usage: rig tracker report <task> [--status] [--comment pr|state|summary] [--include findings|notes]... [--dry-run] [--actor <name>] [--once <k>] [--json] [--repo <dir>]"
 
 // reportCommentOut is the comment part of `rig tracker report --json`. Body
 // is set only by --dry-run.
@@ -143,6 +143,7 @@ func reportBody(kind, short, state, prURL string, counters map[string]int, findi
 // error, including no tracker.
 func (a *app) trackerReport(ctx context.Context, args []string) int {
 	const cmd = "tracker report"
+	orig := args
 	args, rep, err := splitRepeated(args, []string{"--include"}, []string{"--comment", "--actor", "--role", "--repo"})
 	if err != nil {
 		return a.fail(cmd, "%v\n%s", err, reportUsage)
@@ -150,6 +151,7 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	include := rep["--include"]
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, cmd, orig)
 	repo, commentFlag := fs.str("--repo"), fs.str("--comment")
 	statusFlag, dry, asJSON := fs.boolean("--status"), fs.boolean("--dry-run"), fs.boolean("--json")
 	pos, err := fs.parse(args)
@@ -157,6 +159,9 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 		return a.fail(cmd, "%s", reportUsage)
 	}
 	if err := actorOK(); err != nil {
+		return a.fail(cmd, "%v", err)
+	}
+	if err := onceOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
 	commentGiven := slices.Contains(fs.given, "--comment")
@@ -187,6 +192,9 @@ func (a *app) trackerReport(ctx context.Context, args []string) int {
 	}
 	t, err := w.st.Task(ctx, pos[0])
 	if err != nil {
+		return a.storeFail(cmd, err)
+	}
+	if err := w.checkOnce(ctx, t.ID); err != nil {
 		return a.storeFail(cmd, err)
 	}
 	ext := t.External

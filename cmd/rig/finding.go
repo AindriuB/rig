@@ -49,9 +49,9 @@ type findingAdded struct {
 	Duplicate bool          `json:"duplicate"`
 }
 
-const findingUsage = `usage: rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]... [--actor <name>] [--json] [--repo <dir>]
+const findingUsage = `usage: rig finding add <task> --severity <sev> --summary <text> [--path <p[:line]>] [--key <k>] [--field <name>=<value>]... [--actor <name>] [--once <k>] [--json] [--repo <dir>]
        rig finding list <task> [--status <s>]... [--blocking] [--json] [--repo <dir>]
-       rig finding set <task> <finding> --status <s> [--actor <name>] [--json] [--repo <dir>]`
+       rig finding set <task> <finding> --status <s> [--actor <name>] [--once <k>] [--json] [--repo <dir>]`
 
 // finding implements `rig finding add|list|set`.
 func (a *app) finding(ctx context.Context, args []string) int {
@@ -73,6 +73,7 @@ func (a *app) finding(ctx context.Context, args []string) int {
 }
 
 func (a *app) findingAdd(ctx context.Context, args []string) int {
+	orig := args
 	args, rep, err := takeRepeated(args, []string{"--field"}, []string{"--severity", "--summary", "--path", "--key", "--repo"})
 	if err != nil {
 		return a.fail("finding add", "%v", err)
@@ -80,6 +81,7 @@ func (a *app) findingAdd(ctx context.Context, args []string) int {
 	fieldArgs := rep["--field"]
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, "finding add", orig)
 	repoFlag, jsonOut := fs.str("--repo"), fs.boolean("--json")
 	sev, summary, path, key := fs.str("--severity"), fs.str("--summary"), fs.str("--path"), fs.str("--key")
 	pos, err := fs.parse(args)
@@ -89,8 +91,14 @@ func (a *app) findingAdd(ctx context.Context, args []string) int {
 	if err := actorOK(); err != nil {
 		return a.fail("finding add", "%v", err)
 	}
+	if err := onceOK(); err != nil {
+		return a.fail("finding add", "%v", err)
+	}
 	w, err := a.openWork(ctx, *repoFlag, true)
 	if err != nil {
+		return a.storeFail("finding add", err)
+	}
+	if err := w.checkOnce(ctx, pos[0]); err != nil {
 		return a.storeFail("finding add", err)
 	}
 	if !slices.Contains(w.wf.Findings.Severities, *sev) {
@@ -247,6 +255,7 @@ func validFindingStatus(s string) bool {
 func (a *app) findingSet(ctx context.Context, args []string) int {
 	fs := newFlags()
 	actorOK := a.actorFlags(fs)
+	onceOK := a.onceFlag(fs, "finding set", args)
 	repoFlag, jsonOut, status := fs.str("--repo"), fs.boolean("--json"), fs.str("--status")
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 2 || *status == "" {
@@ -255,11 +264,17 @@ func (a *app) findingSet(ctx context.Context, args []string) int {
 	if err := actorOK(); err != nil {
 		return a.fail("finding set", "%v", err)
 	}
+	if err := onceOK(); err != nil {
+		return a.fail("finding set", "%v", err)
+	}
 	if !validFindingStatus(*status) {
 		return a.fail("finding set", "status %q is not one of open, fixed, wontfix, deferred", *status)
 	}
 	w, err := a.openWork(ctx, *repoFlag, true)
 	if err != nil {
+		return a.storeFail("finding set", err)
+	}
+	if err := w.checkOnce(ctx, pos[0]); err != nil {
 		return a.storeFail("finding set", err)
 	}
 	var id string
