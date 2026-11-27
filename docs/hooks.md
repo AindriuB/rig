@@ -174,8 +174,9 @@ problems:
 
 1. It would inherit `RIG_HOOK_EVENT`, so every write it makes would count as
    caused by the hook. After three rounds its writes would stop firing hooks.
-2. The hook's process group is killed when the hook ends or times out, so
-   anything left in it dies.
+2. The hook's process group is killed when the hook times out or is
+   cancelled, so anything still in it dies then. A hook that ends normally
+   leaves its descendants running.
 
 Start such work with `rig hooks start`:
 
