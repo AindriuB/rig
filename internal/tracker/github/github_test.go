@@ -240,6 +240,58 @@ func TestCreateReadBackFailureReturnsKeyAndURL(t *testing.T) {
 	}
 }
 
+// AC11: the attach failure is ErrNotAttached; the read-back failure is not.
+func TestCreateAttachFailureIsErrNotAttached(t *testing.T) {
+	st := seedState(true)
+	st.FailSub = true
+	tr := newTracker(t, st)
+	is, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if !errors.Is(err, tracker.ErrNotAttached) || is.Key != "5" || is.URL == "" {
+		t.Fatalf("issue = %+v, err = %v", is, err)
+	}
+}
+
+func TestCreateReadBackFailureIsNotErrNotAttached(t *testing.T) {
+	tr := newTracker(t, seedState(true))
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "attached")
+	script := "#!/bin/sh\ncase \"$*\" in *graphql*) if [ -e '" + flag + "' ]; then echo 'gh: boom (HTTP 500)' >&2; exit 1; fi;; *repos/o/r/issues/1/sub_issues*) : > '" + flag + "';; esac\nexec '" + os.Args[0] + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err := tr.Create(ctx, tracker.NewIssue{Title: "T", ParentKey: "1"})
+	if err == nil || errors.Is(err, tracker.ErrNotAttached) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// AC11: AttachParent posts the child's REST id to the parent's sub_issues.
+func TestAttachParentPostsRESTID(t *testing.T) {
+	st := seedState(true)
+	_, calls := fakeGH(t, st)
+	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})
+	if err := tr.AttachParent(ctx, "3", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if r := requests(calls(), "repos/o/r/issues/1/sub_issues"); len(r) != 1 || r[0] != `{"sub_issue_id":5003}` {
+		t.Fatalf("sub_issues requests = %v", r)
+	}
+	got, err := tr.Issue(ctx, "3")
+	if err != nil || got.Parent == nil || got.Parent.Key != "1" {
+		t.Fatalf("issue = %+v, err = %v", got, err)
+	}
+}
+
+func TestAttachParentPostFailure(t *testing.T) {
+	st := seedState(true)
+	st.FailSub = true
+	tr := newTracker(t, st)
+	if err := tr.AttachParent(ctx, "3", "1"); err == nil {
+		t.Fatal("want an error")
+	}
+}
+
 func TestCreateMissingParentWritesNothing(t *testing.T) {
 	_, calls := fakeGH(t, seedState(true))
 	tr, _ := New(Options{Repo: "o/r", Dir: t.TempDir()})

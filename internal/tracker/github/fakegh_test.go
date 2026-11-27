@@ -297,6 +297,8 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 			ci.Updated = tick(st)
 			st.Issues[c] = ci
 			return reply(`{}`)
+		case method == "GET" && sub == "":
+			return reply(fmt.Sprintf(`{"number":%s,"id":%d}`, n, 5000+atoi(n)))
 		case method == "POST" && sub == "comments":
 			st.Comments++
 			is.Updated = tick(st)
@@ -311,6 +313,8 @@ func fakeCall(st *fakeState, args []string, stdin string) (string, func(string) 
 	}
 	return fail("fake gh: unexpected: " + strings.Join(args, " "))
 }
+
+func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 func tick(st *fakeState) int { st.Clock++; return 10 + st.Clock }
 

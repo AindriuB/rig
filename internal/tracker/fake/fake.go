@@ -46,6 +46,23 @@ type Tracker struct {
 
 	creates int
 
+	// CreateAttachFailN, when above zero, makes the Nth Create call (counting
+	// every call, from 1) create the issue with no parent and return it with
+	// an error wrapping tracker.ErrNotAttached.
+	CreateAttachFailN int
+	// FailCreateReadN, when above zero, makes that Create call create the
+	// issue, parent included, and return it with CreateReadErr.
+	FailCreateReadN int
+	// CreateReadErr is that call's error; nil means a generic error.
+	CreateReadErr error
+
+	// AttachErr, when set, is returned by AttachParent after it is recorded.
+	AttachErr error
+	// Attached records every AttachParent call.
+	Attached []AttachCall
+	// IssueCalls records the key of every Issue call.
+	IssueCalls []string
+
 	// Comments records every successful Comment call.
 	Comments []CommentCall
 	// StatusCalls records every successful SetStatus call.
@@ -58,6 +75,11 @@ type CommentCall struct {
 	Comment tracker.Comment
 }
 
+// AttachCall is one recorded AttachParent call.
+type AttachCall struct {
+	Key, Parent string
+}
+
 // StatusCall is one recorded SetStatus call.
 type StatusCall struct {
 	Key, Status string
@@ -66,6 +88,7 @@ type StatusCall struct {
 var (
 	_ tracker.Tracker        = (*Tracker)(nil)
 	_ tracker.ProjectChecker = (*Tracker)(nil)
+	_ tracker.ParentAttacher = (*Tracker)(nil)
 )
 
 // New returns a fake with the given capabilities, issues and known statuses.
@@ -131,6 +154,7 @@ func (t *Tracker) Issue(ctx context.Context, key string) (tracker.Issue, error) 
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.IssueCalls = append(t.IssueCalls, key)
 	is, err := t.get(key)
 	if err != nil {
 		return tracker.Issue{}, err
@@ -271,7 +295,9 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		return tracker.Issue{}, fmt.Errorf("create %d: injected failure", t.creates)
 	}
 	var parent *tracker.IssueRef
-	if ni.ParentKey != "" {
+	if ni.ParentKey != "" && t.CreateAttachFailN > 0 && t.creates == t.CreateAttachFailN {
+		// The issue is made, but not attached.
+	} else if ni.ParentKey != "" {
 		p, err := t.get(ni.ParentKey)
 		if err != nil {
 			return tracker.Issue{}, err
@@ -298,8 +324,50 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 	t.issues[key] = is
 	t.order = append(t.order, key)
 	t.Created = append(t.Created, ni)
+	if ni.ParentKey != "" && t.CreateAttachFailN > 0 && t.creates == t.CreateAttachFailN {
+		return *is, fmt.Errorf("issue %s created but not attached to %s: %w", key, ni.ParentKey, tracker.ErrNotAttached)
+	}
+	if t.FailCreateReadN > 0 && t.creates == t.FailCreateReadN {
+		err := t.CreateReadErr
+		if err == nil {
+			err = fmt.Errorf("create %d: injected read-back failure", t.creates)
+		}
+		out := *is
+		out.Rev = ""
+		return out, err
+	}
 	return *is, nil
 }
+
+// AttachParent records the call, then sets the issue's parent. AttachErr
+// makes it fail instead, changing nothing.
+func (t *Tracker) AttachParent(ctx context.Context, key, parent string) error {
+	if t.Err != nil {
+		return t.Err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Attached = append(t.Attached, AttachCall{Key: key, Parent: parent})
+	if t.AttachErr != nil {
+		return t.AttachErr
+	}
+	is, err := t.get(key)
+	if err != nil {
+		return err
+	}
+	p, err := t.get(parent)
+	if err != nil {
+		return err
+	}
+	r := ref(p)
+	is.Parent = &r
+	t.rev++
+	is.Rev = strconv.Itoa(t.rev)
+	return nil
+}
+
+// Plain wraps a fake so that it is not a ParentAttacher.
+type Plain struct{ tracker.Tracker }
 
 // IssueTypes returns Types, or ErrUnsupported when it is empty.
 func (t *Tracker) IssueTypes(ctx context.Context) ([]tracker.IssueType, error) {

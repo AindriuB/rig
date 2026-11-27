@@ -133,7 +133,7 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		}
 		if _, err := t.api(ctx, sub, "repos/"+t.owner+"/"+t.name+"/issues/"+strconv.FormatInt(parent, 10)+"/sub_issues",
 			"--method", "POST", "--input", "-"); err != nil {
-			return tracker.Issue{Key: key, URL: out.HTMLURL, Title: ni.Title}, fmt.Errorf("issue %s was created but not attached to parent %s: %w", key, ni.ParentKey, err)
+			return tracker.Issue{Key: key, URL: out.HTMLURL, Title: ni.Title}, fmt.Errorf("issue %s was created but not attached to parent %s: %w: %w", key, ni.ParentKey, tracker.ErrNotAttached, err)
 		}
 		// Attaching a parent changes the child, so read its Rev back.
 		got, err := t.Issue(ctx, key)
@@ -149,4 +149,38 @@ func (t *Tracker) Create(ctx context.Context, ni tracker.NewIssue) (tracker.Issu
 		Status: "open", Rev: rev, Parent: parentRef,
 	}
 	return is, nil
+}
+
+var _ tracker.ParentAttacher = (*Tracker)(nil)
+
+// AttachParent makes issue key a sub-issue of issue parent. It reads the
+// child's REST id, which the sub-issues endpoint wants instead of its number.
+func (t *Tracker) AttachParent(ctx context.Context, key, parent string) error {
+	child, err := checkKey(key)
+	if err != nil {
+		return err
+	}
+	p, err := checkKey(parent)
+	if err != nil {
+		return err
+	}
+	res, err := t.api(ctx, nil, "repos/"+t.owner+"/"+t.name+"/issues/"+strconv.FormatInt(child, 10))
+	if err != nil {
+		return err
+	}
+	var got struct {
+		ID json.Number `json:"id"`
+	}
+	if err := json.Unmarshal(res.Stdout, &got); err != nil || got.ID == "" {
+		return fmt.Errorf("gh api issue %s: unreadable answer", key)
+	}
+	sub, err := json.Marshal(map[string]json.Number{"sub_issue_id": got.ID})
+	if err != nil {
+		return err
+	}
+	if _, err := t.api(ctx, sub, "repos/"+t.owner+"/"+t.name+"/issues/"+strconv.FormatInt(p, 10)+"/sub_issues",
+		"--method", "POST", "--input", "-"); err != nil {
+		return fmt.Errorf("attach issue %s to parent %s: %w", key, parent, err)
+	}
+	return nil
 }

@@ -78,6 +78,14 @@ type IssueType struct {
 	Level *int `json:"level"`
 }
 
+// ParentAttacher is an optional interface: a tracker whose hierarchy link is
+// a separate write from the create can attach an existing issue to a parent.
+// Callers type-assert for it.
+type ParentAttacher interface {
+	// AttachParent makes the issue key a child of the issue parent.
+	AttachParent(ctx context.Context, key, parent string) error
+}
+
 // ProjectChecker is an optional interface: a tracker that can check the
 // project it is configured for. Callers type-assert for it; a tracker that
 // lacks it, or returns ErrUnsupported, has nothing to report.
@@ -105,6 +113,10 @@ var (
 	// ErrAuth reports missing or rejected credentials. Its wrapping error
 	// must never carry the credential.
 	ErrAuth = errors.New("tracker authentication failed")
+	// ErrNotAttached reports that Create made the issue (the returned Issue
+	// carries its Key) but could not attach it to ni.ParentKey. A caller may
+	// retry the attach with ParentAttacher.
+	ErrNotAttached = errors.New("issue created but not attached to its parent")
 )
 
 // MaxKeyLen is the longest key, in bytes, that ValidateKey accepts.
