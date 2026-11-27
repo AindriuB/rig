@@ -181,6 +181,24 @@ type Store interface {
 // ErrNotFound reports a reference that matches nothing.
 var ErrNotFound = errors.New("not found")
 
+// ErrRepeat reports a write whose Options.Once key is already in the log it
+// would append to. Nothing was written.
+var ErrRepeat = errors.New("repeat")
+
+// HasOnce reports whether any event in log carries the once key key. An empty
+// key is never a repeat.
+func HasOnce(log []Event, key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, e := range log {
+		if e.Once == key {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrLinked reports that CreateTask found a task already linked to the
 // issue. The task returned with it is that task.
 var ErrLinked = errors.New("issue already linked to a task")
@@ -206,6 +224,7 @@ type Options struct {
 	Now   func() time.Time // nil: time.Now
 	Actor string           // "": "unknown"
 	Cause *Cause           // nil: events carry no cause
+	Once  string           // "": events carry no once key; else a write whose log has it is a repeat (ErrRepeat)
 }
 
 // WithDefaults fills the zero fields of o.

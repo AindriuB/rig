@@ -62,6 +62,13 @@ func (s *Store) CreateTaskEvent(ctx context.Context, n store.NewTask) (store.Tas
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.opts.Once != "" {
+		for _, log := range s.logs {
+			if len(log) > 0 && store.HasOnce(log[:1], s.opts.Once) {
+				return store.Task{}, store.Event{}, store.ErrRepeat
+			}
+		}
+	}
 	all := s.tasks()
 	if existing, err := store.PrepareCreate(&n, all); err != nil {
 		return existing, store.Event{}, err
@@ -129,6 +136,9 @@ func (s *Store) UpdateEvents(ctx context.Context, ref string, next func(store.Ta
 		return store.Task{}, nil, errors.New("update: no callback")
 	}
 	log := s.logs[id]
+	if store.HasOnce(log, s.opts.Once) {
+		return store.Task{}, nil, store.ErrRepeat
+	}
 	task, findings, _, _ := store.Fold(log)
 	events, err := next(task, findings)
 	if err != nil {
@@ -211,6 +221,9 @@ func (s *Store) AddNoteEvent(ctx context.Context, n store.Note) (store.Note, sto
 			return store.Note{}, store.Event{}, err
 		}
 		log = s.logs[id]
+	}
+	if store.HasOnce(log, s.opts.Once) {
+		return store.Note{}, store.Event{}, store.ErrRepeat
 	}
 	stamped, err := s.opts.Stamp(log, []store.Event{e})
 	if err != nil {

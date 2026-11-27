@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +67,29 @@ func TestStampTrackerPushRecordsSequentialIntents(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("%d intents recorded, want 2", n)
+	}
+}
+
+// AC2: every event a write with Once stamps carries it, and the field is absent
+// from the JSON line when there is none.
+func TestStampOnce(t *testing.T) {
+	log := sampleLog(t)
+	two := []Event{{Kind: KindCount, Data: mustJSON(t, CountData{Counter: "n", By: 1})}, {Kind: KindCount, Data: mustJSON(t, CountData{Counter: "n", By: 1})}}
+	out, err := Options{Now: func() time.Time { return t0 }, Once: "k"}.Stamp(log, two)
+	if err != nil || len(out) != 2 {
+		t.Fatalf("stamp: %v", err)
+	}
+	for _, e := range out {
+		if e.Once != "k" {
+			t.Fatalf("event %d once = %q", e.Seq, e.Once)
+		}
+	}
+	plain, err := Options{Now: func() time.Time { return t0 }}.Stamp(log, two[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _ := json.Marshal(plain[0])
+	if strings.Contains(string(line), "once") {
+		t.Fatalf("once on a line with none set: %s", line)
 	}
 }

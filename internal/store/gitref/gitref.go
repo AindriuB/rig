@@ -338,6 +338,13 @@ func (s *Store) CreateTaskEvent(ctx context.Context, n store.NewTask) (store.Tas
 	if err != nil {
 		return store.Task{}, store.Event{}, err
 	}
+	if s.opts.Once != "" {
+		for _, l := range logs {
+			if len(l.events) > 0 && store.HasOnce(l.events[:1], s.opts.Once) {
+				return store.Task{}, store.Event{}, store.ErrRepeat
+			}
+		}
+	}
 	tasks, _ := fold(logs)
 	if existing, err := store.PrepareCreate(&n, tasks); err != nil {
 		return existing, store.Event{}, err
@@ -431,6 +438,9 @@ func (s *Store) UpdateEvents(ctx context.Context, ref string, next func(store.Ta
 	written := []store.Event{}
 	out, skipped, err := s.appendLoop(ctx, log, func(cur []store.Event, parseSkipped int) ([]store.Event, string, error) {
 		written = []store.Event{}
+		if store.HasOnce(cur, s.opts.Once) {
+			return nil, "", store.ErrRepeat
+		}
 		task, findings, _, _ := store.Fold(cur)
 		if task.ID != "" {
 			task.Skipped += parseSkipped
@@ -542,6 +552,9 @@ func (s *Store) AddNoteEvent(ctx context.Context, n store.Note) (store.Note, sto
 	var id string
 	var written store.Event
 	out, _, err := s.appendLoop(ctx, log, func(cur []store.Event, _ int) ([]store.Event, string, error) {
+		if store.HasOnce(cur, s.opts.Once) {
+			return nil, "", store.ErrRepeat
+		}
 		stamped, err := s.opts.Stamp(cur, []store.Event{e})
 		if err != nil {
 			return nil, "", fmt.Errorf("add note: %w", err)

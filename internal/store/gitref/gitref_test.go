@@ -700,3 +700,17 @@ func TestUpdateCancelledHoldingLock(t *testing.T) {
 		t.Fatalf("lock file left behind: %v", err)
 	}
 }
+
+func TestOnce(t *testing.T) {
+	storetest.Once(t, func(t *testing.T, o store.Options) (store.Store, func(store.Options) store.Store) {
+		repo := newRepo(t)
+		open := func(o store.Options) store.Store {
+			s, err := Open(repo, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s
+		}
+		return open(o), open
+	})
+}
