@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/AindriuB/rig/internal/store"
+	"github.com/AindriuB/rig/internal/tracker"
+	"github.com/AindriuB/rig/internal/tracker/fake"
 )
 
 // onceEnv is a real repository under the test workflow, driven through the
@@ -232,5 +234,27 @@ func TestOnceFindingRepeat(t *testing.T) {
 	}
 	if n := onceKindCount(e.events("a"), store.KindFinding); n != 1 {
 		t.Fatalf("%d findings", n)
+	}
+}
+
+// AC11: task link --once succeeds on its first run and writes the
+// tracker-sync snapshot; a repeat reports repeat and writes nothing.
+func TestOnceTaskLink(t *testing.T) {
+	e := newTrkEnv(t, ghCfg())
+	e.tr = fake.New(allCaps, []tracker.Issue{issue("12", "Remote Title")}, nil)
+	x := e.mkTask("x")
+	if code := e.run("task", "link", x.Short, "github:12", "--once", "k"); code != 0 {
+		t.Fatalf("first run: exit %d, stderr %q", code, e.err.String())
+	}
+	if onceKindCount(e.eventsByTask()[x.ID], store.KindTrackerSync) != 1 {
+		t.Fatal("no tracker-sync snapshot after the first run")
+	}
+	n := e.eventCount(x.ID)
+	e.out.Reset()
+	if code := e.run("task", "link", x.Short, "github:12", "--once", "k"); code != 0 || !strings.Contains(e.out.String(), "repeat") {
+		t.Fatalf("repeat: exit %d, out %q, err %q", code, e.out.String(), e.err.String())
+	}
+	if e.eventCount(x.ID) != n {
+		t.Fatal("the repeat wrote events")
 	}
 }

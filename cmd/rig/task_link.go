@@ -198,6 +198,12 @@ func (a *app) taskLink(ctx context.Context, args []string) int {
 			return a.storeFail(cmd, err)
 		}
 	}
+	// The link write stamped --once; the refresh and parent writes carry no
+	// key, or they would be refused as a repeat of it.
+	a.onceKey = ""
+	if w, err = a.openWork(ctx, *repo, true); err != nil {
+		return a.storeFail(cmd, err)
+	}
 	res := a.refreshOne(ctx, w, tr, spec, after, false)
 	if res.Status != "updated" && res.Status != "unchanged" {
 		why := res.Error
