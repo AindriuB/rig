@@ -463,3 +463,57 @@ func TestEventsOneShotHeldOnce(t *testing.T) {
 		t.Errorf("held line printed %d times: %q", n, errOut.String())
 	}
 }
+
+// countFeeder delegates Feed to the real store and counts the scans.
+type countFeeder struct {
+	store.Store
+	calls atomic.Int32
+}
+
+func (f *countFeeder) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, error) {
+	f.calls.Add(1)
+	return f.Store.(store.Feeder).Feed(ctx, cur)
+}
+
+// AC7: a baseline over a still-unreadable log stays held on the next scan.
+func TestEventsFollowBaselineHeldStaysHeld(t *testing.T) {
+	e := newEventsEnv(t)
+	bad := e.newTask("bad")
+	g := git.Repo{Dir: e.repo}
+	ref := gitref.TasksPrefix + bad.ID
+	tip, _, _ := g.ResolveRef(ctx, ref)
+	blobs, _ := g.ReadBlobs(ctx, []string{tip + ":" + gitref.LogFile})
+	blob, _ := g.WriteBlob(ctx, append(append([]byte{}, blobs[0].Data...), "not json\n"...))
+	tree, _ := g.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: gitref.LogFile}})
+	commit, err := g.CommitTree(ctx, tree, []string{tip}, "garbage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.UpdateRef(ctx, ref, commit, tip); err != nil {
+		t.Fatal(err)
+	}
+	f := &countFeeder{Store: e.st}
+	var out, errOut bytes.Buffer
+	a := e.app(&out, &errOut)
+	a.store = func(context.Context, string) (store.Store, error) { return f, nil }
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.run(cctx, []string{"events", "--follow"}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for f.calls.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if f.calls.Load() < 3 {
+		t.Fatalf("only %d scans", f.calls.Load())
+	}
+	s := errOut.String()
+	if n := strings.Count(s, "bad held: 1 unreadable"); n != 1 {
+		t.Errorf("held line printed %d times: %q", n, s)
+	}
+	if strings.Contains(s, "no longer held") {
+		t.Errorf("released while still unreadable: %q", s)
+	}
+}

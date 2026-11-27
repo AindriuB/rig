@@ -1,9 +1,7 @@
 package gitref
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -77,7 +75,13 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 			}
 			res.Held = append(res.Held, store.HeldLog{Name: label, Skipped: skipped})
 			if baseline {
-				next.Logs[name] = store.LogPos{Tip: tips[name], Count: readableBeforeUnreadable(blobs[i].Data)}
+				pos, ok, err := s.lastReadable(ctx, tips[name])
+				if err != nil {
+					return store.FeedResult{}, err
+				}
+				if ok {
+					next.Logs[name] = pos
+				}
 			} else if seen {
 				next.Logs[name] = old
 			}
@@ -100,23 +104,28 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 	return res, nil
 }
 
-// readableBeforeUnreadable counts the readable lines before the first
-// unreadable one, in line order, using parseLog's test for readable.
-func readableBeforeUnreadable(raw []byte) int {
-	n := 0
-	for _, line := range bytes.Split(raw, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
+// lastReadable walks the first-parent ancestors of tip and returns the newest
+// whose log has no unreadable line, with that log's event count. ok is false
+// when there is none.
+func (s *Store) lastReadable(ctx context.Context, tip string) (store.LogPos, bool, error) {
+	for k := 1; ; k++ {
+		oid, found, err := s.git.ResolveRef(ctx, fmt.Sprintf("%s~%d", tip, k))
+		if err != nil {
+			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
 		}
-		var head struct {
-			V int `json:"v"`
+		if !found {
+			return store.LogPos{}, false, nil
 		}
-		var e store.Event
-		if json.Unmarshal(line, &head) != nil || head.V != store.Version || json.Unmarshal(line, &e) != nil {
-			return n
+		blobs, err := s.git.ReadBlobs(ctx, []string{oid + ":" + LogFile})
+		if err != nil {
+			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
 		}
-		n++
+		if blobs[0].Missing {
+			return store.LogPos{}, false, nil
+		}
+		events, skipped := parseLog(blobs[0].Data)
+		if skipped == 0 {
+			return store.LogPos{Tip: oid, Count: len(events)}, true, nil
+		}
 	}
-	return n
 }

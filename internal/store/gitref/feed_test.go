@@ -98,7 +98,7 @@ func TestFeedHoldsLogWithUnreadableLines(t *testing.T) {
 	}
 }
 
-// appendLines commits log data for a task: its current log plus extra bytes.
+// appendRaw commits log data for a task: its current log plus extra bytes.
 func appendRaw(t *testing.T, repo git.Repo, ref string, build func(old []byte) []byte) {
 	t.Helper()
 	tip, _, _ := repo.ResolveRef(ctx, ref)
@@ -121,6 +121,7 @@ func TestFeedBaselineHoldsUnreadableLog(t *testing.T) {
 	good, _ := s.CreateTask(ctx, store.NewTask{Slug: "good", Initial: "todo"})
 	ref := TasksPrefix + bad.ID
 	n := 0
+	tip0, _, _ := repo.ResolveRef(ctx, ref)
 	appendRaw(t, repo, ref, func(old []byte) []byte {
 		n = len(parseLogEvents(old))
 		return append(append(append([]byte{}, old...), "junk\n"...), old...)
@@ -135,6 +136,10 @@ func TestFeedBaselineHoldsUnreadableLog(t *testing.T) {
 	}
 	if len(res.Held) != 1 || res.Held[0].Name != "bad" {
 		t.Fatalf("held = %+v", res.Held)
+	}
+	// AC6: the position is the last readable commit, not the current tip.
+	if got := res.Next.Logs[ref].Tip; got != tip0 {
+		t.Fatalf("baseline Tip = %s, want the last readable commit %s", got, tip0)
 	}
 	// AC2
 	if p := res.Next.Logs[TasksPrefix+good.ID]; p.Count != n || len(res.Items) != 0 {
@@ -153,6 +158,9 @@ func TestFeedBaselineHoldsUnreadableLog(t *testing.T) {
 	}
 	if len(res2.Items) != 1 || res2.Items[0].Task.ID != good.ID {
 		t.Fatalf("items = %+v", res2.Items)
+	}
+	if len(res2.Held) != 1 || res2.Held[0].Name != "bad" {
+		t.Fatalf("second scan held = %+v", res2.Held)
 	}
 }
 
