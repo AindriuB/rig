@@ -23,6 +23,8 @@ type work struct {
 	st   store.Store
 	wf   *workflow.Workflow
 	src  workflow.Source
+	// hooks is st's hook wrapper, nil when the store runs no hooks.
+	hooks *hookWriter
 }
 
 // loadWorkflow returns the workflow in effect for the repository at dir:
@@ -57,6 +59,16 @@ func (a *app) loadWorkflow(ctx context.Context, dir string) (*workflow.Workflow,
 // with its *workflow.InvalidError, for commands that report on it; any other
 // error returns no work.
 func (a *app) openWork(ctx context.Context, repoFlag string, needValid bool) (*work, error) {
+	return a.openWorkHooks(ctx, repoFlag, needValid, true)
+}
+
+// openWorkPlain is openWork with an unwrapped store: its writes run no hooks.
+// rig tracker commands use it (spec D1: bulk commands run none).
+func (a *app) openWorkPlain(ctx context.Context, repoFlag string, needValid bool) (*work, error) {
+	return a.openWorkHooks(ctx, repoFlag, needValid, false)
+}
+
+func (a *app) openWorkHooks(ctx context.Context, repoFlag string, needValid, hooks bool) (*work, error) {
 	dir, err := a.repoDir(repoFlag)
 	if err != nil {
 		return nil, err
@@ -74,7 +86,12 @@ func (a *app) openWork(ctx context.Context, repoFlag string, needValid bool) (*w
 	if err != nil {
 		return nil, err
 	}
-	return &work{dir: dir, repo: git.Repo{Dir: dir}, st: st, wf: wf, src: src}, wfErr
+	w := &work{dir: dir, repo: git.Repo{Dir: dir}, st: st, wf: wf, src: src}
+	if hooks && wfErr == nil {
+		w.hooks = &hookWriter{Store: st, w: w, a: a, cmd: a.cmdName}
+		w.st = w.hooks
+	}
+	return w, wfErr
 }
 
 // branch is the task's branch: its own, or else the workflow's template.
@@ -209,7 +226,6 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		return moveResult{}, err
 	}
 
-	var written []store.Event
 	after, err := w.st.Update(ctx, t.ID, func(cur store.Task, curFindings []store.Finding) ([]store.Event, error) {
 		// The gates passed on what was read above; anything that changed
 		// since, the task, its findings or its branch head, means they must
@@ -228,18 +244,15 @@ func (w *work) moveOnce(ctx context.Context, ref, to string, args workflow.Args)
 		if curHead != head {
 			return nil, errMoved
 		}
-		evs, err := w.wf.Events(cur, head, tr, to, args)
-		written = evs
-		return evs, err
+		return w.wf.Events(cur, head, tr, to, args)
 	})
 	if err != nil {
 		return moveResult{}, err
 	}
 
 	var hookErrs []error
-	if len(written) > 0 {
-		ev := w.stamped(ctx, after.ID, written[0])
-		hookErrs = w.wf.RunHooks(ctx, w.env().Runner, ev, after, head)
+	if w.hooks != nil {
+		hookErrs = w.hooks.take()
 	}
 	return moveResult{view: w.wf.View(after, head), gates: gates, hookErrors: hookErrs}, nil
 }
@@ -348,21 +361,6 @@ func snapshot(t store.Task, findings []store.Finding) ([]byte, error) {
 		return nil, fmt.Errorf("snapshot of %s: %w", t.Short, err)
 	}
 	return b, nil
-}
-
-// stamped returns the logged copy of ev, the transition move just wrote, or
-// ev itself if the log cannot be read.
-func (w *work) stamped(ctx context.Context, id string, ev store.Event) store.Event {
-	log, err := w.st.Events(ctx, id)
-	if err != nil {
-		return ev
-	}
-	for i := len(log) - 1; i >= 0; i-- {
-		if log[i].Kind == ev.Kind && bytes.Equal(log[i].Data, ev.Data) {
-			return log[i]
-		}
-	}
-	return ev
 }
 
 // storeFail reports err from a store command and returns its exit code: 1

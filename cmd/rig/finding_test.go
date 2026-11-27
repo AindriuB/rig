@@ -300,9 +300,14 @@ type readbackStore struct {
 }
 
 func (r *readbackStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
-	t, err := r.Store.Update(ctx, ref, next)
-	r.armed = true
+	t, _, err := r.UpdateEvents(ctx, ref, next)
 	return t, err
+}
+
+func (r *readbackStore) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
+	t, evs, err := r.Store.UpdateEvents(ctx, ref, next)
+	r.armed = true
+	return t, evs, err
 }
 
 func (r *readbackStore) Findings(ctx context.Context, ref string) ([]store.Finding, error) {

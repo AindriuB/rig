@@ -551,7 +551,6 @@ func (a *app) taskMove(ctx context.Context, args []string) int {
 	hookErrs := []string{}
 	for _, he := range res.hookErrors {
 		hookErrs = append(hookErrs, he.Error())
-		fmt.Fprintf(a.stderr, "rig task move: hook: %v\n", he)
 	}
 	if *asJSON {
 		return a.printJSON(moveOut{res.view, hookErrs})

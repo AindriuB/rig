@@ -100,12 +100,17 @@ type hookStore struct {
 }
 
 func (h *hookStore) Update(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, error) {
+	t, _, err := h.UpdateEvents(ctx, ref, next)
+	return t, err
+}
+
+func (h *hookStore) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
 	if h.hook != nil {
 		f := h.hook
 		h.hook = nil
 		f()
 	}
-	return h.Store.Update(ctx, ref, next)
+	return h.Store.UpdateEvents(ctx, ref, next)
 }
 
 // setUnderneath writes a field value straight to the store, as a concurrent

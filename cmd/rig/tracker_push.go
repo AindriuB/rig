@@ -276,7 +276,7 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 	if err := actorOK(); err != nil {
 		return a.fail(cmd, "%v", err)
 	}
-	w, err := a.openWork(ctx, *repo, true)
+	w, err := a.openWorkPlain(ctx, *repo, true)
 	if err != nil {
 		return a.storeFail(cmd, err)
 	}

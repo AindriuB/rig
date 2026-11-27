@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +47,9 @@ type app struct {
 	tracker trackerBuilder
 	// actorFlag is --actor/--role for this run; it beats $RIG_ACTOR.
 	actorFlag string
+	// cmdName is the command of this run ("task move"), for messages from
+	// hooks.
+	cmdName string
 	// updateTransport is rig update's HTTP transport; nil is the default.
 	updateTransport http.RoundTripper
 	// updater runs an update; nil is selfupdate.Update.
@@ -197,6 +201,7 @@ func (a *app) run(ctx context.Context, args []string) int {
 	// --actor belongs to this run only; a reused app (tests) must not
 	// stamp one run's events with another run's flag.
 	a.actorFlag = ""
+	a.cmdName = commandName(args)
 	// Only the Windows swap leaves <rig>.old; elsewhere it is the user's file.
 	if a.goos == "windows" || (a.goos == "" && runtime.GOOS == "windows") {
 		cleanupOld(a.executable)
@@ -255,4 +260,15 @@ func (a *app) run(ctx context.Context, args []string) int {
 func (a *app) fail(cmd, format string, args ...any) int {
 	fmt.Fprintf(a.stderr, "rig %s: %s\n", cmd, fmt.Sprintf(format, args...))
 	return 2
+}
+
+// commandName is "<command> <subcommand>" of args, or the command alone.
+func commandName(args []string) string {
+	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		return args[0] + " " + args[1]
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
