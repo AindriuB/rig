@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/AindriuB/rig/internal/git"
@@ -161,7 +162,8 @@ func (h *hookWriter) after(ctx context.Context, id string, evs []store.Event) {
 // hookCause is the cause a write made inside a hook records, from the event
 // the hook ran for ($RIG_HOOK_EVENT) and its hook ($RIG_HOOK_NAME): depth is
 // the cause event's own cause depth plus one, or 1 when it has none or cannot
-// be found. The event is looked up in $RIG_HOOK_TASK's log, or the
+// be found, in which case $RIG_HOOK_DEPTH (a non-negative integer) plus one
+// stands in when set. The event is looked up in $RIG_HOOK_TASK's log, or the
 // repository's notes log when that is unset. It returns nil outside a hook.
 func (a *app) hookCause(ctx context.Context, st store.Store, repo git.Repo) *store.Cause {
 	evID := strings.TrimSpace(a.getenv("RIG_HOOK_EVENT"))
@@ -182,9 +184,18 @@ func (a *app) hookCause(ctx context.Context, st store.Store, repo git.Repo) *sto
 			}
 		}
 	}
+	found := false
 	for _, e := range log {
-		if e.ID == evID && e.Cause != nil {
-			c.Depth = e.Cause.Depth + 1
+		if e.ID == evID {
+			found = true
+			if e.Cause != nil {
+				c.Depth = e.Cause.Depth + 1
+			}
+		}
+	}
+	if !found {
+		if n, err := strconv.Atoi(strings.TrimSpace(a.getenv("RIG_HOOK_DEPTH"))); err == nil && n >= 0 {
+			c.Depth = n + 1
 		}
 	}
 	return c
