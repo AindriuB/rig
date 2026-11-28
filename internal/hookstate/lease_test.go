@@ -55,18 +55,64 @@ func TestAC3LiveHolderKeepsLeaseDespiteOldBeat(t *testing.T) {
 }
 
 func TestAC4ExitedChildIsTakenOver(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	if err := cmd.Run(); err != nil {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperSleep$")
+	cmd.Env = append(os.Environ(), "HOOKSTATE_HELPER_SLEEP=1")
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	reaped := false
+	defer func() {
+		if !reaped {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}()
+	pid := cmd.Process.Pid
+	var start uint64
+	for i := 0; i < 100; i++ {
+		s, ok, err := processStart(pid)
+		if err == nil && ok {
+			start = s
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if start == 0 {
+		t.Fatal("no start time for running child")
+	}
 	dir := t.TempDir()
-	writeLease(t, dir, "chat", Holder{PID: cmd.Process.Pid, Start: 1, Token: "x", Beat: time.Now()})
-	if _, live, _ := Beat(dir, "chat"); live {
-		t.Fatal("exited pid reported live")
+	writeLease(t, dir, "chat", Holder{PID: pid, Start: start, Token: "x", Beat: time.Now()})
+	if _, live, _ := Beat(dir, "chat"); !live {
+		t.Fatal("running child reported not live")
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	// Not reaped yet: the start time is still readable, so only the alive
+	// bit (zombie, exited) can say the holder is gone.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, live, _ := Beat(dir, "chat")
+		if !live {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("exited child still reported live")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if _, err := Acquire(dir, "chat"); err != nil {
 		t.Fatal(err)
 	}
+	cmd.Wait()
+	reaped = true
+}
+
+func TestHelperSleep(t *testing.T) {
+	if os.Getenv("HOOKSTATE_HELPER_SLEEP") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
 }
 
 func TestAC5DifferentStartTimeIsTakenOver(t *testing.T) {
