@@ -33,10 +33,10 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	var err error
 	switch args[0] {
 	case "verify":
-		err = selfupdate.VerifyDist(args[1])
+		var n int
+		n, err = selfupdate.VerifyDist(args[1])
 		if err == nil {
-			entries, _ := os.ReadDir(args[1])
-			fmt.Fprintf(stdout, "verified %d assets\n", len(entries)-2)
+			fmt.Fprintf(stdout, "verified %d assets\n", n)
 		}
 	case "keygen":
 		err = keygen(args[1], stdout)
