@@ -77,7 +77,7 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 			}
 			res.Held = append(res.Held, store.HeldLog{Name: label, Skipped: skipped})
 			if baseline {
-				pos, ok, err := s.lastReadable(ctx, tips[name])
+				pos, ok, err := s.lastReadable(ctx, tips[name], len(blobs[i].Data))
 				if err != nil {
 					return store.FeedResult{}, err
 				}
@@ -111,11 +111,16 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 // when there is none.
 //
 // Ancestors are read in chunks of <tip>~k specs, the chunk doubling each time,
-// so a long walk costs a few git calls. A spec that does not resolve (past the
+// so a long walk costs a few git calls. A chunk is also capped so that its
+// blobs, each about tipSize bytes (the tip's log length), stay within
+// chunkBytes, well under the output limit of one git call; a log too large for
+// that is read one ancestor per call. A spec that does not resolve (past the
 // root commit) is reported Missing and ends the walk.
-func (s *Store) lastReadable(ctx context.Context, tip string) (store.LogPos, bool, error) {
+func (s *Store) lastReadable(ctx context.Context, tip string, tipSize int) (store.LogPos, bool, error) {
 	const maxChunk = 256
-	k, size := 1, 16
+	const chunkBytes = 8 << 20
+	limit := min(maxChunk, max(1, chunkBytes/max(tipSize, 1)))
+	k, size := 1, min(16, limit)
 	for {
 		specs := make([]string, size)
 		for i := range specs {
@@ -143,6 +148,6 @@ func (s *Store) lastReadable(ctx context.Context, tip string) (store.LogPos, boo
 			return store.LogPos{Tip: oid, Count: len(events)}, true, nil
 		}
 		k += size
-		size = min(size*2, maxChunk)
+		size = min(size*2, limit)
 	}
 }
