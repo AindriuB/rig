@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -179,7 +181,8 @@ func TestHooksSkipRefusesLiveRunner(t *testing.T) {
 	before, _ := hookstate.Load(e.statePath())
 	r := e.rig("hooks", "skip", "q", e.idsA[1])
 	after, _ := hookstate.Load(e.statePath())
-	if r.code != 1 || !strings.Contains(r.errOut, "runner") {
+	if r.code != 1 || !strings.Contains(r.errOut, "runner") ||
+		!strings.Contains(r.errOut, "pid "+strconv.Itoa(os.Getpid())) {
 		t.Fatalf("skip = %+v", r)
 	}
 	b1, _ := json.Marshal(before)

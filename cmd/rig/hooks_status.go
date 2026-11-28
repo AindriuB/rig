@@ -78,7 +78,7 @@ func (a *app) hooksStatus(ctx context.Context, args []string) int {
 		if err != nil {
 			return a.fail("hooks status", "%v", err)
 		}
-		st, err := hookstate.Load(h.path)
+		st, err := hookstate.LoadLocked(h.path)
 		if err != nil {
 			return a.fail("hooks status", "%v", err)
 		}
@@ -173,7 +173,7 @@ func (a *app) hooksRetry(ctx context.Context, args []string) int {
 	n := 0
 	// Removing the entries resets their attempts: the runner parks afresh.
 	// Update is atomic, so a running runner's own change is not lost.
-	if st, err := hookstate.Load(h.path); err != nil {
+	if st, err := hookstate.LoadLocked(h.path); err != nil {
 		return a.fail("hooks retry", "%v", err)
 	} else if st == nil {
 		fmt.Fprintf(a.stdout, "%s: nothing parked\n", h.name)
@@ -221,7 +221,7 @@ func (a *app) hooksSkip(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.stderr, "rig hooks skip: event %s is not parked for hook %s\n", event, h.name)
 		return 1
 	}
-	st, err := hookstate.Load(h.path)
+	st, err := hookstate.LoadLocked(h.path)
 	if err != nil {
 		return a.fail("hooks skip", "%v", err)
 	}

@@ -64,6 +64,21 @@ func Load(path string) (*State, error) {
 	return &s, nil
 }
 
+// LoadLocked is Load under the same lock Update holds, so a read never lands
+// between an Update's temporary file and its rename (which fails on Windows
+// while the file is open). A missing state directory returns nil and no error.
+func LoadLocked(path string) (*State, error) {
+	if _, err := os.Stat(filepath.Dir(path)); os.IsNotExist(err) {
+		return nil, nil
+	}
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
+		return nil, fmt.Errorf("read hook state: %w", err)
+	}
+	defer unlock()
+	return Load(path)
+}
+
 // Update reads the state (a new one if none), applies fn and writes the
 // result through a temporary file and a rename, all under a short lock, so
 // concurrent updaters never lose each other's change. If fn fails nothing is

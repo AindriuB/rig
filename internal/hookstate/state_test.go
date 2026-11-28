@@ -108,3 +108,31 @@ func TestLoadRejectsUnknownFormat(t *testing.T) {
 		t.Fatal("unknown format accepted")
 	}
 }
+
+func TestLoadLockedWaitsForUpdate(t *testing.T) {
+	p := Path(t.TempDir(), "w", "chat")
+	if s, err := LoadLocked(p); err != nil || s != nil {
+		t.Fatalf("missing = %v, %v", s, err)
+	}
+	if err := Update(p, func(s *State) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(p + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if s, err := LoadLocked(p); err != nil || s == nil {
+			t.Errorf("LoadLocked = %v, %v", s, err)
+		}
+	}()
+	select {
+	case <-done:
+		t.Fatal("LoadLocked read while the lock was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	<-done
+}
