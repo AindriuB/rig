@@ -95,6 +95,8 @@ Tracker:
 Hooks:
   rig hooks start <cmd> [<args>...]         Start long-running work that outlives the hook
       [--json]
+  rig hooks deliver                         Deliver queued hooks' events, at least once
+      [--follow] [--repo <dir>]
   rig events                                List events across all tasks, from a cursor
       [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json] [--repo <dir>]
 
