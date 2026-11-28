@@ -65,7 +65,7 @@ func TestHelpListsPhase2Commands(t *testing.T) {
 // TestHelpUsageShowsFormatFlags: the commands that take --format name it, and
 // --markdown, in their usage entry (the command line and its continuation lines).
 func TestHelpUsageShowsFormatFlags(t *testing.T) {
-	r := rig(t, t.TempDir(), nil, nil, "help")
+	r := rig(t, t.TempDir(), nil, nil, "help", "--all")
 	for _, prefix := range []string{"  rig task show ", "  rig task list ", "  rig context "} {
 		var entry []string
 		in := false

@@ -430,7 +430,7 @@ func TestAcceptanceOf(t *testing.T) {
 
 // AC9: the help lists the command.
 func TestTrackerPushInHelp(t *testing.T) {
-	if r := rig(t, t.TempDir(), nil, nil, "help"); r.code != 0 || !strings.Contains(r.out, "rig tracker push <task>") {
+	if r := rig(t, t.TempDir(), nil, nil, "help", "--all"); r.code != 0 || !strings.Contains(r.out, "rig tracker push <task>") {
 		t.Fatalf("help: %+v", r)
 	}
 }

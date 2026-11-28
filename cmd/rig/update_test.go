@@ -135,7 +135,7 @@ func osArch() string {
 
 func TestUpdateHelpListsIt(t *testing.T) {
 	a, out, _ := updApp(t, "", selfupdate.Result{}, nil)
-	if a.run(context.Background(), []string{"help"}) != 0 {
+	if a.run(context.Background(), []string{"help", "--all"}) != 0 {
 		t.Fatal("help failed")
 	}
 	// The entry is the command line plus its continuation lines.

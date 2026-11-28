@@ -196,7 +196,7 @@ func TestConfigLocalSharedByWorktrees(t *testing.T) {
 }
 
 func TestUsageListsConfigAndLogin(t *testing.T) {
-	r := rig(t, t.TempDir(), nil, nil, "help")
+	r := rig(t, t.TempDir(), nil, nil, "help", "--all")
 	for _, want := range []string{"rig config get", "rig config set", "rig config unset", "rig config list", "rig login <service>", "rig logout <service>"} {
 		if !strings.Contains(r.out, want) {
 			t.Fatalf("usage lacks %q", want)
