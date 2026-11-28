@@ -93,7 +93,7 @@ func (a *app) hooksStatus(ctx context.Context, args []string) int {
 			o.Heartbeat = &beat
 		}
 		if st != nil {
-			o.Started = st.Cursor != nil
+			o.Started = st.Cursor != nil || len(st.Parked) > 0
 			type row struct {
 				p  parkedOut
 				at time.Time

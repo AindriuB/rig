@@ -206,6 +206,15 @@ func (h *hookWriter) warnNoRunner(ctx context.Context, cmd string, evs []store.E
 			h.noRunner = map[string]bool{}
 		}
 		h.noRunner[name] = true
+		if wf.Hooks[i].From != "start" {
+			// A hook that has never started begins at the tips when a runner
+			// first runs, so these events are not waiting for delivery. A
+			// state read error keeps the existing line.
+			if st, err := hookstate.LoadLocked(hookstate.Path(common, wf.Name, name)); err == nil && (st == nil || (st.Cursor == nil && len(st.Parked) == 0)) {
+				fmt.Fprintf(h.out(), "rig %s: warning: queued hook %s has not started and no runner, so these events will not be delivered; a runner started now begins at the newest events\n", cmd, name)
+				continue
+			}
+		}
 		fmt.Fprintf(h.out(), "rig %s: warning: queued hook %s has undelivered events and no runner; start one with rig hooks deliver --follow\n", cmd, name)
 	}
 }
