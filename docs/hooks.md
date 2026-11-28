@@ -267,8 +267,8 @@ needs. Its own `rig` writes are recorded with actor `hook:next-agent`, because
 the started program keeps `RIG_ACTOR`. They are not counted as hook-caused, so
 the loop does not stop after three rounds.
 
-**A dashboard.** Hooks are inline, so they can lose an event if the endpoint
-is down. A dashboard that must lose none reads the feed instead:
+**A dashboard.** Inline hooks can lose an event if the endpoint is down. A
+dashboard that must lose none uses a queued hook, or reads the feed instead:
 
 ```
 rig events --follow --json --cursor-file ~/.rig-dashboard.cursor | send-to-dashboard
@@ -309,8 +309,8 @@ event.
 - **Working directory.** The repository root, the main worktree, not the folder
   the runner was started in.
 - **Retries and parking.** A hook that fails (non-zero exit, timeout, not found)
-  is run again, 5 attempts in all, waiting 1 second after the first failure and
-  doubling each time, to at most 5 minutes. After the fifth failure the event is
+  is run again, 5 attempts in all, waiting 1, 2, 4 and 8 seconds between them,
+  about 15 seconds in all, with no longer cap. After the fifth failure the event is
   **parked**: the runner stops delivering that task's later events to that hook,
   so order is kept, and carries on with every other task. A parked event waits
   for you: see [Operating queued hooks](#operating-queued-hooks).
@@ -341,6 +341,14 @@ prints this on standard error, once per command and hook:
 
 ```
 rig task move: warning: queued hook <name> has undelivered events and no runner; start one with rig hooks deliver --follow
+```
+
+A hook that has never run, and has no `"from": "start"`, prints this line
+instead, because a runner started now begins at the newest events and would not
+deliver these:
+
+```
+rig task move: warning: queued hook <name> has not started and no runner, so these events will not be delivered; a runner started now begins at the newest events
 ```
 
 A runner counts as alive while its heartbeat is less than 2 minutes old.
@@ -488,10 +496,10 @@ calls is a repeat. A key must not be empty or contain control characters.
 
 - **`rig tracker` commands run no inline hooks.** Every `rig tracker` command,
   including single-task `report` and `push`, opens the store without hooks, so
-  no hook fires for the events it writes. `pull`, `refresh`, `report` and `push`
-  can write to many tasks in one run, and a 1-second hook would turn a 500-task
-  sync into minutes. The `tracker-sync`, `tracker-report` and `tracker-push`
-  events are seen only by `rig events`.
+  no inline hook fires for the events it writes. `pull`, `refresh`, `report` and
+  `push` can write to many tasks in one run, and a 1-second hook would turn a
+  500-task sync into minutes. The `tracker-sync`, `tracker-report` and
+  `tracker-push` events are seen by `rig events` and by queued hooks.
 - **A state change that writes nothing fires nothing.** When a commit lands on a
   task bound to a sha, the task is read as back in `implementing` and nothing is
   written. No hook sees it.
