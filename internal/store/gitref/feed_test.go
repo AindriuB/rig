@@ -214,6 +214,38 @@ func TestFeedBaselineWalkIsBatched(t *testing.T) {
 	}
 }
 
+// A log so large that 16 ancestors together pass the output cap of one git
+// call must still be walked, one smaller chunk at a time.
+func TestFeedBaselineWalkBoundsChunkBytes(t *testing.T) {
+	repo := newRepo(t)
+	s := newStore(repo, store.Options{Actor: "tester"})
+	bad, _ := s.CreateTask(ctx, store.NewTask{Slug: "bad", Initial: "todo"})
+	ref := TasksPrefix + bad.ID
+	var big []byte
+	appendRaw(t, repo, ref, func(old []byte) []byte {
+		for len(big) < 5<<20 {
+			big = append(big, old...)
+		}
+		return big
+	})
+	tip0, _, _ := repo.ResolveRef(ctx, ref)
+	n := len(parseLogEvents(big))
+	junked := append(append([]byte{}, big...), "junk\n"...)
+	for i := 0; i < 20; i++ {
+		appendRaw(t, repo, ref, func([]byte) []byte { return junked })
+	}
+	res, err := s.Feed(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.Next.Logs[ref]; p.Tip != tip0 || p.Count != n {
+		t.Fatalf("pos = %+v, want tip %s count %d", p, tip0, n)
+	}
+	if len(res.Held) != 1 {
+		t.Fatalf("held = %+v", res.Held)
+	}
+}
+
 func TestFeedBaselineNoReadableAncestorLeavesLogOut(t *testing.T) {
 	repo := newRepo(t)
 	s := newStore(repo, store.Options{Actor: "tester"})
