@@ -11,11 +11,13 @@ import (
 var _ store.Feeder = (*Store)(nil)
 
 // Feed lists the events after cur in every log, and returns the cursor to
-// save once they are delivered. A nil cur returns no items and a cursor at the
-// tips now. Only logs whose tip moved since cur are read. Within a log, items
-// come in (seq, id) order; there is no order across logs. A log with lines
-// that did not parse is held: it delivers nothing past its cursor, and its
-// cursor entry stays as it was.
+// save once they are delivered. A nil cur (the baseline) returns no items and
+// records each readable log at its tip, and a log with unreadable lines at its
+// newest readable first-parent ancestor, or not at all when there is none.
+// Only logs whose tip moved since cur are read. Within a log, items come in
+// (seq, id) order; there is no order across logs. Outside the baseline a log
+// with lines that did not parse is held: it delivers nothing past its cursor,
+// and its cursor entry stays as it was.
 func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, error) {
 	if err := ctx.Err(); err != nil {
 		return store.FeedResult{}, err
@@ -75,7 +77,7 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 			}
 			res.Held = append(res.Held, store.HeldLog{Name: label, Skipped: skipped})
 			if baseline {
-				pos, ok, err := s.lastReadable(ctx, tips[name])
+				pos, ok, err := s.lastReadable(ctx, tips[name], len(blobs[i].Data))
 				if err != nil {
 					return store.FeedResult{}, err
 				}
@@ -107,25 +109,45 @@ func (s *Store) Feed(ctx context.Context, cur *store.Cursor) (store.FeedResult, 
 // lastReadable walks the first-parent ancestors of tip and returns the newest
 // whose log has no unreadable line, with that log's event count. ok is false
 // when there is none.
-func (s *Store) lastReadable(ctx context.Context, tip string) (store.LogPos, bool, error) {
-	for k := 1; ; k++ {
-		oid, found, err := s.git.ResolveRef(ctx, fmt.Sprintf("%s~%d", tip, k))
+//
+// Ancestors are read in chunks of <tip>~k specs, the chunk doubling each time,
+// so a long walk costs a few git calls. A chunk is also capped so that its
+// blobs, each about tipSize bytes (the tip's log length), stay within
+// chunkBytes, well under the output limit of one git call; a log too large for
+// that is read one ancestor per call. A spec that does not resolve (past the
+// root commit) is reported Missing and ends the walk.
+func (s *Store) lastReadable(ctx context.Context, tip string, tipSize int) (store.LogPos, bool, error) {
+	const maxChunk = 256
+	const chunkBytes = 8 << 20
+	limit := min(maxChunk, max(1, chunkBytes/max(tipSize, 1)))
+	k, size := 1, min(16, limit)
+	for {
+		specs := make([]string, size)
+		for i := range specs {
+			specs[i] = fmt.Sprintf("%s~%d:%s", tip, k+i, LogFile)
+		}
+		blobs, err := s.git.ReadBlobs(ctx, specs)
 		if err != nil {
 			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
 		}
-		if !found {
-			return store.LogPos{}, false, nil
-		}
-		blobs, err := s.git.ReadBlobs(ctx, []string{oid + ":" + LogFile})
-		if err != nil {
-			return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
-		}
-		if blobs[0].Missing {
-			return store.LogPos{}, false, nil
-		}
-		events, skipped := parseLog(blobs[0].Data)
-		if skipped == 0 {
+		for i, b := range blobs {
+			if b.Missing {
+				return store.LogPos{}, false, nil
+			}
+			events, skipped := parseLog(b.Data)
+			if skipped != 0 {
+				continue
+			}
+			oid, found, err := s.git.ResolveRef(ctx, fmt.Sprintf("%s~%d", tip, k+i))
+			if err != nil {
+				return store.LogPos{}, false, fmt.Errorf("read store: %w", err)
+			}
+			if !found {
+				return store.LogPos{}, false, nil
+			}
 			return store.LogPos{Tip: oid, Count: len(events)}, true, nil
 		}
+		k += size
+		size = min(size*2, limit)
 	}
 }

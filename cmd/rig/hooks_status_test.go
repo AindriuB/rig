@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AindriuB/rig/internal/hookstate"
 )
@@ -253,7 +254,7 @@ const noRunnerWarning = "queued hook q has undelivered events and no runner"
 
 // AC5
 func TestHooksWarnsOnceWithNoRunner(t *testing.T) {
-	e := newDeliverEnv(t, queuedHook)
+	e := newDeliverEnv(t, fromStart(queuedHook))
 	a := e.newTask("a")
 	r := e.mustRig("task", "move", a, "stopped", "--reason", "r")
 	if n := strings.Count(r.errOut, noRunnerWarning); n != 1 {
@@ -273,6 +274,141 @@ func TestHooksWarnsOnceWithNoRunner(t *testing.T) {
 	r = e.mustRig("task", "move", a, "open")
 	if strings.Contains(r.errOut, "no runner") {
 		t.Fatalf("warned with a live runner: %q", r.errOut)
+	}
+}
+
+const notStartedWarning = "rig task move: warning: queued hook q has not started and no runner, so these events will not be delivered; a runner started now begins at the newest events"
+
+// AC1
+func TestHooksWarnsNotStartedForNeverRunHook(t *testing.T) {
+	e := newDeliverEnv(t, queuedHook)
+	a := e.newTask("a")
+	r := e.mustRig("task", "move", a, "stopped", "--reason", "r")
+	if n := strings.Count(r.errOut, notStartedWarning); n != 1 {
+		t.Fatalf("%d not-started lines, want 1: %q", n, r.errOut)
+	}
+	if strings.Contains(r.errOut, "undelivered") {
+		t.Fatalf("said undelivered: %q", r.errOut)
+	}
+}
+
+// AC2
+func TestHooksKeepsUndeliveredLineWhenEventsWillBeDelivered(t *testing.T) {
+	for name, setup := range map[string]func(e *deliverEnv){
+		"from start": func(e *deliverEnv) {},
+		"saved cursor": func(e *deliverEnv) {
+			e.pass()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hook := queuedHook
+			if name == "from start" {
+				hook = fromStart(queuedHook)
+			}
+			e := newDeliverEnv(t, hook)
+			a := e.newTask("a")
+			setup(e)
+			r := e.mustRig("task", "move", a, "stopped", "--reason", "r")
+			if n := strings.Count(r.errOut, noRunnerWarning); n != 1 || strings.Contains(r.errOut, "has not started") {
+				t.Fatalf("stderr = %q", r.errOut)
+			}
+		})
+	}
+}
+
+// setLeaseBeat rewrites the lease's beat and leaves every other field exactly
+// as written. It decodes into hookstate.Holder, not a map, so the 64-bit start
+// stays an integer (a float64 would round a Windows FILETIME).
+func setLeaseBeat(t *testing.T, path string, beat time.Time) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h hookstate.Holder
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	h.Beat = beat
+	if b, err = json.Marshal(h); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHooksSetLeaseBeatKeepsStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q.lease")
+	const start = uint64(1<<60 + 1)
+	b, err := json.Marshal(hookstate.Holder{PID: 7, Start: start, Token: "tok", Beat: time.Unix(1, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beat := time.Unix(1000, 0).UTC()
+	setLeaseBeat(t, path, beat)
+	if b, err = os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
+	var got hookstate.Holder
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Start != start || !got.Beat.Equal(beat) || got.PID != 7 || got.Token != "tok" {
+		t.Fatalf("lease = %+v", got)
+	}
+}
+
+// AC3
+func TestHooksWarnsOnStaleHeartbeat(t *testing.T) {
+	for _, tc := range []struct {
+		age  time.Duration
+		warn bool
+	}{{3 * time.Minute, true}, {10 * time.Second, false}} {
+		e := newDeliverEnv(t, fromStart(queuedHook))
+		a := e.newTask("a")
+		dir := filepath.Dir(e.statePath())
+		l, err := hookstate.Acquire(dir, "q")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease := filepath.Join(dir, "q.lease")
+		setLeaseBeat(t, lease, time.Now().UTC().Add(-tc.age))
+		r := e.mustRig("task", "move", a, "stopped", "--reason", "r")
+		l.Release()
+		if got := strings.Contains(r.errOut, "no runner"); got != tc.warn {
+			t.Fatalf("beat %v old: warned = %v, stderr %q", tc.age, got, r.errOut)
+		}
+	}
+}
+
+// AC4, AC5
+func TestHooksStatusStartedWithParkedAndNoCursor(t *testing.T) {
+	e := newDeliverEnv(t, queuedHook)
+	started := func() (bool, string) {
+		var got struct{ Hooks []struct{ Started bool } }
+		r := e.mustRig("hooks", "status", "--json")
+		if err := json.Unmarshal([]byte(r.out), &got); err != nil || len(got.Hooks) != 1 {
+			t.Fatalf("%v: %s", err, r.out)
+		}
+		return got.Hooks[0].Started, e.mustRig("hooks", "status").out
+	}
+	if s, _ := started(); s {
+		t.Fatal("hook with no state file reports started")
+	}
+	err := hookstate.Update(e.statePath(), func(s *hookstate.State) error {
+		s.Parked = map[string]map[string]hookstate.Parked{"": {"ev1": {Attempts: 5, Reason: "boom"}}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, text := started()
+	if !s || !strings.Contains(text, ", started,") {
+		t.Fatalf("started = %v, text %q", s, text)
 	}
 }
 

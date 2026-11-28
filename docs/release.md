@@ -10,8 +10,7 @@
 - Skip when `go run ./cmd/rig version` on `main` already prints `<version>`.
 
 ## Tag
-- `git tag -a v<version> -m "<version>"` on `main`'s head, then `git push origin v<version>`.
-- `release.yml` refuses a tag that does not match `rig version`.
+- `git tag -a v<version> -m "<version>"` on `main`'s head, then `git push origin v<version>`; `release.yml` refuses a tag that does not match `rig version`.
 
 ## Publish targets
 | Target | Triggered by | Workflow | Secret it needs |
@@ -23,6 +22,7 @@
 ## Verify the published state
 - `gh release view v<version> --json isDraft,assets --jq '.isDraft, [.assets[].name]'`
   prints `false` and `rig-{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,windows-amd64.exe}`, `SHA256SUMS`, `SHA256SUMS.sig`.
+- `gh release download v<version> -D <dir>` to a temp dir, then `go run ./tools/rigsign verify <dir>` prints `verified 5 assets`.
 - `go install github.com/AindriuB/rig/cmd/rig@v<version>` in a temp `GOBIN`, then `rig version` prints `<version>`.
 
 ## If a step fails

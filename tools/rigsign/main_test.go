@@ -118,6 +118,32 @@ func TestSignBadKeyExits1WithoutEcho(t *testing.T) {
 	}
 }
 
+func TestVerifyExits1OnUntrustedKey(t *testing.T) {
+	dir := t.TempDir()
+	sums := "abc  rig-linux-amd64\n"
+	os.WriteFile(filepath.Join(dir, "rig-linux-amd64"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums), 0o644)
+	sig := ed25519.Sign(ed25519.NewKeyFromSeed(vectorSeed()), []byte(sums))
+	os.WriteFile(filepath.Join(dir, "SHA256SUMS.sig"), sig, 0o644)
+	var out, errb bytes.Buffer
+	if code := run([]string{"verify", dir}, func(string) string { return "" }, &out, &errb); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "signature") || out.Len() != 0 {
+		t.Fatalf("stderr %q stdout %q", errb.String(), out.String())
+	}
+}
+
+func TestVerifyNoDirUsage(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"verify"}, func(string) string { return "" }, &out, &errb); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "usage:") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+}
+
 func TestVector(t *testing.T) {
 	priv := ed25519.NewKeyFromSeed(vectorSeed())
 	sig := ed25519.Sign(priv, []byte(vectorMsg))
