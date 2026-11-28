@@ -156,7 +156,7 @@ anything in the tables below raises the major version.
 | `rig task link <task> [<kind>:]<key> [--json] [--repo <dir>]` | 0; 1 the issue is already linked to another task, nothing written; 2 on any error. If the link is written and the refresh after it fails, exit 2 and the link stays |
 | `rig task unlink <task> [--json] [--repo <dir>]` | 0; 1 the task is not linked; 2 on any error |
 | `rig task start <slug> [--task-file <path>] [--json] [--repo <dir>]` | 0 made; 1 refused (no task file, or the path or branch is taken), nothing created; 2 usage or any other error, and what was half made is removed again |
-| `rig task finish <task> --sha <sha> [--json] [--repo <dir>]` | 0 merged (the worktree is kept, with the reason, when it could not be removed); 1 refused, or a merge conflict that was aborted, nothing changed; 2 usage or any other error |
+| `rig task finish <task> --sha <sha> [--json] [--repo <dir>]` | 0 merged (the worktree is kept, with the reason, when it could not be removed); 1 refused, or a merge conflict that was aborted, nothing changed; 2 usage (`<sha>` must be the full commit id, 40 or 64 lowercase hex; a branch name, `HEAD` or an abbreviated id is refused) or any other error |
 | `rig task move <task> <state> [--sha <sha>] [--pr <n>] [--reason <text>] [--json] [--repo <dir>]` | 0 moved; 1 refused by a gate or the workflow, nothing written; 2 on any error |
 | `rig task set <task> --field <name>=<value>… [--json] [--repo <dir>]` | 0; 1 a field changed underneath, or the field is owned by the tracker the task is linked to, nothing written; 2 on any error |
 | `rig task count <task> <counter> [--json] [--repo <dir>]` | 0; 2 on any error |
