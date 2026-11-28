@@ -428,11 +428,20 @@ func TestTaskFinishRefusals(t *testing.T) {
 
 	// A sha that is not a commit.
 	for _, bad := range []string{"deadbeefdeadbeef", "--all", ""} {
-		if r := finish("08-bar", "--sha", bad); r.code != 1 && r.code != 2 {
+		if r := finish("08-bar", "--sha", bad); r.code != 2 {
 			t.Fatalf("sha %q: %+v", bad, r)
 		}
 	}
-	if r := finish("08-bar", "--sha", "deadbeefdeadbeef"); r.code != 1 || !strings.Contains(r.errOut, "not a commit") {
+	// AC1-AC3: only a full commit id is accepted; nothing is merged.
+	for _, bad := range []string{"task/08-bar", "HEAD", sha[:12], strings.ToUpper(sha)} {
+		r := finish("08-bar", "--sha", bad)
+		if r.code != 2 || !strings.Contains(r.errOut, "full commit id") {
+			t.Fatalf("sha %q: %+v", bad, r)
+		}
+		unchanged(t, "sha "+bad)
+	}
+	// AC6: a full id that is no object.
+	if r := finish("08-bar", "--sha", strings.Repeat("deadbeef", 5)); r.code != 1 || !strings.Contains(r.errOut, "not a commit") {
 		t.Fatalf("unknown sha: %+v", r)
 	}
 	unchanged(t, "unknown sha")
@@ -448,6 +457,29 @@ func TestTaskFinishRefusals(t *testing.T) {
 		t.Fatalf("no worktree: %+v", r)
 	}
 	unchanged(t, "no worktree")
+}
+
+// AC5.
+func TestFullCommitID(t *testing.T) {
+	h := strings.Repeat("a1", 32)
+	for _, tc := range []struct {
+		s    string
+		want bool
+	}{
+		{h[:40], true},
+		{h, true},
+		{h[:39], false},
+		{h[:41], false},
+		{h[:63], false},
+		{h + "a", false},
+		{strings.ToUpper(h[:40]), false},
+		{h[:39] + "g", false},
+		{"", false},
+	} {
+		if got := fullCommitID(tc.s); got != tc.want {
+			t.Errorf("fullCommitID(%q) = %v, want %v", tc.s, got, tc.want)
+		}
+	}
 }
 
 func TestTaskFinishAmbiguousPrefix(t *testing.T) {
