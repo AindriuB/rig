@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -141,8 +142,15 @@ func TestOnceNoteAndNewRepeat(t *testing.T) {
 	if r.code != 0 || r.out != "repeat: --once c already recorded\n" {
 		t.Fatalf("task new repeat: %+v", r)
 	}
-	if got := e.rig("task", "list"); strings.Contains(got.out, "s2") || !strings.Contains(got.out, "s") {
-		t.Fatalf("tasks: %q", got.out)
+	got := e.must("task", "list", "--format", "json")
+	var listed []struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.Unmarshal([]byte(got.out), &listed); err != nil {
+		t.Fatalf("tasks: %v: %q", err, got.out)
+	}
+	if len(listed) != 1 || listed[0].Slug != "s" {
+		t.Fatalf("want exactly one task with slug s: %q", got.out)
 	}
 }
 
