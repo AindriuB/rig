@@ -81,19 +81,18 @@ func (a *app) hooksDeliver(ctx context.Context, args []string) int {
 		root = filepath.FromSlash(wts[0].Path)
 	}
 	d := &deliverer{a: a, wf: w.wf, feeder: feeder, common: common, runner: deliverRunner(root),
-		leases: map[string]*hookstate.Lease{}, heldBy: map[string]bool{}, held: map[string]map[string]bool{}}
+		leases: map[string]*hookstate.Lease{}, heldBy: map[string]bool{}, held: map[string]map[string]bool{},
+		errSeen: map[string]string{}}
 	stop := make(chan struct{})
 	beat := make(chan struct{})
 	go func() { defer close(beat); d.heartbeat(stop) }()
 	defer func() { close(stop); <-beat; d.releaseAll() }()
 	for {
-		if err := d.pass(ctx); err != nil {
-			if ctx.Err() != nil {
-				return 0
-			}
-			return a.storeFail("hooks deliver", err)
-		}
+		failed := d.pass(ctx)
 		if !*follow || ctx.Err() != nil {
+			if failed && ctx.Err() == nil {
+				return 1
+			}
 			return 0
 		}
 		select {
@@ -112,10 +111,11 @@ type deliverer struct {
 	common string
 	runner workflow.Runner
 
-	mu     sync.Mutex // guards leases and a.stderr
-	leases map[string]*hookstate.Lease
-	heldBy map[string]bool            // hooks a live runner holds, already warned about
-	held   map[string]map[string]bool // per hook, the logs held back, already warned about
+	mu      sync.Mutex // guards leases and a.stderr
+	leases  map[string]*hookstate.Lease
+	heldBy  map[string]bool            // hooks a live runner holds, already warned about
+	held    map[string]map[string]bool // per hook, the logs held back, already warned about
+	errSeen map[string]string          // per hook, the last error text logged
 }
 
 func (d *deliverer) logf(format string, args ...any) {
@@ -137,6 +137,10 @@ func (d *deliverer) heartbeat(stop <-chan struct{}) {
 			for name, l := range d.leases {
 				if err := l.Touch(); err != nil {
 					fmt.Fprintf(d.a.stderr, "rig hooks deliver: %s: %v\n", name, err)
+					if errors.Is(err, hookstate.ErrTakenOver) {
+						// Not ours any more: the next pass must Acquire again.
+						delete(d.leases, name)
+					}
 				}
 			}
 			d.mu.Unlock()
@@ -155,17 +159,30 @@ func (d *deliverer) releaseAll() {
 	}
 }
 
-// pass delivers every queued hook once over.
-func (d *deliverer) pass(ctx context.Context) error {
+// pass delivers every queued hook once over. A hook's error is logged (once
+// while its text is unchanged) and the other hooks still run; failed reports
+// whether any hook failed.
+func (d *deliverer) pass(ctx context.Context) (failed bool) {
 	for _, i := range d.wf.QueuedHooks() {
 		if ctx.Err() != nil {
-			return nil
+			return failed
 		}
-		if err := d.hook(ctx, i); err != nil {
-			return err
+		name := d.wf.HookName(i)
+		err := d.hook(ctx, i)
+		if err == nil {
+			delete(d.errSeen, name)
+			continue
+		}
+		if ctx.Err() != nil {
+			return failed
+		}
+		failed = true
+		if d.errSeen[name] != err.Error() {
+			d.errSeen[name] = err.Error()
+			d.logf("%s: %v", name, err)
 		}
 	}
-	return nil
+	return failed
 }
 
 func cloneCursor(c *store.Cursor) *store.Cursor {
@@ -234,7 +251,7 @@ func (d *deliverer) hook(ctx context.Context, i int) error {
 	if ok, err := d.lease(filepath.Dir(path), name); !ok || err != nil {
 		return err
 	}
-	st, err := hookstate.Load(path)
+	st, err := hookstate.LoadLocked(path)
 	if err != nil {
 		return err
 	}

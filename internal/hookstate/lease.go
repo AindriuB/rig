@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,10 @@ type HeldError struct{ Holder Holder }
 func (e *HeldError) Error() string {
 	return fmt.Sprintf("hook is delivered by pid %d (last heartbeat %s)", e.Holder.PID, e.Holder.Beat.Format(time.RFC3339))
 }
+
+// ErrTakenOver is what Touch returns when the lease now names another holder
+// or is gone. Any other Touch error leaves the lease this process's.
+var ErrTakenOver = errors.New("was taken over")
 
 // Lease is a held hook lease.
 type Lease struct {
@@ -106,7 +111,7 @@ func (l *Lease) Touch() error {
 		return err
 	}
 	if h == nil || h.Token != l.me.Token {
-		return fmt.Errorf("lease %s was taken over", l.path)
+		return fmt.Errorf("lease %s: %w", l.path, ErrTakenOver)
 	}
 	l.me.Beat = time.Now().UTC()
 	return writeAtomic(l.path, l.me)

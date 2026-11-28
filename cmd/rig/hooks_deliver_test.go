@@ -473,6 +473,121 @@ func TestDeliverRunsNoInlineHooksAndMoveNoQueuedHook(t *testing.T) {
 	}
 }
 
+// AC10: a queued hook whose run is the test binary leaves a marker if the
+// inline path runs it; a write must leave none.
+func TestDeliverMoveRunsNoQueuedHookInline(t *testing.T) {
+	exe, _ := os.Executable()
+	b, _ := json.Marshal(exe)
+	hook := `{"name":"q","mode":"queued","on":"kind:*","run":[` + string(b) + `],"env":["RIG_CMD_HELPER","RIG_CMD_EXIT"]}`
+	e := newDeliverEnv(t, hook)
+	a := e.newTask("a")
+	e.mustRig("task", "move", a, "stopped", "--reason", "r")
+	if got := e.delivered(); len(got) != 0 {
+		t.Fatalf("a write ran the queued hook inline: %v", got)
+	}
+}
+
+// brokenState makes hook name's state file invalid JSON.
+func (e *deliverEnv) brokenState(name string) {
+	e.t.Helper()
+	p := hookstate.Path(filepath.Join(e.repo, ".git"), "hk", name)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *deliverEnv) callsBy(name string) int {
+	n := 0
+	e.fake.mu.Lock()
+	defer e.fake.mu.Unlock()
+	for _, c := range e.fake.calls {
+		if c.env["RIG_HOOK_NAME"] == name {
+			n++
+		}
+	}
+	return n
+}
+
+const twoHooks = `{"name":"a","mode":"queued","from":"start","on":"kind:*","run":["x"]},{"name":"b","mode":"queued","from":"start","on":"kind:*","run":["x"]}`
+
+// AC1
+func TestDeliverOneHooksStateErrorDoesNotStopTheRest(t *testing.T) {
+	e := newDeliverEnv(t, twoHooks)
+	e.newTask("t")
+	e.brokenState("a")
+	r := e.deliver(context.Background())
+	if r.code == 0 {
+		t.Fatalf("exit 0, want non-zero: %+v", r)
+	}
+	if e.callsBy("b") == 0 || e.callsBy("a") != 0 {
+		t.Fatalf("b %d a %d deliveries", e.callsBy("b"), e.callsBy("a"))
+	}
+	if strings.Count(r.errOut, "rig hooks deliver: a:") != 1 {
+		t.Fatalf("stderr %q", r.errOut)
+	}
+}
+
+// AC2
+func TestDeliverFollowKeepsRunningPastStateError(t *testing.T) {
+	e := newDeliverEnv(t, twoHooks)
+	e.newTask("t")
+	e.brokenState("a")
+	var out, errOut bytes.Buffer
+	a := &app{stdout: &out, stderr: &errOut, cwd: e.repo, now: tick(),
+		getenv: func(k string) string { return e.env[k] }}
+	a.store = a.openStore
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.run(ctx, []string{"hooks", "deliver", "--follow", "--repo", e.repo}) }()
+	// Passes run at 0 s, 1 s and 2 s.
+	select {
+	case code := <-done:
+		t.Fatalf("runner exited with %d: %s", code, errOut.String())
+	case <-time.After(2500 * time.Millisecond):
+	}
+	if e.callsBy("b") == 0 {
+		t.Fatal("b got nothing")
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if n := strings.Count(errOut.String(), "rig hooks deliver: a:"); n != 1 {
+		t.Fatalf("a's error logged %d times: %q", n, errOut.String())
+	}
+}
+
+// AC3
+func TestDeliverTakenOverLeaseIsDropped(t *testing.T) {
+	dir := t.TempDir()
+	l, err := hookstate.Acquire(dir, "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := json.Marshal(hookstate.Holder{PID: os.Getpid(), Token: "someone-else", Beat: time.Now()})
+	if err := os.WriteFile(filepath.Join(dir, "q.lease"), other, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Touch(); !errors.Is(err, hookstate.ErrTakenOver) {
+		t.Fatalf("Touch = %v, want ErrTakenOver", err)
+	}
+	old := leaseTouchEvery
+	leaseTouchEvery = 5 * time.Millisecond
+	defer func() { leaseTouchEvery = old }()
+	var errOut bytes.Buffer
+	d := &deliverer{a: &app{stderr: &errOut}, leases: map[string]*hookstate.Lease{"q": l}}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { defer close(done); d.heartbeat(stop) }()
+	waitFor(t, 5*time.Second, func() bool { d.mu.Lock(); defer d.mu.Unlock(); return len(d.leases) == 0 }, "lease dropped")
+	close(stop)
+	<-done
+}
+
 // The runner's environment and the lease heartbeat.
 func TestDeliverEnvAndHeartbeat(t *testing.T) {
 	e := newDeliverEnv(t, fromStart(queuedHook))
