@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,53 @@ func TestLoadRejectsUnknownFormat(t *testing.T) {
 	}
 	if _, err := Load(p); err == nil {
 		t.Fatal("unknown format accepted")
+	}
+}
+
+func writeRaw(t *testing.T, body string) string {
+	t.Helper()
+	p := Path(t.TempDir(), "w", "chat")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestAC1LoadFillsNilLogs(t *testing.T) {
+	p := writeRaw(t, `{"format":1,"cursor":{"format":1},"parked":{}}`)
+	s, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Cursor == nil || s.Cursor.Logs == nil {
+		t.Fatalf("cursor %+v", s.Cursor)
+	}
+}
+
+func TestAC2UnknownCursorFormatRefused(t *testing.T) {
+	body := `{"format":1,"cursor":{"format":2,"logs":{}},"parked":{}}`
+	p := writeRaw(t, body)
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "format 2") {
+		t.Fatalf("Load err %v", err)
+	}
+	called := false
+	err := Update(p, func(*State) error { called = true; return nil })
+	if err == nil || !strings.Contains(err.Error(), "format 2") || called {
+		t.Fatalf("Update err %v called %v", err, called)
+	}
+	if b, _ := os.ReadFile(p); string(b) != body {
+		t.Fatalf("file rewritten: %s", b)
+	}
+}
+
+func TestAC3NullCursorStaysNil(t *testing.T) {
+	p := writeRaw(t, `{"format":1,"cursor":null,"parked":{}}`)
+	s, err := Load(p)
+	if err != nil || s.Cursor != nil {
+		t.Fatalf("%+v %v", s, err)
 	}
 }
 
