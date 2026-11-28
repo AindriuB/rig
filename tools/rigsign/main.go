@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AindriuB/rig/internal/selfupdate"
 )
 
 const keyEnv = "RIG_SIGNING_KEY"
@@ -25,11 +27,17 @@ func main() {
 
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	if len(args) != 2 {
-		fmt.Fprintln(stderr, "usage: rigsign keygen <dir> | rigsign sign <file>")
+		fmt.Fprintln(stderr, "usage: rigsign keygen <dir> | rigsign sign <file> | rigsign verify <dir>")
 		return 1
 	}
 	var err error
 	switch args[0] {
+	case "verify":
+		err = selfupdate.VerifyDist(args[1])
+		if err == nil {
+			entries, _ := os.ReadDir(args[1])
+			fmt.Fprintf(stdout, "verified %d assets\n", len(entries)-2)
+		}
 	case "keygen":
 		err = keygen(args[1], stdout)
 	case "sign":
