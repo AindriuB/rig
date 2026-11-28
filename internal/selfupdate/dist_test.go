@@ -46,7 +46,7 @@ func trust(t *testing.T, key string) {
 func TestVerifyDistRejectsUnembeddedKey(t *testing.T) {
 	dir, _ := makeDist(t)
 	var ce *CheckError
-	if err := VerifyDist(dir); !errors.As(err, &ce) || ce.Check != "signature" {
+	if _, err := VerifyDist(dir); !errors.As(err, &ce) || ce.Check != "signature" {
 		t.Fatalf("got %v, want signature CheckError", err)
 	}
 }
@@ -54,8 +54,23 @@ func TestVerifyDistRejectsUnembeddedKey(t *testing.T) {
 func TestVerifyDistAcceptsTrustedKey(t *testing.T) {
 	dir, key := makeDist(t)
 	trust(t, key)
-	if err := VerifyDist(dir); err != nil {
+	n, err := VerifyDist(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("verified %d assets, want 2", n)
+	}
+}
+
+func TestVerifyDistRejectsNonRegularEntry(t *testing.T) {
+	dir, key := makeDist(t)
+	trust(t, key)
+	if err := os.Mkdir(filepath.Join(dir, "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := VerifyDist(dir); err == nil {
+		t.Fatalf("got %d, nil; want error for subdirectory", n)
 	}
 }
 
@@ -65,7 +80,7 @@ func TestVerifyDistFailures(t *testing.T) {
 		trust(t, key)
 		os.WriteFile(filepath.Join(dir, "rig-linux-amd64"), []byte("tampered"), 0o644)
 		var ce *CheckError
-		if err := VerifyDist(dir); !errors.As(err, &ce) || ce.Check != "checksum" {
+		if _, err := VerifyDist(dir); !errors.As(err, &ce) || ce.Check != "checksum" {
 			t.Fatalf("got %v, want checksum CheckError", err)
 		}
 	})
@@ -73,7 +88,7 @@ func TestVerifyDistFailures(t *testing.T) {
 		dir, key := makeDist(t)
 		trust(t, key)
 		os.Remove(filepath.Join(dir, "SHA256SUMS.sig"))
-		if err := VerifyDist(dir); err == nil {
+		if _, err := VerifyDist(dir); err == nil {
 			t.Fatal("want error")
 		}
 	})
@@ -81,14 +96,14 @@ func TestVerifyDistFailures(t *testing.T) {
 		dir, key := makeDist(t)
 		trust(t, key)
 		os.Remove(filepath.Join(dir, "rig-darwin-arm64"))
-		if err := VerifyDist(dir); err == nil {
+		if _, err := VerifyDist(dir); err == nil {
 			t.Fatal("want error")
 		}
 	})
 	t.Run("empty dist", func(t *testing.T) {
 		_, key := makeDist(t)
 		trust(t, key)
-		if err := VerifyDist(t.TempDir()); err == nil {
+		if _, err := VerifyDist(t.TempDir()); err == nil {
 			t.Fatal("want error")
 		}
 	})
