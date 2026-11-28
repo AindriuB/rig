@@ -469,7 +469,9 @@ again finishes the job. A `rig tracker report` that sent only one of its two
 parts (status and comment) is not stamped, and `rig task link` is one stamped
 write.
 
-Keys are per task. A key must not be empty or contain control characters.
+Keys are per task for every command except `rig task new`, which checks the key
+across every task in the repository: the same key on two different `task new`
+calls is a repeat. A key must not be empty or contain control characters.
 
 - **Commands that take it:** `rig task new`, `edit`, `parent`, `link`, `unlink`,
   `move`, `set` and `count`; `rig finding add` and `set`; `rig note add`; and
