@@ -104,7 +104,8 @@ type FeedResult struct {
 }
 
 // Feeder is a Store that can list events across all tasks. Feed with a nil
-// cursor reads nothing new: it returns a cursor at the current tips.
+// cursor returns no items and records each readable log at its tip, and a log
+// with unreadable lines at its newest readable ancestor, or not at all.
 type Feeder interface {
 	Feed(ctx context.Context, cur *Cursor) (FeedResult, error)
 }
