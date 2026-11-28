@@ -55,18 +55,68 @@ func TestAC3LiveHolderKeepsLeaseDespiteOldBeat(t *testing.T) {
 }
 
 func TestAC4ExitedChildIsTakenOver(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	if err := cmd.Run(); err != nil {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperSleep$")
+	cmd.Env = append(os.Environ(), "RIG_SLEEP_HELPER=1")
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	reaped := false
+	defer func() {
+		if !reaped {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}()
+	pid := cmd.Process.Pid
+	var start uint64
+	for i := 0; i < 100; i++ {
+		s, ok, err := processStart(pid)
+		if err == nil && ok {
+			start = s
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if start == 0 {
+		t.Fatal("no start time for running child")
+	}
 	dir := t.TempDir()
-	writeLease(t, dir, "chat", Holder{PID: cmd.Process.Pid, Start: 1, Token: "x", Beat: time.Now()})
-	if _, live, _ := Beat(dir, "chat"); live {
-		t.Fatal("exited pid reported live")
+	writeLease(t, dir, "chat", Holder{PID: pid, Start: start, Token: "x", Beat: time.Now()})
+	if _, live, _ := Beat(dir, "chat"); !live {
+		t.Fatal("running child reported not live")
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	// Not reaped yet: processStart of the killed child returns start 0
+	// (its dead-process check: zombie or exited), so the lease's recorded
+	// start no longer matches and Beat reports not live. Disabling that
+	// check makes the dead child report its real start, and this fails.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, live, _ := Beat(dir, "chat")
+		if !live {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("exited child still reported live")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if _, err := Acquire(dir, "chat"); err != nil {
 		t.Fatal(err)
 	}
+	cmd.Wait()
+	reaped = true
+}
+
+// TestHelperSleep is not a test: with RIG_SLEEP_HELPER set it sleeps so
+// TestAC4ExitedChildIsTakenOver has a child process to start and kill.
+func TestHelperSleep(t *testing.T) {
+	if os.Getenv("RIG_SLEEP_HELPER") != "1" {
+		t.Skip("helper for TestAC4ExitedChildIsTakenOver")
+	}
+	time.Sleep(time.Minute)
 }
 
 func TestAC5DifferentStartTimeIsTakenOver(t *testing.T) {

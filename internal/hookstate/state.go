@@ -58,6 +58,14 @@ func Load(path string) (*State, error) {
 	if s.Format != Format {
 		return nil, fmt.Errorf("read hook state %s: format %d is not one this rig reads", path, s.Format)
 	}
+	if s.Cursor != nil {
+		if s.Cursor.Format != store.CursorFormat {
+			return nil, fmt.Errorf("read hook state %s: cursor format %d is not one this rig reads", path, s.Cursor.Format)
+		}
+		if s.Cursor.Logs == nil {
+			s.Cursor.Logs = map[string]store.LogPos{}
+		}
+	}
 	if s.Parked == nil {
 		s.Parked = map[string]map[string]Parked{}
 	}
