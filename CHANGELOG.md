@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-28
+
 ### Added
 
-- Queued hooks (`"mode": "queued"`) are delivered, and `from` and `maxDepth` are acted on. `rig hooks deliver [--follow]` is the runner: it delivers at least once, in order within a task, keeps one cursor per hook, retries five times (1 second doubling to 5 minutes) and then parks the event. rig never starts the runner; `docs/hooks.md` has a launchd plist and a systemd unit. A write a queued hook matches warns when no runner is alive.
+- Queued hooks (`"mode": "queued"`) are delivered, and `from` and `maxDepth` are acted on. `rig hooks deliver [--follow]` is the runner: it delivers at least once, in order within a task, keeps one cursor per hook, makes 5 attempts in all (waiting 1, 2, 4 and 8 seconds between them) and then parks the event. rig never starts the runner; `docs/hooks.md` has a launchd plist and a systemd unit. A write a queued hook matches warns when no runner is alive.
 - `rig hooks status [--json]`, `rig hooks retry <hook>` and `rig hooks skip <hook> <event>` show a hook's runner and parked events, release them for another try, or drop one. `skip` refuses while a live runner holds the hook.
 - `--once <k>` on the write commands (`rig task new|edit|parent|link|unlink|move|set|count`, `rig finding add|set`, `rig note add`, `rig tracker report`) makes a write happen once per key and reports a repeat. Inside a hook the key is made from the hook, event and command by default.
 - `RIG_HOOK_DEPTH` is set for every hook. A write whose cause event is not in the log, as across repositories, takes its depth from it.
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A queued hook with no `maxDepth` is uncapped.
-- `rig events` holds a log it cannot read until it can be read, and warns once when it is held and once when it is released.
+- `rig events` holds a log it cannot read until it can be read, and warns once when it is held and once when it is released. A `--cursor-file` saved by 0.7.0 may already record such a log at its tip; delete the cursor file once after upgrading so the log is re-read and reported.
 
 ## [0.7.0] - 2026-11-27
 
@@ -127,7 +129,8 @@ Tracker create and push have been tested against fakes only. A live check agains
 - `rig version`.
 - Optional `.claude/rig.json` with the keys `forge`, `host` and `pushPrefixes`.
 
-[Unreleased]: https://github.com/AindriuB/rig/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/AindriuB/rig/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/AindriuB/rig/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/AindriuB/rig/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/AindriuB/rig/compare/v0.5.3...v0.6.0
 [0.5.0]: https://github.com/AindriuB/rig/compare/v0.4.0...v0.5.0
