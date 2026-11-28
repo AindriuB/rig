@@ -146,6 +146,29 @@ func TestHooksSkipAdvancesCursor(t *testing.T) {
 	}
 }
 
+// AC3: the first event parks before any cursor is saved; skip still works.
+func TestHooksSkipFirstEventNoCursor(t *testing.T) {
+	e := newDeliverEnv(t, fromStart(queuedHook))
+	a := e.newTask("a")
+	e.note(a)
+	e.note(a)
+	ids := e.ids(a)
+	e.fake.fn = func(c call) error {
+		if c.event == ids[0] {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	e.pass()
+	e.fake.fn = nil
+	e.fake.reset()
+	e.mustRig("hooks", "skip", "q", ids[0])
+	e.pass()
+	if got := e.fake.events(); !eq(got, ids[1:]) {
+		t.Fatalf("delivered %v, want %v", got, ids[1:])
+	}
+}
+
 // AC3: skipping the last event of a log moves past it too.
 func TestHooksSkipLastEventOfLog(t *testing.T) {
 	e := newDeliverEnv(t, fromStart(queuedHook))

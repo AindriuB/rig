@@ -234,8 +234,11 @@ func (a *app) hooksSkip(ctx context.Context, args []string) int {
 			key, found = k, true
 		}
 	}
-	if !found || st.Cursor == nil {
+	if !found {
 		return notParked()
+	}
+	if st.Cursor == nil {
+		st.Cursor = store.NewCursor()
 	}
 	feeder, ok := w.st.(store.Feeder)
 	if !ok {
