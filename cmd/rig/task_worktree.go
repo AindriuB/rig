@@ -337,6 +337,20 @@ type finishKept struct {
 	Reason   string `json:"reason"`
 }
 
+// fullCommitID reports whether s is a full commit id: exactly 40 (SHA-1) or 64
+// (SHA-256) lowercase hex characters, as git prints it.
+func fullCommitID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // taskFinish implements `rig task finish`: it merges exactly the commit that
 // was verified into the default branch, then removes the task's worktree.
 //
@@ -351,6 +365,9 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 	pos, err := fs.parse(args)
 	if err != nil || len(pos) != 1 || *sha == "" {
 		return a.fail(cmd, "%s", taskFinishUsage)
+	}
+	if !fullCommitID(*sha) {
+		return a.fail(cmd, "--sha must be the full commit id (40 or 64 lowercase hex characters), not %s", *sha)
 	}
 	task := strings.TrimPrefix(pos[0], "task/")
 	if !validTaskName(task) {
@@ -370,7 +387,9 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 	} else if n > 0 {
 		return a.refuse(cmd, "uncommitted changes in %s: the implementer did not finish", wt)
 	}
-	want, ok, err := repo.CommitOf(ctx, *sha)
+	// CommitOf only separates "not a commit" from "untested"; the value
+	// compared with the tip is the text the caller gave.
+	_, ok, err := repo.CommitOf(ctx, *sha)
 	if err != nil {
 		return a.fail(cmd, "%v", err)
 	}
@@ -381,8 +400,8 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail(cmd, "%v", err)
 	}
-	if tip != want {
-		return a.refuse(cmd, "%s is at %s, but /verify passed %s. The new commits are untested: run /verify again.", branch, short(tip), short(want))
+	if tip != *sha {
+		return a.refuse(cmd, "%s is at %s, but /verify passed %s. The new commits are untested: run /verify again.", branch, short(tip), short(*sha))
 	}
 	base, err := baseBranch(ctx, repo)
 	if err != nil {
@@ -397,18 +416,18 @@ func (a *app) taskFinish(ctx context.Context, args []string) int {
 	if err := repo.Checkout(ctx, base); err != nil {
 		return a.refuse(cmd, "cannot switch the main checkout to %s: %v", base, err)
 	}
-	msg := fmt.Sprintf("merge %s: %s @ %s", task, branch, short(want))
-	if err := repo.MergeNoFF(ctx, msg, want); err != nil {
+	msg := fmt.Sprintf("merge %s: %s @ %s", task, branch, short(*sha))
+	if err := repo.MergeNoFF(ctx, msg, *sha); err != nil {
 		if errors.Is(err, git.ErrMergeConflict) {
 			return a.refuse(cmd, "merge conflict on %s: aborted, nothing changed. Resolve by hand.", branch)
 		}
 		return a.fail(cmd, "%v", err)
 	}
 
-	out := finishOut{Merged: finishMerged{Branch: branch, Sha: want, Base: base}}
+	out := finishOut{Merged: finishMerged{Branch: branch, Sha: *sha, Base: base}}
 	// The tip may have moved while the merge ran. If so, keep the worktree and
 	// the branch: the extra commits are not merged and must not be lost.
-	if now, _, err := repo.ResolveRef(ctx, "refs/heads/"+branch); err != nil || now != want {
+	if now, _, err := repo.ResolveRef(ctx, "refs/heads/"+branch); err != nil || now != *sha {
 		out.Kept = &finishKept{Worktree: wt, Reason: "branch moved during the merge; its new commits are not merged"}
 		return a.printFinish(out, *asJSON, "%s", out.Kept.Reason)
 	}
