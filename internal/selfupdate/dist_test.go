@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,6 +106,22 @@ func TestVerifyDistFailures(t *testing.T) {
 		trust(t, key)
 		if _, err := VerifyDist(t.TempDir()); err == nil {
 			t.Fatal("want error")
+		}
+	})
+	t.Run("signed empty SHA256SUMS and no assets", func(t *testing.T) {
+		_, key := makeDist(t)
+		trust(t, key)
+		_, priv := vector()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS.sig"), ed25519.Sign(priv, nil), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := VerifyDist(dir)
+		if err == nil || !strings.Contains(err.Error(), "holds no assets") {
+			t.Fatalf("got %v, want holds no assets error", err)
 		}
 	})
 }
