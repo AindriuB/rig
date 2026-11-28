@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AindriuB/rig/internal/git"
+	"github.com/AindriuB/rig/internal/hookstate"
 	"github.com/AindriuB/rig/internal/store"
 	"github.com/AindriuB/rig/internal/store/gitref"
 )
@@ -43,7 +46,9 @@ type hookWriter struct {
 	w      *work
 	a      *app
 	warned bool
-	errs   []error
+	// noRunner is the queued hooks already warned about having no runner.
+	noRunner map[string]bool
+	errs     []error
 }
 
 func (h *hookWriter) UpdateEvents(ctx context.Context, ref string, next func(store.Task, []store.Finding) ([]store.Event, error)) (store.Task, []store.Event, error) {
@@ -118,6 +123,7 @@ func (h *hookWriter) after(ctx context.Context, id string, evs []store.Event) {
 			fmt.Fprintf(h.out(), "rig %s: warning: %s\n", cmd, m)
 		}
 	}
+	h.warnNoRunner(ctx, cmd, evs)
 	runner := h.w.env().Runner
 	fail := func(errs []error) {
 		for _, e := range errs {
@@ -160,6 +166,47 @@ func (h *hookWriter) after(ctx context.Context, id string, evs []store.Event) {
 			headDone = true
 		}
 		fail(wf.RunHooks(ctx, runner, ev, t, head))
+	}
+}
+
+// warnNoRunner says once per command, for each queued hook that matches one
+// of evs, when no runner is delivering it: no live lease, or a heartbeat
+// older than runnerStale.
+func (h *hookWriter) warnNoRunner(ctx context.Context, cmd string, evs []store.Event) {
+	wf := h.w.wf
+	var common string
+	for _, i := range wf.QueuedHooks() {
+		name := wf.HookName(i)
+		if h.noRunner[name] {
+			continue
+		}
+		matched := false
+		for _, ev := range evs {
+			if m, err := wf.QueuedMatches(i, ev); err == nil && m {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if common == "" {
+			c, err := h.w.repo.CommonDir(ctx)
+			if err != nil {
+				return
+			}
+			common = c
+		}
+		dir := filepath.Dir(hookstate.Path(common, wf.Name, name))
+		beat, live, err := hookstate.Beat(dir, name)
+		if err != nil || (live && time.Since(beat) <= runnerStale) {
+			continue
+		}
+		if h.noRunner == nil {
+			h.noRunner = map[string]bool{}
+		}
+		h.noRunner[name] = true
+		fmt.Fprintf(h.out(), "rig %s: warning: queued hook %s has undelivered events and no runner; start one with rig hooks deliver --follow\n", cmd, name)
 	}
 }
 

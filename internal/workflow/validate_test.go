@@ -275,8 +275,7 @@ func TestHookKeysValid(t *testing.T) {
 		t.Fatalf("problems: %v", ps)
 	}
 	ws := w.HookWarnings()
-	if len(ws) != 2 || !strings.Contains(ws[0], "hooks[1]") || !strings.Contains(ws[0], "not delivered by this version") ||
-		!strings.Contains(ws[1], "hook-3") {
+	if len(ws) != 1 || !strings.Contains(ws[0], "hook-3") || strings.Contains(ws[0], "will not run") {
 		t.Fatalf("warnings = %q", ws)
 	}
 }

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	hooksUsage        = "usage: rig hooks start|deliver ..."
+	hooksUsage        = "usage: rig hooks start|deliver|status|retry|skip ..."
 	hooksDeliverUsage = "usage: rig hooks deliver [--follow] [--repo <dir>]"
 	hooksStartUsage   = "usage: rig hooks start [--json] [--] <cmd> [args...]"
 )
@@ -24,6 +24,12 @@ func (a *app) hooks(ctx context.Context, args []string) int {
 		return a.hooksDeliver(ctx, args[1:])
 	case "start":
 		return a.hooksStart(args[1:])
+	case "status":
+		return a.hooksStatus(ctx, args[1:])
+	case "retry":
+		return a.hooksRetry(ctx, args[1:])
+	case "skip":
+		return a.hooksSkip(ctx, args[1:])
 	}
 	return a.fail("hooks", "unknown subcommand %q\n%s", args[0], hooksUsage)
 }
