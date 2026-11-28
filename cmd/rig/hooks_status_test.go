@@ -316,6 +316,52 @@ func TestHooksKeepsUndeliveredLineWhenEventsWillBeDelivered(t *testing.T) {
 	}
 }
 
+// setLeaseBeat rewrites the lease's beat and leaves every other field exactly
+// as written. It decodes into hookstate.Holder, not a map, so the 64-bit start
+// stays an integer (a float64 would round a Windows FILETIME).
+func setLeaseBeat(t *testing.T, path string, beat time.Time) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h hookstate.Holder
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	h.Beat = beat
+	if b, err = json.Marshal(h); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHooksSetLeaseBeatKeepsStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q.lease")
+	const start = uint64(1<<60 + 1)
+	b, err := json.Marshal(hookstate.Holder{PID: 7, Start: start, Token: "tok", Beat: time.Unix(1, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beat := time.Unix(1000, 0).UTC()
+	setLeaseBeat(t, path, beat)
+	if b, err = os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
+	var got hookstate.Holder
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Start != start || !got.Beat.Equal(beat) || got.PID != 7 || got.Token != "tok" {
+		t.Fatalf("lease = %+v", got)
+	}
+}
+
 // AC3
 func TestHooksWarnsOnStaleHeartbeat(t *testing.T) {
 	for _, tc := range []struct {
@@ -330,21 +376,7 @@ func TestHooksWarnsOnStaleHeartbeat(t *testing.T) {
 			t.Fatal(err)
 		}
 		lease := filepath.Join(dir, "q.lease")
-		b, err := os.ReadFile(lease)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var h map[string]any
-		if err := json.Unmarshal(b, &h); err != nil {
-			t.Fatal(err)
-		}
-		h["beat"] = time.Now().UTC().Add(-tc.age)
-		if b, err = json.Marshal(h); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lease, b, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		setLeaseBeat(t, lease, time.Now().UTC().Add(-tc.age))
 		r := e.mustRig("task", "move", a, "stopped", "--reason", "r")
 		l.Release()
 		if got := strings.Contains(r.errOut, "no runner"); got != tc.warn {
