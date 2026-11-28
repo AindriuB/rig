@@ -170,6 +170,80 @@ func TestFeedBaselineHoldsUnreadableLog(t *testing.T) {
 	}
 }
 
+// walkCount counts ReadBlobs and ResolveRef calls.
+type walkCount struct {
+	git.Repo
+	blobs, resolves int
+}
+
+func (c *walkCount) ReadBlobs(ctx context.Context, specs []string) ([]git.Blob, error) {
+	c.blobs++
+	return c.Repo.ReadBlobs(ctx, specs)
+}
+
+func (c *walkCount) ResolveRef(ctx context.Context, name string) (string, bool, error) {
+	c.resolves++
+	return c.Repo.ResolveRef(ctx, name)
+}
+
+func TestFeedBaselineWalkIsBatched(t *testing.T) {
+	repo := newRepo(t)
+	s := newStore(repo, store.Options{Actor: "tester"})
+	bad, _ := s.CreateTask(ctx, store.NewTask{Slug: "bad", Initial: "todo"})
+	ref := TasksPrefix + bad.ID
+	tip0, _, _ := repo.ResolveRef(ctx, ref)
+	n := 0
+	appendRaw(t, repo, ref, func(old []byte) []byte {
+		n = len(parseLogEvents(old))
+		return append(append([]byte{}, old...), "junk\n"...)
+	})
+	for i := 0; i < 99; i++ {
+		appendRaw(t, repo, ref, func(old []byte) []byte { return old })
+	}
+	wc := &walkCount{Repo: repo}
+	res, err := newStore(wc, store.Options{Actor: "tester"}).Feed(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.Next.Logs[ref]; p.Tip != tip0 || p.Count != n {
+		t.Fatalf("pos = %+v, want tip %s count %d", p, tip0, n)
+	}
+	// The scan's own tip read counts too, so this is within the walk's budget.
+	if wc.blobs > 4 || wc.resolves > 2 {
+		t.Fatalf("ReadBlobs %d, ResolveRef %d", wc.blobs, wc.resolves)
+	}
+}
+
+func TestFeedBaselineNoReadableAncestorLeavesLogOut(t *testing.T) {
+	repo := newRepo(t)
+	s := newStore(repo, store.Options{Actor: "tester"})
+	bad, _ := s.CreateTask(ctx, store.NewTask{Slug: "bad", Initial: "todo"})
+	ref := TasksPrefix + bad.ID
+	// Rewrite the only commit's successor chain: the first commit is itself
+	// unreadable, so no ancestor is readable.
+	tip, _, _ := repo.ResolveRef(ctx, ref)
+	blob, _ := repo.WriteBlob(ctx, []byte("junk\n"))
+	tree, _ := repo.MakeTree(ctx, []git.TreeEntry{{Mode: "100644", Type: "blob", OID: blob, Name: LogFile}})
+	root, err := repo.CommitTree(ctx, tree, nil, "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateRef(ctx, ref, root, tip); err != nil {
+		t.Fatal(err)
+	}
+	appendRaw(t, repo, ref, func(old []byte) []byte { return append(append([]byte{}, old...), "junk\n"...) })
+	res, err := s.Feed(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.Next.Logs[ref]; ok {
+		t.Fatalf("log recorded: %+v", res.Next.Logs[ref])
+	}
+	if len(res.Held) != 1 || res.Held[0].Name != bad.ID {
+		t.Fatalf("held = %+v", res.Held)
+	}
+}
+
 func parseLogEvents(raw []byte) []store.Event {
 	e, _ := parseLog(raw)
 	return e
