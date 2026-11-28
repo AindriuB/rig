@@ -17,8 +17,7 @@ import (
 // workflow implements `rig workflow`: show and validate.
 func (a *app) workflow(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.stderr, "usage: rig workflow show|validate")
-		return 2
+		return a.groupHelp("workflow", "")
 	}
 	switch args[0] {
 	case "show":
@@ -26,7 +25,7 @@ func (a *app) workflow(ctx context.Context, args []string) int {
 	case "validate":
 		return a.workflowValidate(ctx, args[1:])
 	}
-	return a.fail("workflow", "unknown subcommand %q; want show or validate", args[0])
+	return a.groupHelp("workflow", args[0])
 }
 
 // sourceView is a workflow's source as --json shows it: the workflow

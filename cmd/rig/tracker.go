@@ -24,8 +24,6 @@ import (
 	"github.com/AindriuB/rig/internal/workflow"
 )
 
-const trackerUsage = "usage: rig tracker pull|push|refresh|report|show|status ..."
-
 // Why a tracker cannot be used. Each is exit 2; `rig tracker status` reports
 // the last two instead.
 var (
@@ -295,7 +293,7 @@ search:
 // tracker, a failed read, or any item that failed.
 func (a *app) trackerCmd(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail("tracker", "%s", trackerUsage)
+		return a.groupHelp("tracker", "")
 	}
 	rest := args[1:]
 	switch args[0] {
@@ -312,7 +310,7 @@ func (a *app) trackerCmd(ctx context.Context, args []string) int {
 	case "status":
 		return a.trackerStatus(ctx, rest)
 	}
-	return a.fail("tracker", "unknown subcommand %q\n%s", args[0], trackerUsage)
+	return a.groupHelp("tracker", args[0])
 }
 
 // takeChildren removes --children and --children=<depth> from args and

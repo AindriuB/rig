@@ -18,7 +18,7 @@ func (a *app) note(ctx context.Context, args []string) int {
 		ctx = withCmd(ctx, "note "+args[0])
 	}
 	if len(args) == 0 {
-		return a.fail("note", "%s", noteUsage)
+		return a.groupHelp("note", "")
 	}
 	switch args[0] {
 	case "add":
@@ -26,7 +26,7 @@ func (a *app) note(ctx context.Context, args []string) int {
 	case "list":
 		return a.noteList(ctx, args[1:])
 	}
-	return a.fail("note", "unknown subcommand %q\n%s", args[0], noteUsage)
+	return a.groupHelp("note", args[0])
 }
 
 func (a *app) noteAdd(ctx context.Context, args []string) int {

@@ -121,7 +121,15 @@ rig version
 rig events [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json] [--repo <dir>]
 rig hooks start [--json] [--] <cmd> [args...]
 rig update [--check] [--to <version>] [--json]
+rig help [<command> | --all]
 ```
+
+`rig help`, `rig -h` and `rig --help` print one line per command, under topic
+headings. `rig help <command>` and `rig <command> --help` print that command's
+forms, for example `rig help task`. `rig help --all` prints every form with its
+flags; its text is the stable full list for scripts. Bare `rig`, and a command
+group such as `rig task` with no subcommand, print the same help to stderr and
+exit 2.
 
 `--actor <name>` (alias `--role <name>`) is accepted by the commands above that
 write the store, and by no other. It sets the actor recorded on each event the
@@ -183,6 +191,7 @@ flowchart LR
   rig --> context["rig context"]
   rig --> version["rig version"]
   rig --> update["rig update"]
+  rig --> help["rig help"]
   rig --> pr
   rig --> task
   rig --> finding

@@ -218,8 +218,14 @@ func (a *app) run(ctx context.Context, args []string) int {
 		cleanupOld(a.executable)
 	}
 	if len(args) == 0 {
-		fmt.Fprint(a.stderr, usage)
+		fmt.Fprint(a.stderr, shortUsage())
 		return 2
+	}
+	if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+		if h, ok := commandHelp(args[0]); ok {
+			fmt.Fprint(a.stdout, h)
+			return 0
+		}
 	}
 	switch args[0] {
 	case "push":
@@ -262,10 +268,9 @@ func (a *app) run(ctx context.Context, args []string) int {
 		fmt.Fprintln(a.stdout, version)
 		return 0
 	case "help", "-h", "--help":
-		fmt.Fprint(a.stdout, usage)
-		return 0
+		return a.help(args[1:])
 	}
-	fmt.Fprintf(a.stderr, "rig: unknown command %q\n%s", args[0], usage)
+	fmt.Fprintf(a.stderr, "rig: unknown command %q\n%s", args[0], shortUsage())
 	return 2
 }
 

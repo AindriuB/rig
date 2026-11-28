@@ -20,8 +20,6 @@ import (
 )
 
 const (
-	taskUsage = "usage: rig task new|show|list|move|set|count|is|log|edit|parent|link|unlink|start|finish ..."
-
 	// maxBodyFile is the most `rig task new --body-file` reads.
 	maxBodyFile = 64 << 10
 	// maxSlug is the longest task slug.
@@ -42,7 +40,7 @@ func (a *app) task(ctx context.Context, args []string) int {
 		ctx = withCmd(ctx, "task "+args[0])
 	}
 	if len(args) == 0 {
-		return a.fail("task", "%s", taskUsage)
+		return a.groupHelp("task", "")
 	}
 	rest := args[1:]
 	switch args[0] {
@@ -75,7 +73,7 @@ func (a *app) task(ctx context.Context, args []string) int {
 	case "finish":
 		return a.taskFinish(ctx, rest)
 	}
-	return a.fail("task", "unknown subcommand %q\n%s", args[0], taskUsage)
+	return a.groupHelp("task", args[0])
 }
 
 // splitRepeated takes the repeatable string flags in repeated out of args

@@ -1,0 +1,35 @@
+usage: rig <command>
+
+Tasks:
+  rig task <subcommand>                     Create, show, list and move tasks
+
+Findings and notes:
+  rig finding <subcommand>                  Record and list review findings
+  rig note <subcommand>                     Add and list notes
+
+Planning:
+  rig workflow <subcommand>                 Show or check the workflow
+  rig next                                  List the tasks that are ready to work on
+  rig context <task>                        Print the context an agent needs for a task
+  rig status                                Show a summary of tasks by state
+
+Branches and pull requests:
+  rig push <task-id|branch>                 Push a task or record branch to origin
+  rig pr <subcommand>                       View, list, open and wait for pull requests
+
+Tracker:
+  rig tracker <subcommand>                  Pull, push, refresh and report tracker issues
+
+Hooks:
+  rig hooks <subcommand>                    Start, deliver and inspect queued hooks
+  rig events                                List events across all tasks, from a cursor
+
+Setup:
+  rig config <subcommand>                   Get, set and list config values
+  rig login [<service>]                     Log in to github, gitlab or jira, or show login status
+  rig logout <service>                      Log out of jira; github/gitlab print the gh/glab command
+  rig update                                Update rig to the latest release
+  rig version                               Print the rig version
+
+Help:
+  rig help [<command> | --all]              Show a command's forms, or every command

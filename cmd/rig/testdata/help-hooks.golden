@@ -1,0 +1,12 @@
+usage: rig hooks <subcommand>
+
+  rig hooks start <cmd> [<args>...]         Start long-running work that outlives the hook
+      [--json]
+  rig hooks deliver                         Deliver queued hooks' events, at least once
+      [--follow] [--repo <dir>]
+  rig hooks status                          Show queued hooks' runners and parked events
+      [--json] [--repo <dir>]
+  rig hooks retry <hook>                    Release a hook's parked events for another try
+      [--repo <dir>]
+  rig hooks skip <hook> <event>             Drop a parked event so it is never delivered
+      [--repo <dir>]

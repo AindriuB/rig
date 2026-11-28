@@ -20,21 +20,14 @@ func readGolden(t *testing.T) string {
 	return string(b)
 }
 
+// TestUsageGolden: `rig help --all` prints the full text byte for byte (AC3).
 func TestUsageGolden(t *testing.T) {
 	golden := readGolden(t)
-	for _, arg := range []string{"help", "-h", "--help"} {
-		r := rig(t, t.TempDir(), nil, nil, arg)
+	for _, args := range [][]string{{"help", "--all"}, {"-h", "--all"}, {"--help", "--all"}} {
+		r := rig(t, t.TempDir(), nil, nil, args...)
 		if r.code != 0 || r.out != golden || r.errOut != "" {
-			t.Errorf("rig %s: exit %d, stdout matches %v, stderr %q", arg, r.code, r.out == golden, r.errOut)
+			t.Errorf("rig %v: exit %d, stdout matches %v, stderr %q", args, r.code, r.out == golden, r.errOut)
 		}
-	}
-	r := rig(t, t.TempDir(), nil, nil)
-	if r.code != 2 || r.out != "" || r.errOut != golden {
-		t.Errorf("rig: exit %d, stdout %q, stderr matches %v", r.code, r.out, r.errOut == golden)
-	}
-	r = rig(t, t.TempDir(), nil, nil, "frobnicate")
-	if want := "rig: unknown command \"frobnicate\"\n" + golden; r.code != 2 || r.out != "" || r.errOut != want {
-		t.Errorf("rig frobnicate: exit %d, stdout %q, stderr matches %v", r.code, r.out, r.errOut == want)
 	}
 }
 
@@ -162,16 +155,8 @@ func TestUsageDescriptions(t *testing.T) {
 	}
 }
 
-func TestTrackerUsage(t *testing.T) {
-	r := rig(t, t.TempDir(), nil, nil, "tracker")
-	want := "rig tracker: usage: rig tracker pull|push|refresh|report|show|status ...\n"
-	if r.code != 2 || r.out != "" || r.errOut != want {
-		t.Errorf("rig tracker: exit %d, stdout %q, stderr %q", r.code, r.out, r.errOut)
-	}
-}
-
 // TestUsageNamesSubcommands: every subcommand a dispatcher accepts is in that
-// group's usage text and in the top-level usage.
+// group's command help and in the top-level usage.
 func TestUsageNamesSubcommands(t *testing.T) {
 	golden := readGolden(t)
 	fset := token.NewFileSet()
@@ -182,52 +167,18 @@ func TestUsageNamesSubcommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	funcs := map[string]*ast.FuncDecl{}
-	consts := map[string]string{}
 	for _, f := range pkgs["main"].Files {
 		for _, d := range f.Decls {
-			switch d := d.(type) {
-			case *ast.FuncDecl:
-				if d.Recv != nil {
-					funcs[d.Name.Name] = d
-				}
-			case *ast.GenDecl:
-				for _, s := range d.Specs {
-					if v, ok := s.(*ast.ValueSpec); ok && len(v.Names) == len(v.Values) {
-						for i, n := range v.Names {
-							if lit, ok := v.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-								consts[n.Name], _ = strconv.Unquote(lit.Value)
-							}
-						}
-					}
-				}
+			if d, ok := d.(*ast.FuncDecl); ok && d.Recv != nil {
+				funcs[d.Name.Name] = d
 			}
 		}
 	}
-	lits := func(n ast.Node) string {
-		var b strings.Builder
-		skip := map[ast.Node]bool{}
-		ast.Inspect(n, func(x ast.Node) bool {
-			switch x := x.(type) {
-			case *ast.CaseClause:
-				for _, e := range x.List {
-					skip[e] = true
-				}
-			case *ast.KeyValueExpr:
-				skip[x.Key] = true
-			}
-			if l, ok := x.(*ast.BasicLit); ok && l.Kind == token.STRING && !skip[l] {
-				s, _ := strconv.Unquote(l.Value)
-				b.WriteString(s + "\n")
-			}
-			return true
-		})
-		return b.String()
-	}
-	type group struct{ fn, name, usageConst string }
+	type group struct{ fn, name string }
 	for _, g := range []group{
-		{"run", "", ""}, {"task", "task", "taskUsage"}, {"trackerCmd", "tracker", "trackerUsage"},
-		{"finding", "finding", "findingUsage"}, {"note", "note", "noteUsage"},
-		{"workflow", "workflow", ""}, {"pr", "pr", ""}, {"config", "config", ""},
+		{"run", ""}, {"task", "task"}, {"trackerCmd", "tracker"},
+		{"finding", "finding"}, {"note", "note"},
+		{"workflow", "workflow"}, {"pr", "pr"}, {"config", "config"}, {"hooks", "hooks"},
 	} {
 		fn := funcs[g.fn]
 		if fn == nil {
@@ -278,10 +229,7 @@ func TestUsageNamesSubcommands(t *testing.T) {
 		if len(subs) == 0 {
 			t.Errorf("%s: found no subcommands", g.fn)
 		}
-		text := lits(fn)
-		if g.usageConst != "" {
-			text += consts[g.usageConst]
-		}
+		text, _ := commandHelp(g.name)
 		for _, s := range subs {
 			if g.fn == "run" {
 				switch s {
@@ -293,8 +241,8 @@ func TestUsageNamesSubcommands(t *testing.T) {
 				}
 				continue
 			}
-			if !strings.Contains(text, s) {
-				t.Errorf("%s usage lacks %s", g.name, s)
+			if !strings.Contains(text, "  rig "+g.name+" "+s) {
+				t.Errorf("%s help lacks %s", g.name, s)
 			}
 			if !strings.Contains(golden, "rig "+g.name+" "+s) {
 				t.Errorf("top-level usage lacks rig %s %s", g.name, s)

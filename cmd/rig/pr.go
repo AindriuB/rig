@@ -14,7 +14,7 @@ import (
 
 func (a *app) pr(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail("pr", "expected view, list, checks, open or wait")
+		return a.groupHelp("pr", "")
 	}
 	switch args[0] {
 	case "view":
@@ -28,7 +28,7 @@ func (a *app) pr(ctx context.Context, args []string) int {
 	case "wait":
 		return a.prWait(ctx, args[1:])
 	}
-	return a.fail("pr", "unknown subcommand %q: expected view, list, checks, open or wait", args[0])
+	return a.groupHelp("pr", args[0])
 }
 
 // repoDir is where a pr command runs: --repo if given, else the cwd.

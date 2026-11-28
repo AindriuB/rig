@@ -59,7 +59,7 @@ func (a *app) finding(ctx context.Context, args []string) int {
 		ctx = withCmd(ctx, "finding "+args[0])
 	}
 	if len(args) == 0 {
-		return a.fail("finding", "%s", findingUsage)
+		return a.groupHelp("finding", "")
 	}
 	switch args[0] {
 	case "add":
@@ -69,7 +69,7 @@ func (a *app) finding(ctx context.Context, args []string) int {
 	case "set":
 		return a.findingSet(ctx, args[1:])
 	}
-	return a.fail("finding", "unknown subcommand %q\n%s", args[0], findingUsage)
+	return a.groupHelp("finding", args[0])
 }
 
 func (a *app) findingAdd(ctx context.Context, args []string) int {

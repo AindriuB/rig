@@ -15,12 +15,12 @@ import (
 // config implements `rig config get|set|unset|list`.
 func (a *app) config(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail("config", "usage: rig config get|set|unset|list")
+		return a.groupHelp("config", "")
 	}
 	sub, rest := args[0], args[1:]
 	nargs, ok := map[string]int{"get": 1, "set": 2, "unset": 1, "list": 0}[sub]
 	if !ok {
-		return a.fail("config", "unknown subcommand %q", sub)
+		return a.groupHelp("config", sub)
 	}
 	cmd := "config " + sub
 

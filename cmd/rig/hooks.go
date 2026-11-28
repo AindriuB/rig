@@ -10,14 +10,13 @@ import (
 )
 
 const (
-	hooksUsage        = "usage: rig hooks start|deliver|status|retry|skip ..."
 	hooksDeliverUsage = "usage: rig hooks deliver [--follow] [--repo <dir>]"
 	hooksStartUsage   = "usage: rig hooks start [--json] [--] <cmd> [args...]"
 )
 
 func (a *app) hooks(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail("hooks", "%s", hooksUsage)
+		return a.groupHelp("hooks", "")
 	}
 	switch args[0] {
 	case "deliver":
@@ -31,7 +30,7 @@ func (a *app) hooks(ctx context.Context, args []string) int {
 	case "skip":
 		return a.hooksSkip(ctx, args[1:])
 	}
-	return a.fail("hooks", "unknown subcommand %q\n%s", args[0], hooksUsage)
+	return a.groupHelp("hooks", args[0])
 }
 
 // hooksStart starts a detached program without the RIG_HOOK_* variables and
