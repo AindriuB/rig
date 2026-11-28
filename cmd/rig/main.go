@@ -163,6 +163,12 @@ Hooks:
       [--json]
   rig hooks deliver                         Deliver queued hooks' events, at least once
       [--follow] [--repo <dir>]
+  rig hooks status                          Show queued hooks' runners and parked events
+      [--json] [--repo <dir>]
+  rig hooks retry <hook>                    Release a hook's parked events for another try
+      [--repo <dir>]
+  rig hooks skip <hook> <event>             Drop a parked event so it is never delivered
+      [--repo <dir>]
   rig events                                List events across all tasks, from a cursor
       [--since <file> | --cursor-file <file>] [--from-start] [--follow] [--json] [--repo <dir>]
 
