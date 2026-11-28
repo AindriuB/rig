@@ -151,15 +151,22 @@ type ReportComment struct {
 	Digest string `json:"digest"`
 }
 
-// TrackerPushData is the intent `rig tracker push` writes before it creates an
-// issue: the marker label the issue will carry, and the tracker it goes to. A
-// task with an intent and no link may already have an issue on the tracker; a
-// retry finds it by the marker.
+// TrackerPushData is a record `rig tracker push` writes in one of two shapes.
+// Without Key it is the intent written before an issue is created: the marker
+// label the issue will carry, and the tracker it goes to. A task with an
+// intent and no link may already have an issue on the tracker; a retry finds
+// it by the marker. With Key it is written in the same update as the link
+// event it follows, and names the issue push linked: it marks that link as
+// push's own. Parent, meaningful only with Key, is the parent issue key push
+// confirmed attached; fold sets the link's ParentKey from it when the link is
+// the same kind, host and key.
 type TrackerPushData struct {
 	Marker  string `json:"marker"`
 	Kind    string `json:"kind"`
 	Host    string `json:"host,omitempty"`
 	Project string `json:"project,omitempty"`
+	Key     string `json:"key,omitempty"`
+	Parent  string `json:"parent,omitempty"`
 }
 
 // TransitionData moves a task from one state to another. Sha, PR and Reason

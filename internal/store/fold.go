@@ -115,11 +115,16 @@ func apply(task *Task, findings *[]Finding, notes *[]Note, e Event) bool {
 			return false
 		}
 	case KindTrackerPush:
-		// An intent changes nothing a task shows; `rig tracker push` reads
-		// the log for it. It is applied only to count it as understood.
+		// An intent (no Key) changes nothing a task shows. A keyed record
+		// with Parent sets the link's ParentKey when the link is the same
+		// kind, host and key (in any case); otherwise it changes nothing.
 		var d TrackerPushData
 		if !decode(e, &d) || task.ID == "" || !validPush(d) {
 			return false
+		}
+		if x := task.External; x != nil && d.Key != "" && d.Parent != "" &&
+			x.Kind == d.Kind && strings.EqualFold(x.Host, d.Host) && strings.EqualFold(x.Key, d.Key) {
+			x.ParentKey = d.Parent
 		}
 	case KindTransition:
 		var d TransitionData

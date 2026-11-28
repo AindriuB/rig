@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -134,7 +135,22 @@ func (e *pushEnv) intents(short string) int {
 	evs, _ := e.st().Events(ctx, tk.ID)
 	n := 0
 	for _, ev := range evs {
-		if ev.Kind == store.KindTrackerPush {
+		var d store.TrackerPushData
+		if ev.Kind == store.KindTrackerPush && json.Unmarshal(ev.Data, &d) == nil && d.Key == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// externals counts the task's external (link) events.
+func (e *pushEnv) externals(short string) int {
+	e.t.Helper()
+	tk, _ := e.st().Task(ctx, short)
+	evs, _ := e.st().Events(ctx, tk.ID)
+	n := 0
+	for _, ev := range evs {
+		if ev.Kind == store.KindExternal {
 			n++
 		}
 	}
@@ -1010,6 +1026,18 @@ func TestTrackerPushSkipsWhenNothingToResume(t *testing.T) {
 		if x := e.linkOf(story); x.ParentKey != e.linkOf(epic).Key { // AC9
 			t.Fatalf("clean create link %+v", x)
 		}
+		tk, _ := e.st().Task(ctx, story)
+		evs, _ := e.st().Events(ctx, tk.ID)
+		var rec store.TrackerPushData
+		for _, ev := range evs {
+			var d store.TrackerPushData
+			if ev.Kind == store.KindTrackerPush && json.Unmarshal(ev.Data, &d) == nil && d.Key != "" {
+				rec = d
+			}
+		}
+		if rec.Key != e.linkOf(story).Key || rec.Parent != e.linkOf(epic).Key {
+			t.Fatalf("keyed record %+v", rec)
+		}
 		n := len(e.fk.IssueCalls)
 		if out := e.pushJSON(t, 0, epic); len(out.Skipped) != 1 || len(out.Pushed) != 0 {
 			t.Fatalf("root: %+v", out)
@@ -1092,5 +1120,123 @@ func TestTrackerPushDryRunWouldVerify(t *testing.T) {
 	if code := e.json(&out, "tracker", "push", story, "--dry-run"); code != 0 || statusOf(t, out) != "would-verify" ||
 		len(e.fk.IssueCalls) != n || len(e.fk.Attached) != 0 || len(e.fk.Created) != 2 {
 		t.Fatalf("%d %+v", code, out)
+	}
+}
+
+// handIssue makes an issue on the tracker, under parent when given, outside
+// any push.
+func (e *pushEnv) handIssue(t *testing.T, parent string) string {
+	t.Helper()
+	made, err := e.fk.Create(ctx, tracker.NewIssue{Type: "Story", Title: "hand made", ParentKey: parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return made.Key
+}
+
+// AC13 (f-csb0): a child pushed to created-not-attached, then relinked by hand
+// to another issue, is skipped: push owns only the issue it linked.
+func TestTrackerPushHandRelinkAfterNotAttachedIsSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		otherParent bool
+	}{{"no parent", false}, {"under another parent", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _, story := attachEnv(t)
+			other := e.task("other", "")
+			if code := e.run("tracker", "push", other); code != 0 {
+				t.Fatal(e.err.String())
+			}
+			e.fk.CreateAttachFailN = 3
+			if got := statusOf(t, e.pushJSON(t, 2, story)); got != "created-not-attached" {
+				t.Fatalf("status %q", got)
+			}
+			parent := ""
+			if tc.otherParent {
+				parent = e.linkOf(other).Key
+			}
+			hand := e.handIssue(t, parent)
+			if code := e.run("task", "link", story, "github:"+hand); code != 0 {
+				t.Fatalf("link: %d %s", code, e.err.String())
+			}
+			n, att := len(e.fk.IssueCalls), len(e.fk.Attached)
+			out := e.pushJSON(t, 0, story)
+			if len(out.Skipped) != 1 || len(out.Pushed) != 0 || out.Skipped[0].Status != "skipped" ||
+				len(e.fk.Attached) != att || len(e.fk.IssueCalls) != n {
+				t.Fatalf("%+v, %d attaches, %d issue calls", out, len(e.fk.Attached)-att, len(e.fk.IssueCalls)-n)
+			}
+		})
+	}
+}
+
+// AC14 (f-2gs2): an intent whose Create failed with no key does not make a
+// later hand link push's own.
+func TestTrackerPushHandLinkAfterFailedCreateIsSkipped(t *testing.T) {
+	e, _, story := attachEnv(t)
+	e.fk.FailCreateN = 2
+	if code := e.run("tracker", "push", story); code != 2 || e.intents(story) != 1 {
+		t.Fatalf("exit %d, intents %d", code, e.intents(story))
+	}
+	e.fk.FailCreateN = 0
+	hand := e.handIssue(t, "")
+	if code := e.run("task", "link", story, "github:"+hand); code != 0 {
+		t.Fatalf("link: %d %s", code, e.err.String())
+	}
+	n, att := len(e.fk.IssueCalls), len(e.fk.Attached)
+	out := e.pushJSON(t, 0, story)
+	if len(out.Skipped) != 1 || len(out.Pushed) != 0 || len(e.fk.Attached) != att || len(e.fk.IssueCalls) != n {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// AC15 (f-b8wk): a resume writes no external event, so a later report with
+// nothing changed re-sends neither status nor comment.
+func TestTrackerPushResumeKeepsReportHistory(t *testing.T) {
+	caps := pushCaps
+	caps.Comment, caps.SetStatus = true, true
+	e := newPushEnv(t, caps)
+	wf := `{
+  "name": "pr", "version": 1, "initial": "todo",
+  "states": {"todo": {"action": "start"}, "doing": {"action": "review"}, "done": {"final": true}},
+  "transitions": [{"from": "todo", "to": "doing"}, {"from": "doing", "to": "done"}],
+  "fields": {"type": {"type": "string"}},
+  "tracker": {"push": {"levels": ["Epic","Story","Subtask"], "types": ["Bug"]}, "report": {"status": {"doing": "In Progress"}}}
+}`
+	path := filepath.Join(t.TempDir(), "pr.json")
+	if err := os.WriteFile(path, []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.envVars["RIG_WORKFLOW"] = path
+	e.fk = fake.New(caps, nil, []string{"In Progress"})
+	e.fk.Types = pushTypes
+	e.tr = e.fk
+	epic := e.task("epic", "")
+	story := e.task("story", epic)
+	if code := e.run("tracker", "push", epic); code != 0 {
+		t.Fatalf("push epic: %d %s", code, e.err.String())
+	}
+	e.fk.CreateAttachFailN = 2
+	e.pushJSON(t, 2, story)
+	if code := e.run("task", "move", story, "doing"); code != 0 {
+		t.Fatalf("move: %d %s", code, e.err.String())
+	}
+	if code := e.run("tracker", "report", story); code != 0 {
+		t.Fatalf("report: %d %s", code, e.err.String())
+	}
+	if len(e.fk.StatusCalls) != 1 || len(e.fk.Comments) != 1 {
+		t.Fatalf("setup: %d statuses, %d comments", len(e.fk.StatusCalls), len(e.fk.Comments))
+	}
+	links := e.externals(story)
+	if got := statusOf(t, e.pushJSON(t, 0, story)); got != "attached" {
+		t.Fatalf("status %q", got)
+	}
+	if e.externals(story) != links {
+		t.Fatal("the resume wrote an external event")
+	}
+	if code := e.run("tracker", "report", story); code != 0 {
+		t.Fatalf("second report: %d %s", code, e.err.String())
+	}
+	if len(e.fk.StatusCalls) != 1 || len(e.fk.Comments) != 1 {
+		t.Fatalf("re-sent: %d statuses, %d comments", len(e.fk.StatusCalls), len(e.fk.Comments))
 	}
 }

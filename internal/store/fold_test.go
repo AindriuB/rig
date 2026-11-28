@@ -199,6 +199,46 @@ func TestFoldTrackerPushIsInvisible(t *testing.T) {
 	}
 }
 
+// AC16: a keyed record with Parent sets ParentKey only on a link of the same
+// kind, host and key (key and host in any case).
+func TestFoldTrackerPushParent(t *testing.T) {
+	link := ExternalData{Kind: "jira", Host: "j.example", Key: "AB-7"}
+	cases := []struct {
+		name string
+		rec  TrackerPushData
+		link bool
+		want string
+	}{
+		{"same issue", TrackerPushData{Marker: "m", Kind: "jira", Host: "j.example", Key: "AB-7", Parent: "AB-1"}, true, "AB-1"},
+		{"same issue, other case", TrackerPushData{Marker: "m", Kind: "jira", Host: "J.Example", Key: "ab-7", Parent: "AB-1"}, true, "AB-1"},
+		{"other key", TrackerPushData{Marker: "m", Kind: "jira", Host: "j.example", Key: "AB-8", Parent: "AB-1"}, true, ""},
+		{"other kind", TrackerPushData{Marker: "m", Kind: "github", Host: "j.example", Key: "AB-7", Parent: "AB-1"}, true, ""},
+		{"other host", TrackerPushData{Marker: "m", Kind: "jira", Host: "k.example", Key: "AB-7", Parent: "AB-1"}, true, ""},
+		{"no link", TrackerPushData{Marker: "m", Kind: "jira", Host: "j.example", Key: "AB-7", Parent: "AB-1"}, false, ""},
+		{"no parent", TrackerPushData{Marker: "m", Kind: "jira", Host: "j.example", Key: "AB-7"}, true, ""},
+		{"intent", TrackerPushData{Marker: "m", Kind: "jira", Host: "j.example", Parent: "AB-1"}, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := sampleLog(t)
+			if tc.link {
+				log = append(log, ev(t, 13, KindExternal, link))
+			}
+			log = append(log, ev(t, 14, KindTrackerPush, tc.rec))
+			task, _, _, skipped := Fold(log)
+			if skipped != 0 {
+				t.Fatalf("skipped %d", skipped)
+			}
+			if tc.link != (task.External != nil) {
+				t.Fatalf("external %+v", task.External)
+			}
+			if task.External != nil && task.External.ParentKey != tc.want {
+				t.Fatalf("ParentKey %q, want %q", task.External.ParentKey, tc.want)
+			}
+		})
+	}
+}
+
 // An event with a cause folds like one without, and is not skipped.
 func TestFoldIgnoresCause(t *testing.T) {
 	plain := sampleLog(t)

@@ -179,60 +179,49 @@ type pushStep struct {
 
 // attachIncomplete reports whether linked task t has a parent link that push
 // has not confirmed, and returns that parent's issue key. It makes no tracker
-// call. The task must have a push intent for this tracker (so push created
-// it), a linked parent, and a ParentKey other than the parent's key.
-func attachIncomplete(ctx context.Context, w *work, spec trackerSpec, t store.Task, byID map[string]store.Task) (string, bool, error) {
+// call. The latest keyed push record for this tracker must name the current
+// link's key (so push wrote that link), the parent must be linked, the tracker
+// must support parents, and ParentKey must differ from the parent's key. It
+// returns the parent's key and that record's marker.
+func attachIncomplete(ctx context.Context, w *work, spec trackerSpec, t store.Task, byID map[string]store.Task) (string, string, bool, error) {
 	if t.External == nil || t.Parent == "" || linkMismatch(t.External, spec) != "" {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	p, ok := byID[t.Parent]
 	if !ok || p.External == nil || linkMismatch(p.External, spec) != "" || p.External.Key == "" {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if strings.EqualFold(t.External.ParentKey, p.External.Key) {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	log, err := w.st.Events(ctx, t.ID)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	if !intentLinkedTo(log, spec.Link, t.External.Key) {
-		return "", false, nil
+	marker, ok := keyedRecordFor(log, spec.Link, t.External.Key)
+	if !ok {
+		return "", "", false, nil
 	}
-	return p.External.Key, true, nil
+	return p.External.Key, marker, true, nil
 }
 
-// intentLinkedTo reports whether the latest push intent for the tracker was
-// linked, by the first external event after it, to issue key. A task relinked
-// by hand to another issue has an intent that names a different key.
-func intentLinkedTo(log []store.Event, l trackerLink, key string) bool {
-	at := -1
-	for i := len(log) - 1; i >= 0 && at < 0; i-- {
+// keyedRecordFor returns the marker of the latest keyed tracker-push record
+// for the tracker, when it names issue key (in any case). Push wrote the
+// current link only if that record exists; a hand link has none.
+func keyedRecordFor(log []store.Event, l trackerLink, key string) (string, bool) {
+	for i := len(log) - 1; i >= 0; i-- {
 		if log[i].Kind != store.KindTrackerPush || log[i].V != store.Version {
 			continue
 		}
 		var d store.TrackerPushData
-		if json.Unmarshal(log[i].Data, &d) != nil || d.Marker == "" {
+		if json.Unmarshal(log[i].Data, &d) != nil || d.Marker == "" || d.Key == "" {
 			continue
 		}
 		if d.Kind == l.Kind && strings.EqualFold(d.Host, l.Host) && strings.EqualFold(d.Project, l.Project) {
-			at = i
+			return d.Marker, strings.EqualFold(d.Key, key)
 		}
 	}
-	if at < 0 {
-		return false
-	}
-	for _, e := range log[at+1:] {
-		if e.Kind != store.KindExternal {
-			continue
-		}
-		var d store.ExternalData
-		if json.Unmarshal(e.Data, &d) != nil {
-			continue
-		}
-		return d.Key != "" && strings.EqualFold(d.Key, key)
-	}
-	return false
+	return "", false
 }
 
 // pushSelect returns the tasks to consider, parents first, with each one's
@@ -303,15 +292,15 @@ func acceptanceOf(wf *workflow.Workflow, t store.Task) []string {
 	return nil
 }
 
-// pushIntent returns the latest tracker-push intent in log for the tracker,
-// and the time it was recorded.
+// pushIntent returns the latest tracker-push intent (a record without Key) in
+// log for the tracker, and the time it was recorded.
 func pushIntent(log []store.Event, l trackerLink) (store.TrackerPushData, time.Time, bool) {
 	for i := len(log) - 1; i >= 0; i-- {
 		if log[i].Kind != store.KindTrackerPush || log[i].V != store.Version {
 			continue
 		}
 		var d store.TrackerPushData
-		if json.Unmarshal(log[i].Data, &d) != nil || d.Marker == "" {
+		if json.Unmarshal(log[i].Data, &d) != nil || d.Marker == "" || d.Key != "" {
 			continue
 		}
 		if d.Kind == l.Kind && strings.EqualFold(d.Host, l.Host) && strings.EqualFold(d.Project, l.Project) {
@@ -432,12 +421,12 @@ func (a *app) trackerPush(ctx context.Context, args []string) int {
 	}
 	for i, t := range selected {
 		if t.External != nil {
-			pk, resume, err := attachIncomplete(ctx, w, spec, t, byID)
+			pk, marker, resume, err := attachIncomplete(ctx, w, spec, t, byID)
 			if err != nil {
 				return a.storeFail(cmd, err)
 			}
 			if resume {
-				steps = append(steps, &pushStep{task: t, depth: depths[i], parentKey: pk, resume: true})
+				steps = append(steps, &pushStep{task: t, depth: depths[i], marker: marker, parentKey: pk, resume: true})
 				continue
 			}
 			out.Skipped = append(out.Skipped, pushItem{Task: t.Short, Title: t.Title, Key: t.External.Key, Type: t.External.Type, Status: "skipped"})
@@ -817,7 +806,16 @@ func (a *app) pushRecord(ctx context.Context, w *work, spec trackerSpec, s *push
 	if err != nil {
 		return err
 	}
-	events := []store.Event{link}
+	// The keyed record follows the link in the same update: it marks the link
+	// as push's own, and with Parent sets ParentKey on fold.
+	rec, err := store.NewEvent(store.KindTrackerPush, store.TrackerPushData{
+		Marker: s.marker, Kind: spec.Link.Kind, Host: spec.Link.Host, Project: spec.Link.Project,
+		Key: issue.Key, Parent: parentKey,
+	})
+	if err != nil {
+		return err
+	}
+	events := []store.Event{link, rec}
 	if snapshot {
 		sync, err := store.NewEvent(store.KindTrackerSync, store.TrackerSyncData{Rev: issue.Rev, Values: ownedValues(w.wf, issue, owned)})
 		if err != nil {
@@ -865,15 +863,16 @@ func (a *app) pushResume(ctx context.Context, w *work, tr tracker.Tracker, s *pu
 		}
 		status = "attached"
 	}
+	// No external event: a link event would reset the history `rig tracker
+	// report` checks for duplicates. The keyed record sets ParentKey on fold.
 	ext := cur.External
-	link, err := store.NewEvent(store.KindExternal, store.ExternalData{
-		Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.Key,
-		URL: ext.URL, Type: ext.Type, Owned: ext.Owned, ParentKey: parent,
+	rec, err := store.NewEvent(store.KindTrackerPush, store.TrackerPushData{
+		Marker: s.marker, Kind: ext.Kind, Host: ext.Host, Project: ext.Project, Key: ext.Key, Parent: parent,
 	})
 	if err != nil {
 		return status, err
 	}
-	events := []store.Event{link}
+	events := []store.Event{rec}
 	if issue.Rev != "" {
 		sync, err := store.NewEvent(store.KindTrackerSync, store.TrackerSyncData{Rev: issue.Rev, Values: ownedValues(w.wf, issue, ext.Owned)})
 		if err != nil {
