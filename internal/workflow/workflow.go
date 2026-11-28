@@ -141,8 +141,8 @@ const (
 // Hook runs a program after an event is written. On lists selectors, any of
 // which fires the hook: "transition", "enter:<state>", "leave:<state>",
 // "kind:<kind>" (or "kind:*") and "final". Run is an argument vector. Name,
-// Mode, Timeout, Env, From and MaxDepth are optional; From and MaxDepth are
-// read but not acted on yet.
+// Mode, Timeout, Env, From and MaxDepth are optional. A hook with Mode
+// "queued" is delivered by rig hooks deliver, and From and MaxDepth apply to it.
 type Hook struct {
 	Name     string    `json:"name,omitempty"`
 	On       StateList `json:"on"`
@@ -163,16 +163,12 @@ func (w *Workflow) HookName(i int) string {
 }
 
 // HookWarnings lists what is worth telling the user about the hooks without
-// being wrong: unnamed hooks and queued hooks, which this version does not
-// deliver.
+// being wrong: unnamed hooks, whose state and messages go by a made-up name.
 func (w *Workflow) HookWarnings() []string {
 	var out []string
 	for i, h := range w.Hooks {
 		if h.Name == "" {
 			out = append(out, fmt.Sprintf("hooks[%d] has no name; it is called %s", i, w.HookName(i)))
-		}
-		if h.Mode == ModeQueued {
-			out = append(out, fmt.Sprintf("hooks[%d] (%s) is queued, which is not delivered by this version; it will not run", i, w.HookName(i)))
 		}
 	}
 	return out
